@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Supabase-like fluent API over sqlx for PostgreSQL"
+description = "Rust client for Supabase with fluent API — REST by default, direct SQL opt-in"
 
 [features]
 default = ["query", "derive"]
