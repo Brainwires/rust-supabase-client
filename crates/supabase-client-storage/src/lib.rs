@@ -6,7 +6,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use supabase_client::prelude::*;
+//! use supabase_client_sdk::prelude::*;
 //!
 //! let client = SupabaseClient::new(config).await?;
 //! let storage = client.storage()?;
@@ -38,7 +38,7 @@ use supabase_client_core::SupabaseClient;
 ///
 /// # Example
 /// ```ignore
-/// use supabase_client::prelude::*;
+/// use supabase_client_sdk::prelude::*;
 /// use supabase_client_storage::SupabaseClientStorageExt;
 ///
 /// let client = SupabaseClient::new(config).await?;

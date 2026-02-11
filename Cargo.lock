@@ -1896,25 +1896,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "supabase-client"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "sqlx",
- "supabase-client-auth",
- "supabase-client-core",
- "supabase-client-derive",
- "supabase-client-functions",
- "supabase-client-query",
- "supabase-client-realtime",
- "supabase-client-storage",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "supabase-client-auth"
 version = "0.1.0"
 dependencies = [
@@ -2005,6 +1986,25 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "supabase-client-sdk"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "supabase-client-auth",
+ "supabase-client-core",
+ "supabase-client-derive",
+ "supabase-client-functions",
+ "supabase-client-query",
+ "supabase-client-realtime",
+ "supabase-client-storage",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

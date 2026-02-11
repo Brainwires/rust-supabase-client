@@ -6,7 +6,7 @@
 //! Provides a fluent API for SELECT, INSERT, UPDATE, DELETE, UPSERT, and RPC
 //! queries against Supabase, with 20+ filter methods and full modifier support.
 //!
-//! **Most users should depend on [`supabase-client`](https://crates.io/crates/supabase-client)
+//! **Most users should depend on [`supabase-client-sdk`](https://crates.io/crates/supabase-client-sdk)
 //! instead** and enable the `query` feature (on by default), which re-exports
 //! this crate.
 //!

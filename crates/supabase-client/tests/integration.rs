@@ -1,9 +1,9 @@
-//! Integration tests for supabase-client against a real PostgreSQL database.
+//! Integration tests for supabase-client-sdk against a real PostgreSQL database.
 //!
 //! These tests require the `direct-sql` feature and a running PostgreSQL instance.
 //! Set DATABASE_URL env var or it defaults to the local Supabase dev instance.
 //!
-//! Run with: cargo test -p supabase-client --features direct-sql -- --test-threads=1
+//! Run with: cargo test -p supabase-client-sdk --features direct-sql -- --test-threads=1
 //!
 //! Setup SQL:
 //! ```sql
@@ -24,8 +24,9 @@
 #![cfg(feature = "direct-sql")]
 
 use serde::{Deserialize, Serialize};
-use supabase_client::prelude::*;
-use supabase_client::{
+use supabase_client_sdk::prelude::*;
+
+use supabase_client_sdk::{
     NullsPosition, SqlParam, SupabaseClientQueryExt,
 };
 
@@ -1008,7 +1009,7 @@ mod response_tests {
 // ============================================================
 
 mod sql_gen {
-    use supabase_client::{
+    use supabase_client_sdk::{
         FilterCondition, FilterOperator, SqlOperation, SqlParts, validate_column_name,
     };
 

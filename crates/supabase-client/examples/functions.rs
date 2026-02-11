@@ -1,13 +1,13 @@
 //! Edge Functions invocation example.
 //!
-//! Run with: cargo run --example functions -p supabase-client --features functions
+//! Run with: cargo run --example functions -p supabase-client-sdk --features functions
 //!
 //! Requires:
 //!   1. `supabase start` in the project root
 //!   2. `supabase functions serve` (in a separate terminal)
 
 use serde_json::json;
-use supabase_client::prelude::*;
+use supabase_client_sdk::prelude::*;
 
 const DEFAULT_URL: &str = "http://127.0.0.1:64321";
 const DEFAULT_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";

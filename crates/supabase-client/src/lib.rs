@@ -1,4 +1,4 @@
-//! # supabase-client
+//! # supabase-client-sdk
 //!
 //! A Rust client for [Supabase](https://supabase.com/) with a fluent, Supabase JS-like API.
 //! Uses the **PostgREST REST API by default** — no database connection needed. Opt into
@@ -10,7 +10,7 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use supabase_client::prelude::*;
+//! use supabase_client_sdk::prelude::*;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,7 +65,7 @@ pub use supabase_client_functions;
 /// Prelude module for convenient imports.
 ///
 /// ```ignore
-/// use supabase_client::prelude::*;
+/// use supabase_client_sdk::prelude::*;
 /// ```
 pub mod prelude {
     pub use supabase_client_core::{

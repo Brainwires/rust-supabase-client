@@ -64,9 +64,9 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-supabase-client = "0.1.0"
+supabase-client-sdk = "0.1.0"
 # Or with specific features:
-supabase-client = { version = "0.1.0", features = ["auth", "realtime"] }
+supabase-client-sdk = { version = "0.1.0", features = ["auth", "realtime"] }
 ```
 
 ### Feature Flags
@@ -85,7 +85,7 @@ supabase-client = { version = "0.1.0", features = ["auth", "realtime"] }
 ## Quick Start
 
 ```rust
-use supabase_client::prelude::*;
+use supabase_client_sdk::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -115,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Query Builder
 
 ```rust
-use supabase_client::prelude::*;
+use supabase_client_sdk::prelude::*;
 use serde_json::json;
 
 // SELECT with filters and modifiers
@@ -245,7 +245,7 @@ let response = client.from("cities")
 ### Derive Macros
 
 ```rust
-use supabase_client::prelude::*;
+use supabase_client_sdk::prelude::*;
 use serde::Deserialize;
 
 #[derive(Table, Deserialize, Debug)]
@@ -278,7 +278,7 @@ let cities: Vec<City> = response.into_result()?;
 Requires the `auth` feature.
 
 ```rust
-use supabase_client::prelude::*;
+use supabase_client_sdk::prelude::*;
 
 let auth = client.auth()?;
 
@@ -321,7 +321,7 @@ let users = admin.list_users(None, None).await?;
 When Supabase acts as an OAuth 2.1 identity provider, third-party apps can register as OAuth clients and users can consent/revoke access.
 
 ```rust
-use supabase_client::prelude::*;
+use supabase_client_sdk::prelude::*;
 
 let auth = client.auth()?;
 
@@ -369,7 +369,7 @@ auth.oauth_revoke_grant(token, "client-id-456").await?;
 When using Supabase as an OAuth 2.1 identity provider, clients can use the authorization code flow with PKCE. Includes OIDC discovery and JWKS for token verification.
 
 ```rust
-use supabase_client::prelude::*;
+use supabase_client_sdk::prelude::*;
 
 let auth = client.auth()?;
 
@@ -430,7 +430,7 @@ println!("Subject: {}", userinfo["sub"]);
 Requires the `realtime` feature.
 
 ```rust
-use supabase_client::prelude::*;
+use supabase_client_sdk::prelude::*;
 use serde_json::json;
 
 let realtime = client.realtime()?;
@@ -479,7 +479,7 @@ realtime.disconnect().await?;
 Requires the `storage` feature.
 
 ```rust
-use supabase_client::prelude::*;
+use supabase_client_sdk::prelude::*;
 
 let storage = client.storage()?;
 
@@ -551,7 +551,7 @@ storage.delete_bucket("photos").await?;
 Requires the `functions` feature.
 
 ```rust
-use supabase_client::prelude::*;
+use supabase_client_sdk::prelude::*;
 use serde_json::json;
 
 let functions = client.functions()?;
@@ -600,25 +600,25 @@ Runnable examples are provided in `crates/supabase-client/examples/`. Each examp
 
 ```bash
 # Query basics: SELECT, INSERT, UPDATE, DELETE, UPSERT with filters
-cargo run --example query_basics -p supabase-client
+cargo run --example query_basics -p supabase-client-sdk
 
 # Typed queries with #[derive(Table)]
-cargo run --example typed_queries -p supabase-client
+cargo run --example typed_queries -p supabase-client-sdk
 
 # Advanced: CSV output, count options, RPC rollback, EXPLAIN, HEAD
-cargo run --example advanced_queries -p supabase-client
+cargo run --example advanced_queries -p supabase-client-sdk
 
 # Authentication: sign-up, sign-in, sessions, JWT claims, admin ops
-cargo run --example auth -p supabase-client --features auth
+cargo run --example auth -p supabase-client-sdk --features auth
 
 # Realtime: broadcast, postgres changes, presence
-cargo run --example realtime -p supabase-client --features realtime
+cargo run --example realtime -p supabase-client-sdk --features realtime
 
 # Storage: bucket CRUD, upload/download, signed URLs, image transforms
-cargo run --example storage -p supabase-client --features storage
+cargo run --example storage -p supabase-client-sdk --features storage
 
 # Edge Functions: JSON/binary invocation, custom headers
-cargo run --example functions -p supabase-client --features functions
+cargo run --example functions -p supabase-client-sdk --features functions
 ```
 
 ## Architecture
@@ -627,7 +627,7 @@ This project is a Cargo workspace with the following crates:
 
 | Crate | Description |
 |-------|-------------|
-| `supabase-client` | Facade crate with feature-gated re-exports and prelude |
+| `supabase-client-sdk` | Facade crate with feature-gated re-exports and prelude |
 | `supabase-client-core` | `SupabaseClient`, `SupabaseConfig`, connection pool, error types |
 | `supabase-client-query` | Query builder, filters, modifiers, RPC |
 | `supabase-client-derive` | `#[derive(Table)]` proc macro |
@@ -683,17 +683,17 @@ supabase start
 cargo test --workspace -- --test-threads=1
 
 # REST integration tests (PostgREST backend, default)
-cargo test -p supabase-client-query --test rest_integration -- --test-threads=1
+cargo test -p supabase-client-sdk-query --test rest_integration -- --test-threads=1
 
 # Direct-SQL integration tests (requires direct-sql feature)
-cargo test -p supabase-client --features direct-sql -- --test-threads=1
+cargo test -p supabase-client-sdk --features direct-sql -- --test-threads=1
 
 # Run tests for a specific crate
-cargo test -p supabase-client-query
-cargo test -p supabase-client-auth
-cargo test -p supabase-client-realtime
-cargo test -p supabase-client-storage --test integration -- --test-threads=1
-cargo test -p supabase-client-functions --test integration -- --test-threads=1
+cargo test -p supabase-client-sdk-query
+cargo test -p supabase-client-sdk-auth
+cargo test -p supabase-client-sdk-realtime
+cargo test -p supabase-client-sdk-storage --test integration -- --test-threads=1
+cargo test -p supabase-client-sdk-functions --test integration -- --test-threads=1
 ```
 
 The local Supabase instance runs on custom ports (API: 64321, DB: 64322). Integration tests default to these ports and use hardcoded local development keys.

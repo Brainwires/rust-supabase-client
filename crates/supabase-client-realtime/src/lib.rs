@@ -7,7 +7,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use supabase_client::prelude::*;
+//! use supabase_client_sdk::prelude::*;
 //!
 //! let realtime = client.realtime()?;
 //! realtime.connect().await?;

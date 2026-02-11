@@ -6,7 +6,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use supabase_client::prelude::*;
+//! use supabase_client_sdk::prelude::*;
 //! use serde_json::json;
 //!
 //! let client = SupabaseClient::new(config).await?;
@@ -33,7 +33,7 @@ use supabase_client_core::SupabaseClient;
 ///
 /// # Example
 /// ```ignore
-/// use supabase_client::prelude::*;
+/// use supabase_client_sdk::prelude::*;
 /// use supabase_client_functions::SupabaseClientFunctionsExt;
 ///
 /// let client = SupabaseClient::new(config).await?;

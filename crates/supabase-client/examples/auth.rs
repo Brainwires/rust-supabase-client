@@ -1,10 +1,10 @@
 //! Authentication example: sign-up, sign-in, sessions, and admin operations.
 //!
-//! Run with: cargo run --example auth -p supabase-client --features auth
+//! Run with: cargo run --example auth -p supabase-client-sdk --features auth
 //!
 //! Requires: `supabase start` in the project root.
 
-use supabase_client::prelude::*;
+use supabase_client_sdk::prelude::*;
 
 const DEFAULT_URL: &str = "http://127.0.0.1:64321";
 const DEFAULT_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU";

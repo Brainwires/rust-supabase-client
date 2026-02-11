@@ -1,5 +1,5 @@
 [package]
-name = "supabase-client"
+name = "supabase-client-sdk"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
