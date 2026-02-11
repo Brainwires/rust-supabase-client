@@ -3,9 +3,7 @@
 [![Tests](https://img.shields.io/badge/tests-311%20passing-brightgreen)](#testing)
 [![Rust](https://img.shields.io/badge/rust-2021%20edition-orange)](https://www.rust-lang.org/)
 
-A Rust crate wrapping [sqlx](https://github.com/launchbadge/sqlx) with a Supabase-like fluent API for PostgreSQL.
-
-> **This is NOT a REST API wrapper.** It generates SQL directly via sqlx, giving you compile-time safety, connection pooling, and the full power of Postgres while using a familiar Supabase-style builder API.
+A Rust client for [Supabase](https://supabase.com/) with a fluent, Supabase JS-like API. Uses the **PostgREST REST API by default** — no database connection needed. Opt into direct PostgreSQL access via [sqlx](https://github.com/launchbadge/sqlx) with the `direct-sql` feature flag.
 
 ## Features
 
@@ -72,6 +70,7 @@ supabase-client = { path = "crates/supabase-client", features = ["auth", "realti
 | `realtime` | No | WebSocket realtime subscriptions |
 | `storage` | No | Object storage client |
 | `functions` | No | Edge Functions client |
+| `direct-sql` | No | Direct PostgreSQL via sqlx (bypasses PostgREST) |
 | `full` | No | All features enabled |
 
 ## Quick Start
@@ -81,13 +80,14 @@ use supabase_client::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), SupabaseError> {
-    let config = SupabaseConfig::new("postgres://user:pass@localhost/mydb")
-        .supabase_url("http://localhost:54321")
-        .supabase_key("your-anon-key");
+    let config = SupabaseConfig::new(
+        "https://your-project.supabase.co",  // or "http://localhost:64321" for local
+        "your-anon-key",
+    );
 
-    let client = SupabaseClient::new(config).await?;
+    let client = SupabaseClient::new(config)?; // sync — no database connection needed
 
-    // Select all rows from a table
+    // Select all rows from a table (via PostgREST)
     let response = client.from("cities")
         .select("*")
         .execute()
@@ -156,7 +156,7 @@ let response = client.rpc("get_cities_by_country", serde_json::json!({"cid": 1})
 ```rust
 use supabase_client::prelude::*;
 
-#[derive(Table, sqlx::FromRow, Debug)]
+#[derive(Table, serde::Deserialize, Debug)]
 #[table(name = "cities")]
 struct City {
     #[primary_key(auto_generate)]
@@ -164,6 +164,7 @@ struct City {
     pub name: String,
     pub country_id: i32,
 }
+// Note: also derive `sqlx::FromRow` when using the `direct-sql` feature
 
 // Typed SELECT
 let response = client.from_typed::<City>()
@@ -510,17 +511,30 @@ Each sub-crate provides an extension trait on `SupabaseClient`:
 ## Configuration
 
 ```rust
-let config = SupabaseConfig::new("postgres://user:pass@host/db")
-    .supabase_url("https://your-project.supabase.co")  // Required for auth/realtime/storage
-    .supabase_key("your-anon-key")                      // Required for auth/realtime/storage
-    .schema("public")                                    // Default schema
-    .max_connections(10)                                 // Connection pool max
-    .min_connections(1);                                 // Connection pool min
+// REST-only (default) — no database connection needed
+let config = SupabaseConfig::new(
+    "https://your-project.supabase.co",
+    "your-anon-key",
+)
+.schema("public"); // optional, defaults to "public"
 ```
 
-- `database_url` - PostgreSQL connection string (required for queries)
-- `supabase_url` - Supabase project URL (required for auth, realtime, storage, functions)
-- `supabase_key` - Supabase anon or service_role key (required for auth, realtime, storage, functions)
+```rust
+// With direct SQL (requires `direct-sql` feature)
+let config = SupabaseConfig::new(
+    "https://your-project.supabase.co",
+    "your-anon-key",
+)
+.database_url("postgres://user:pass@host/db")
+.max_connections(10)
+.min_connections(1);
+
+let client = SupabaseClient::with_database(config).await?;
+```
+
+- `supabase_url` - Supabase project URL (required)
+- `supabase_key` - Supabase anon or service_role key (required)
+- `database_url` - PostgreSQL connection string (optional, requires `direct-sql` feature)
 
 ## Testing
 
@@ -532,6 +546,12 @@ supabase start
 
 # Run all tests (use --test-threads=1 to avoid race conditions)
 cargo test --workspace -- --test-threads=1
+
+# REST integration tests (PostgREST backend, default)
+cargo test -p supabase-client-query --test rest_integration -- --test-threads=1
+
+# Direct-SQL integration tests (requires direct-sql feature)
+cargo test -p supabase-client --features direct-sql -- --test-threads=1
 
 # Run tests for a specific crate
 cargo test -p supabase-client-query
@@ -548,8 +568,8 @@ Set `SKIP_REALTIME_TESTS=1` to skip realtime integration tests if the local inst
 ## Requirements
 
 - Rust 1.75+
-- PostgreSQL (via sqlx 0.8)
 - Local Supabase CLI (for integration tests)
+- PostgreSQL via sqlx 0.8 (only when using the `direct-sql` feature)
 
 ## License
 
