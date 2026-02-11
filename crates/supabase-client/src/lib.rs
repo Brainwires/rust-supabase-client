@@ -9,7 +9,7 @@ pub use supabase_client_query::*;
 #[cfg(feature = "derive")]
 pub use supabase_client_derive::*;
 
-// Re-export future phase crates
+// Re-export auth crate
 #[cfg(feature = "auth")]
 pub use supabase_client_auth;
 
@@ -38,4 +38,10 @@ pub mod prelude {
 
     #[cfg(feature = "derive")]
     pub use supabase_client_derive::Table;
+
+    #[cfg(feature = "auth")]
+    pub use supabase_client_auth::{
+        AuthClient, AuthError, AuthResponse, Session, User,
+        SupabaseClientAuthExt,
+    };
 }
