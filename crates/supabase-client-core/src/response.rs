@@ -48,6 +48,7 @@ impl<T> SupabaseResponse<T> {
     pub fn error(err: SupabaseError) -> Self {
         let status = match &err {
             SupabaseError::NoRows => StatusCode::NotFound,
+            #[cfg(feature = "direct-sql")]
             SupabaseError::Database(_) => StatusCode::InternalError,
             _ => StatusCode::InternalError,
         };

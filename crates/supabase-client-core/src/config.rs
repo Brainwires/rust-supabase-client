@@ -1,21 +1,28 @@
+#[cfg(feature = "direct-sql")]
 use std::time::Duration;
 
-/// Configuration for connecting to a Supabase/PostgreSQL instance.
+/// Configuration for connecting to a Supabase instance.
+///
+/// By default, uses the PostgREST REST API (no database connection needed).
+/// Enable the `direct-sql` feature and call `.database_url()` to use direct SQL via sqlx.
 #[derive(Debug, Clone)]
 pub struct SupabaseConfig {
-    /// PostgreSQL connection string (e.g. "postgres://user:pass@host/db")
-    pub database_url: String,
-    /// Optional Supabase project URL (for auth/storage/realtime)
-    pub supabase_url: Option<String>,
-    /// Optional Supabase anon/service key
-    pub supabase_key: Option<String>,
+    /// Supabase project URL (e.g. "http://localhost:64321")
+    pub supabase_url: String,
+    /// Supabase API key (anon or service_role)
+    pub supabase_key: String,
+    /// Optional PostgreSQL connection string (for direct-sql feature)
+    #[cfg(feature = "direct-sql")]
+    pub database_url: Option<String>,
     /// Default schema (defaults to "public")
     pub schema: String,
-    /// Connection pool configuration
+    /// Connection pool configuration (only used with direct-sql)
+    #[cfg(feature = "direct-sql")]
     pub pool: PoolConfig,
 }
 
-/// Connection pool settings.
+/// Connection pool settings (only available with `direct-sql` feature).
+#[cfg(feature = "direct-sql")]
 #[derive(Debug, Clone)]
 pub struct PoolConfig {
     pub max_connections: u32,
@@ -25,6 +32,7 @@ pub struct PoolConfig {
     pub max_lifetime: Option<Duration>,
 }
 
+#[cfg(feature = "direct-sql")]
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
@@ -38,27 +46,19 @@ impl Default for PoolConfig {
 }
 
 impl SupabaseConfig {
-    /// Create a new config with just a database URL.
-    pub fn new(database_url: impl Into<String>) -> Self {
+    /// Create a new REST-first config with Supabase URL and API key.
+    ///
+    /// This is the primary constructor. No database connection is needed.
+    pub fn new(supabase_url: impl Into<String>, supabase_key: impl Into<String>) -> Self {
         Self {
-            database_url: database_url.into(),
-            supabase_url: None,
-            supabase_key: None,
+            supabase_url: supabase_url.into(),
+            supabase_key: supabase_key.into(),
+            #[cfg(feature = "direct-sql")]
+            database_url: None,
             schema: "public".to_string(),
+            #[cfg(feature = "direct-sql")]
             pool: PoolConfig::default(),
         }
-    }
-
-    /// Set the Supabase project URL.
-    pub fn supabase_url(mut self, url: impl Into<String>) -> Self {
-        self.supabase_url = Some(url.into());
-        self
-    }
-
-    /// Set the Supabase API key.
-    pub fn supabase_key(mut self, key: impl Into<String>) -> Self {
-        self.supabase_key = Some(key.into());
-        self
     }
 
     /// Set the default schema.
@@ -67,19 +67,29 @@ impl SupabaseConfig {
         self
     }
 
+    /// Set the PostgreSQL database URL for direct SQL access.
+    #[cfg(feature = "direct-sql")]
+    pub fn database_url(mut self, url: impl Into<String>) -> Self {
+        self.database_url = Some(url.into());
+        self
+    }
+
     /// Set maximum number of pool connections.
+    #[cfg(feature = "direct-sql")]
     pub fn max_connections(mut self, n: u32) -> Self {
         self.pool.max_connections = n;
         self
     }
 
     /// Set minimum number of pool connections.
+    #[cfg(feature = "direct-sql")]
     pub fn min_connections(mut self, n: u32) -> Self {
         self.pool.min_connections = n;
         self
     }
 
     /// Set pool acquire timeout.
+    #[cfg(feature = "direct-sql")]
     pub fn acquire_timeout(mut self, timeout: Duration) -> Self {
         self.pool.acquire_timeout = timeout;
         self

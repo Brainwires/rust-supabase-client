@@ -1939,12 +1939,14 @@ name = "supabase-client-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "reqwest",
  "serde",
  "serde_json",
  "sqlx",
  "thiserror",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 
@@ -1976,6 +1978,7 @@ name = "supabase-client-query"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "reqwest",
  "serde",
  "serde_json",
  "sqlx",
@@ -1983,6 +1986,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 

@@ -1,11 +1,10 @@
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use serde_json::Value as JsonValue;
-use sqlx::PgPool;
 
 use supabase_client_core::Row;
 
+use crate::backend::QueryBackend;
 use crate::delete::DeleteBuilder;
 use crate::insert::InsertBuilder;
 use crate::select::SelectBuilder;
@@ -19,15 +18,15 @@ use crate::upsert::UpsertBuilder;
 /// Call `.select()`, `.insert()`, `.update()`, `.delete()`, or `.upsert()` to
 /// specialize into the appropriate builder type.
 pub struct QueryBuilder {
-    pool: Arc<PgPool>,
+    backend: QueryBackend,
     schema: String,
     table: String,
 }
 
 impl QueryBuilder {
-    pub fn new(pool: Arc<PgPool>, schema: String, table: String) -> Self {
+    pub fn new(backend: QueryBackend, schema: String, table: String) -> Self {
         Self {
-            pool,
+            backend,
             schema,
             table,
         }
@@ -59,7 +58,7 @@ impl QueryBuilder {
         }
 
         SelectBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params: ParamStore::new(),
             _marker: PhantomData,
@@ -79,7 +78,7 @@ impl QueryBuilder {
         }
 
         InsertBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params,
             _marker: PhantomData,
@@ -112,7 +111,7 @@ impl QueryBuilder {
         }
 
         InsertBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params,
             _marker: PhantomData,
@@ -132,7 +131,7 @@ impl QueryBuilder {
         }
 
         UpdateBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params,
             _marker: PhantomData,
@@ -143,7 +142,7 @@ impl QueryBuilder {
     pub fn delete(self) -> DeleteBuilder<Row> {
         let parts = SqlParts::new(SqlOperation::Delete, &self.schema, &self.table);
         DeleteBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params: ParamStore::new(),
             _marker: PhantomData,
@@ -163,7 +162,7 @@ impl QueryBuilder {
         }
 
         UpsertBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params,
             _marker: PhantomData,
@@ -195,7 +194,7 @@ impl QueryBuilder {
         }
 
         UpsertBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params,
             _marker: PhantomData,
@@ -205,15 +204,15 @@ impl QueryBuilder {
 
 /// Entry point for typed queries created by `client.from_typed::<T>()`.
 pub struct TypedQueryBuilder<T: Table> {
-    pool: Arc<PgPool>,
+    backend: QueryBackend,
     schema: String,
     _marker: PhantomData<T>,
 }
 
 impl<T: Table> TypedQueryBuilder<T> {
-    pub fn new(pool: Arc<PgPool>, schema: String) -> Self {
+    pub fn new(backend: QueryBackend, schema: String) -> Self {
         Self {
-            pool,
+            backend,
             schema,
             _marker: PhantomData,
         }
@@ -223,7 +222,7 @@ impl<T: Table> TypedQueryBuilder<T> {
     pub fn select(self) -> SelectBuilder<T> {
         let parts = SqlParts::new(SqlOperation::Select, &self.schema, T::table_name());
         SelectBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params: ParamStore::new(),
             _marker: PhantomData,
@@ -249,7 +248,7 @@ impl<T: Table> TypedQueryBuilder<T> {
             parts.select_columns = Some(quoted);
         }
         SelectBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params: ParamStore::new(),
             _marker: PhantomData,
@@ -270,7 +269,7 @@ impl<T: Table> TypedQueryBuilder<T> {
         }
 
         InsertBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params,
             _marker: PhantomData,
@@ -309,7 +308,7 @@ impl<T: Table> TypedQueryBuilder<T> {
         }
 
         UpdateBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params,
             _marker: PhantomData,
@@ -320,7 +319,7 @@ impl<T: Table> TypedQueryBuilder<T> {
     pub fn delete(self) -> DeleteBuilder<T> {
         let parts = SqlParts::new(SqlOperation::Delete, &self.schema, T::table_name());
         DeleteBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params: ParamStore::new(),
             _marker: PhantomData,
@@ -352,7 +351,7 @@ impl<T: Table> TypedQueryBuilder<T> {
         parts.conflict_columns = pk_cols.iter().map(|c| c.to_string()).collect();
 
         UpsertBuilder {
-            pool: self.pool,
+            backend: self.backend,
             parts,
             params,
             _marker: PhantomData,

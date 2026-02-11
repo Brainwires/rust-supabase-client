@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::fmt;
+use std::time::Duration;
+use tokio::sync::broadcast;
 
 /// A user session returned from sign-in, sign-up, or token refresh.
 ///
@@ -631,6 +633,98 @@ impl fmt::Display for OtpType {
     }
 }
 
+// ─── Auth State Management Types ─────────────────────────────
+
+/// Auth state change event types.
+///
+/// Emitted when the stored session state changes (sign-in, sign-out, refresh, etc.).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthChangeEvent {
+    /// Initial session loaded (e.g., from set_session).
+    InitialSession,
+    /// User signed in (password, OTP, OAuth, anonymous, MFA verify, etc.).
+    SignedIn,
+    /// User signed out.
+    SignedOut,
+    /// Access token was refreshed.
+    TokenRefreshed,
+    /// User attributes were updated.
+    UserUpdated,
+    /// Password recovery flow initiated.
+    PasswordRecovery,
+}
+
+impl fmt::Display for AuthChangeEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InitialSession => write!(f, "INITIAL_SESSION"),
+            Self::SignedIn => write!(f, "SIGNED_IN"),
+            Self::SignedOut => write!(f, "SIGNED_OUT"),
+            Self::TokenRefreshed => write!(f, "TOKEN_REFRESHED"),
+            Self::UserUpdated => write!(f, "USER_UPDATED"),
+            Self::PasswordRecovery => write!(f, "PASSWORD_RECOVERY"),
+        }
+    }
+}
+
+/// An auth state change notification, containing the event type and optional session.
+#[derive(Debug, Clone)]
+pub struct AuthStateChange {
+    pub event: AuthChangeEvent,
+    pub session: Option<Session>,
+}
+
+/// Subscription handle for auth state change events.
+///
+/// Created by [`AuthClient::on_auth_state_change()`]. Use [`next()`](AuthSubscription::next)
+/// to await the next event.
+pub struct AuthSubscription {
+    pub(crate) rx: broadcast::Receiver<AuthStateChange>,
+}
+
+impl AuthSubscription {
+    /// Await the next auth state change event.
+    ///
+    /// Returns `None` if the sender has been dropped (client deallocated).
+    /// Skips over lagged messages automatically.
+    pub async fn next(&mut self) -> Option<AuthStateChange> {
+        loop {
+            match self.rx.recv().await {
+                Ok(change) => return Some(change),
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    }
+}
+
+impl fmt::Debug for AuthSubscription {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AuthSubscription").finish()
+    }
+}
+
+/// Configuration for automatic token refresh.
+#[derive(Debug, Clone)]
+pub struct AutoRefreshConfig {
+    /// How often to check if the session needs refreshing (default: 30s).
+    pub check_interval: Duration,
+    /// How far before expiry to trigger a refresh (default: 60s).
+    pub refresh_margin: Duration,
+    /// Maximum consecutive refresh failures before signing out (default: 3).
+    pub max_retries: u32,
+}
+
+impl Default for AutoRefreshConfig {
+    fn default() -> Self {
+        Self {
+            check_interval: Duration::from_secs(30),
+            refresh_margin: Duration::from_secs(60),
+            max_retries: 3,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1024,5 +1118,43 @@ mod tests {
         assert!(key.crv.is_none());
         assert!(key.x.is_none());
         assert!(key.y.is_none());
+    }
+
+    // ─── Auth State Management Type Tests ────────────────────
+
+    #[test]
+    fn auth_change_event_display() {
+        assert_eq!(AuthChangeEvent::InitialSession.to_string(), "INITIAL_SESSION");
+        assert_eq!(AuthChangeEvent::SignedIn.to_string(), "SIGNED_IN");
+        assert_eq!(AuthChangeEvent::SignedOut.to_string(), "SIGNED_OUT");
+        assert_eq!(AuthChangeEvent::TokenRefreshed.to_string(), "TOKEN_REFRESHED");
+        assert_eq!(AuthChangeEvent::UserUpdated.to_string(), "USER_UPDATED");
+        assert_eq!(AuthChangeEvent::PasswordRecovery.to_string(), "PASSWORD_RECOVERY");
+    }
+
+    #[test]
+    fn auth_change_event_equality() {
+        assert_eq!(AuthChangeEvent::SignedIn, AuthChangeEvent::SignedIn);
+        assert_ne!(AuthChangeEvent::SignedIn, AuthChangeEvent::SignedOut);
+    }
+
+    #[test]
+    fn auto_refresh_config_default() {
+        let config = AutoRefreshConfig::default();
+        assert_eq!(config.check_interval, Duration::from_secs(30));
+        assert_eq!(config.refresh_margin, Duration::from_secs(60));
+        assert_eq!(config.max_retries, 3);
+    }
+
+    #[test]
+    fn auto_refresh_config_custom() {
+        let config = AutoRefreshConfig {
+            check_interval: Duration::from_secs(10),
+            refresh_margin: Duration::from_secs(120),
+            max_retries: 5,
+        };
+        assert_eq!(config.check_interval, Duration::from_secs(10));
+        assert_eq!(config.refresh_margin, Duration::from_secs(120));
+        assert_eq!(config.max_retries, 5);
     }
 }

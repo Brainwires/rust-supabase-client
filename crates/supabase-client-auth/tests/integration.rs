@@ -14,6 +14,8 @@ use supabase_client_auth::{
     CreateOAuthClientParams, UpdateOAuthClientParams,
     OAuthAuthorizeUrlParams, OAuthTokenExchangeParams,
     User,
+    // Phase 12: Session state management
+    AuthChangeEvent,
 };
 
 /// Default local Supabase URL (from `supabase start` output).
@@ -1457,5 +1459,249 @@ async fn oauth_revoke_grant_nonexistent() {
         );
 
         cleanup_user(&admin, &user.id).await;
+    }
+}
+
+// ─── Session State Management Integration Tests ─────────────────
+
+mod session_management {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_sign_in_stores_session() {
+        let auth = auth_client();
+        let admin_auth = admin_auth_client();
+        let admin = admin_auth.admin();
+
+        let email = test_email("session-store");
+        let password = "TestPassword123!";
+        let user = create_test_user(&admin, &email, password).await;
+
+        // Before sign-in, no session
+        assert!(auth.get_session().await.is_none());
+
+        // Sign in
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .expect("sign_in_with_password_email failed");
+
+        // After sign-in, session should be stored
+        let stored = auth.get_session().await.expect("Expected stored session");
+        assert_eq!(stored.access_token, session.access_token);
+        assert_eq!(stored.user.id, user.id);
+
+        cleanup_user(&admin, &user.id).await;
+    }
+
+    #[tokio::test]
+    async fn test_get_session_user() {
+        let auth = auth_client();
+        let admin_auth = admin_auth_client();
+        let admin = admin_auth.admin();
+
+        let email = test_email("session-user");
+        let password = "TestPassword123!";
+        let user = create_test_user(&admin, &email, password).await;
+
+        // No session → error
+        let err = auth.get_session_user().await;
+        assert!(err.is_err());
+
+        // Sign in
+        auth.sign_in_with_password_email(&email, password)
+            .await
+            .expect("sign_in failed");
+
+        // Now get_session_user should work
+        let fetched_user = auth
+            .get_session_user()
+            .await
+            .expect("get_session_user failed");
+        assert_eq!(fetched_user.id, user.id);
+        assert_eq!(fetched_user.email.as_deref(), Some(email.as_str()));
+
+        cleanup_user(&admin, &user.id).await;
+    }
+
+    #[tokio::test]
+    async fn test_refresh_current_session() {
+        let auth = auth_client();
+        let admin_auth = admin_auth_client();
+        let admin = admin_auth.admin();
+
+        let email = test_email("session-refresh");
+        let password = "TestPassword123!";
+        let user = create_test_user(&admin, &email, password).await;
+
+        // Sign in
+        let original = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .expect("sign_in failed");
+
+        // Refresh current session
+        let refreshed = auth
+            .refresh_current_session()
+            .await
+            .expect("refresh_current_session failed");
+
+        // New token should be different
+        assert_ne!(refreshed.access_token, original.access_token);
+
+        // Stored session should be updated
+        let stored = auth.get_session().await.expect("Expected stored session");
+        assert_eq!(stored.access_token, refreshed.access_token);
+
+        cleanup_user(&admin, &user.id).await;
+    }
+
+    #[tokio::test]
+    async fn test_sign_out_current() {
+        let auth = auth_client();
+        let admin_auth = admin_auth_client();
+        let admin = admin_auth.admin();
+
+        let email = test_email("session-signout");
+        let password = "TestPassword123!";
+        let user = create_test_user(&admin, &email, password).await;
+
+        // Sign in
+        auth.sign_in_with_password_email(&email, password)
+            .await
+            .expect("sign_in failed");
+        assert!(auth.get_session().await.is_some());
+
+        // Sign out using stored session
+        auth.sign_out_current()
+            .await
+            .expect("sign_out_current failed");
+
+        // Session should be cleared
+        assert!(auth.get_session().await.is_none());
+
+        cleanup_user(&admin, &user.id).await;
+    }
+
+    #[tokio::test]
+    async fn test_event_stream_sign_in_out() {
+        let auth = auth_client();
+        let admin_auth = admin_auth_client();
+        let admin = admin_auth.admin();
+
+        let email = test_email("session-events");
+        let password = "TestPassword123!";
+        let user = create_test_user(&admin, &email, password).await;
+
+        let mut sub = auth.on_auth_state_change();
+        let timeout = std::time::Duration::from_secs(5);
+
+        // Sign in → expect SignedIn event
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .expect("sign_in failed");
+
+        let event = tokio::time::timeout(timeout, sub.next())
+            .await
+            .expect("Timed out waiting for SignedIn event")
+            .expect("Channel closed");
+        assert_eq!(event.event, AuthChangeEvent::SignedIn);
+        assert!(event.session.is_some());
+
+        // Sign out → expect SignedOut event
+        auth.sign_out(&session.access_token)
+            .await
+            .expect("sign_out failed");
+
+        let event = tokio::time::timeout(timeout, sub.next())
+            .await
+            .expect("Timed out waiting for SignedOut event")
+            .expect("Channel closed");
+        assert_eq!(event.event, AuthChangeEvent::SignedOut);
+        assert!(event.session.is_none());
+
+        cleanup_user(&admin, &user.id).await;
+    }
+
+    #[tokio::test]
+    async fn test_refresh_emits_token_refreshed() {
+        let auth = auth_client();
+        let admin_auth = admin_auth_client();
+        let admin = admin_auth.admin();
+
+        let email = test_email("session-refresh-event");
+        let password = "TestPassword123!";
+        let user = create_test_user(&admin, &email, password).await;
+
+        // Sign in first (consume the SignedIn event)
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .expect("sign_in failed");
+
+        // Now subscribe and refresh
+        let mut sub = auth.on_auth_state_change();
+        let timeout = std::time::Duration::from_secs(5);
+
+        auth.refresh_session(&session.refresh_token)
+            .await
+            .expect("refresh_session failed");
+
+        let event = tokio::time::timeout(timeout, sub.next())
+            .await
+            .expect("Timed out waiting for TokenRefreshed")
+            .expect("Channel closed");
+        assert_eq!(event.event, AuthChangeEvent::TokenRefreshed);
+        assert!(event.session.is_some());
+
+        cleanup_user(&admin, &user.id).await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_and_use() {
+        let auth = auth_client();
+        let admin_auth = admin_auth_client();
+        let admin = admin_auth.admin();
+
+        let email = test_email("session-setuse");
+        let password = "TestPassword123!";
+        let user = create_test_user(&admin, &email, password).await;
+
+        // Sign in with a separate client to get a valid session
+        let auth2 = auth_client();
+        let session = auth2
+            .sign_in_with_password_email(&email, password)
+            .await
+            .expect("sign_in failed");
+
+        // Set the session on a fresh client
+        auth.set_session(session.clone()).await;
+
+        // The stored session should be usable
+        let fetched_user = auth
+            .get_session_user()
+            .await
+            .expect("get_session_user failed after set_session");
+        assert_eq!(fetched_user.id, user.id);
+
+        cleanup_user(&admin, &user.id).await;
+    }
+
+    #[tokio::test]
+    async fn test_no_session_error() {
+        let auth = auth_client();
+
+        // get_session_user without sign-in
+        let err = auth.get_session_user().await;
+        assert!(matches!(err, Err(AuthError::NoSession)));
+
+        // refresh_current_session without sign-in
+        let err = auth.refresh_current_session().await;
+        assert!(matches!(err, Err(AuthError::NoSession)));
+
+        // sign_out_current without sign-in
+        let err = auth.sign_out_current().await;
+        assert!(matches!(err, Err(AuthError::NoSession)));
     }
 }

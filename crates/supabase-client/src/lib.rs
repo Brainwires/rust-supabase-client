@@ -31,6 +31,8 @@ pub mod prelude {
     pub use supabase_client_core::{
         Row, SupabaseClient, SupabaseConfig, SupabaseError, SupabaseResponse, SupabaseResult,
     };
+    #[cfg(feature = "direct-sql")]
+    pub use supabase_client_core::PoolConfig;
     pub use supabase_client_core::row;
 
     #[cfg(feature = "query")]
@@ -47,6 +49,8 @@ pub mod prelude {
     pub use supabase_client_auth::{
         AuthClient, AuthError, AuthResponse, Session, User,
         SupabaseClientAuthExt,
+        // Session state management
+        AuthChangeEvent, AuthStateChange, AuthSubscription, AutoRefreshConfig,
         // MFA types
         MfaEnrollParams, MfaVerifyParams, MfaChallengeParams,
         MfaEnrollResponse, MfaTotpInfo, MfaChallengeResponse, MfaUnenrollResponse,

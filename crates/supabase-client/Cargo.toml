@@ -14,6 +14,7 @@ auth = ["dep:supabase-client-auth"]
 realtime = ["dep:supabase-client-realtime"]
 storage = ["dep:supabase-client-storage"]
 functions = ["dep:supabase-client-functions"]
+direct-sql = ["supabase-client-core/direct-sql", "supabase-client-query?/direct-sql"]
 full = ["query", "derive", "auth", "realtime", "storage", "functions"]
 
 [dependencies]

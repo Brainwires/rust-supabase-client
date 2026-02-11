@@ -1,7 +1,9 @@
 //! Integration tests for supabase-client against a real PostgreSQL database.
 //!
-//! These tests require a running PostgreSQL instance with the test database set up.
+//! These tests require the `direct-sql` feature and a running PostgreSQL instance.
 //! Set DATABASE_URL env var or it defaults to the local Supabase dev instance.
+//!
+//! Run with: cargo test -p supabase-client --features direct-sql -- --test-threads=1
 //!
 //! Setup SQL:
 //! ```sql
@@ -18,6 +20,9 @@
 //! CREATE FUNCTION add_numbers(a INTEGER, b INTEGER) RETURNS INTEGER ...
 //! ```
 
+// These tests require direct-sql feature
+#![cfg(feature = "direct-sql")]
+
 use serde::{Deserialize, Serialize};
 use supabase_client::prelude::*;
 use supabase_client::{
@@ -26,6 +31,9 @@ use supabase_client::{
 
 const TEST_DB_URL: &str =
     "postgres://postgres:319f76099a3e89d964a09e9d673f695d1b401fd8b500d1f7400a285e846ee246@localhost:15432/supabase_client_test";
+
+const SUPABASE_URL: &str = "http://localhost:64321";
+const ANON_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
 
 fn db_url() -> String {
     std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DB_URL.to_string())
@@ -59,14 +67,16 @@ struct Country {
 }
 
 async fn create_client() -> SupabaseClient {
-    SupabaseClient::new(SupabaseConfig::new(db_url()))
+    let config = SupabaseConfig::new(SUPABASE_URL, ANON_KEY)
+        .database_url(db_url());
+    SupabaseClient::with_database(config)
         .await
         .expect("Failed to connect to test database")
 }
 
 /// Reset test data to a known state using TRUNCATE CASCADE for atomicity.
 async fn reset_data(client: &SupabaseClient) {
-    let pool = client.pool();
+    let pool = client.pool().expect("pool required for direct-sql tests");
     sqlx::query("TRUNCATE cities, countries RESTART IDENTITY CASCADE")
         .execute(pool)
         .await

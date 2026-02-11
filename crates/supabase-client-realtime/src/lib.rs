@@ -53,19 +53,6 @@ pub trait SupabaseClientRealtimeExt {
 
 impl SupabaseClientRealtimeExt for SupabaseClient {
     fn realtime(&self) -> Result<RealtimeClient, RealtimeError> {
-        let config = self.config();
-        let url = config
-            .supabase_url
-            .as_ref()
-            .ok_or_else(|| {
-                RealtimeError::InvalidConfig("supabase_url is required for realtime".into())
-            })?;
-        let key = config
-            .supabase_key
-            .as_ref()
-            .ok_or_else(|| {
-                RealtimeError::InvalidConfig("supabase_key is required for realtime".into())
-            })?;
-        RealtimeClient::new(url, key)
+        RealtimeClient::new(self.supabase_url(), self.api_key())
     }
 }

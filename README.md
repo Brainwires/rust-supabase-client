@@ -1,5 +1,8 @@
 # supabase-client
 
+[![Tests](https://img.shields.io/badge/tests-311%20passing-brightgreen)](#testing)
+[![Rust](https://img.shields.io/badge/rust-2021%20edition-orange)](https://www.rust-lang.org/)
+
 A Rust crate wrapping [sqlx](https://github.com/launchbadge/sqlx) with a Supabase-like fluent API for PostgreSQL.
 
 > **This is NOT a REST API wrapper.** It generates SQL directly via sqlx, giving you compile-time safety, connection pooling, and the full power of Postgres while using a familiar Supabase-style builder API.

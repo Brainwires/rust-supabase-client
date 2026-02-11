@@ -2,8 +2,9 @@ pub mod sql;
 pub mod table;
 pub mod filter;
 pub mod modifier;
-pub mod generate;
-pub mod execute;
+pub mod backend;
+pub mod postgrest;
+pub mod postgrest_execute;
 pub mod builder;
 pub mod select;
 pub mod insert;
@@ -12,10 +13,16 @@ pub mod delete;
 pub mod upsert;
 pub mod rpc;
 
+#[cfg(feature = "direct-sql")]
+pub mod generate;
+#[cfg(feature = "direct-sql")]
+pub mod execute;
+
 pub use sql::*;
 pub use table::Table;
 pub use filter::{Filterable, FilterCollector};
 pub use modifier::Modifiable;
+pub use backend::QueryBackend;
 pub use builder::{QueryBuilder, TypedQueryBuilder};
 pub use select::SelectBuilder;
 pub use insert::InsertBuilder;
@@ -27,6 +34,8 @@ pub use rpc::{RpcBuilder, TypedRpcBuilder};
 // Re-export Phase 10 types for convenience
 pub use sql::{ExplainOptions, ExplainFormat};
 
+use std::sync::Arc;
+use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 use supabase_client_core::SupabaseClient;
 
@@ -44,31 +53,55 @@ pub trait SupabaseClientQueryExt {
     /// Call a stored procedure/function with typed return.
     fn rpc_typed<T>(&self, function: &str, args: JsonValue) -> Result<TypedRpcBuilder<T>, supabase_client_core::SupabaseError>
     where
-        T: Send + Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>;
+        T: DeserializeOwned + Send;
 }
 
 impl SupabaseClientQueryExt for SupabaseClient {
     fn from(&self, table: &str) -> QueryBuilder {
-        QueryBuilder::new(self.pool_arc(), self.schema().to_string(), table.to_string())
+        let backend = make_backend(self);
+        QueryBuilder::new(backend, self.schema().to_string(), table.to_string())
     }
 
     fn from_typed<T: Table>(&self) -> TypedQueryBuilder<T> {
+        let backend = make_backend(self);
         let schema = if T::schema_name() != "public" {
             T::schema_name().to_string()
         } else {
             self.schema().to_string()
         };
-        TypedQueryBuilder::new(self.pool_arc(), schema)
+        TypedQueryBuilder::new(backend, schema)
     }
 
     fn rpc(&self, function: &str, args: JsonValue) -> Result<RpcBuilder, supabase_client_core::SupabaseError> {
-        RpcBuilder::new(self.pool_arc(), self.schema().to_string(), function.to_string(), args)
+        let backend = make_backend(self);
+        RpcBuilder::new(backend, self.schema().to_string(), function.to_string(), args)
     }
 
     fn rpc_typed<T>(&self, function: &str, args: JsonValue) -> Result<TypedRpcBuilder<T>, supabase_client_core::SupabaseError>
     where
-        T: Send + Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
+        T: DeserializeOwned + Send,
     {
-        TypedRpcBuilder::new(self.pool_arc(), self.schema().to_string(), function.to_string(), args)
+        let backend = make_backend(self);
+        TypedRpcBuilder::new(backend, self.schema().to_string(), function.to_string(), args)
+    }
+}
+
+/// Create a QueryBackend from a SupabaseClient.
+///
+/// If the `direct-sql` feature is enabled and a pool is available, uses DirectSql.
+/// Otherwise, uses the REST backend (PostgREST).
+fn make_backend(client: &SupabaseClient) -> QueryBackend {
+    #[cfg(feature = "direct-sql")]
+    {
+        if let Some(pool) = client.pool_arc() {
+            return QueryBackend::DirectSql { pool };
+        }
+    }
+
+    QueryBackend::Rest {
+        http: client.http().clone(),
+        base_url: Arc::from(client.supabase_url()),
+        api_key: Arc::from(client.api_key()),
+        schema: client.schema().to_string(),
     }
 }

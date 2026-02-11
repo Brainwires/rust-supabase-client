@@ -60,15 +60,6 @@ pub trait SupabaseClientAuthExt {
 
 impl SupabaseClientAuthExt for SupabaseClient {
     fn auth(&self) -> Result<AuthClient, AuthError> {
-        let config = self.config();
-        let url = config
-            .supabase_url
-            .as_ref()
-            .ok_or_else(|| AuthError::InvalidConfig("supabase_url is required for auth".into()))?;
-        let key = config
-            .supabase_key
-            .as_ref()
-            .ok_or_else(|| AuthError::InvalidConfig("supabase_key is required for auth".into()))?;
-        AuthClient::new(url, key)
+        AuthClient::new(self.supabase_url(), self.api_key())
     }
 }

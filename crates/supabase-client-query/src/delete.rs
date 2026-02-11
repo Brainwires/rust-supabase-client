@@ -1,11 +1,10 @@
 use std::marker::PhantomData;
-use std::sync::Arc;
 
-use sqlx::PgPool;
+use serde::de::DeserializeOwned;
 
 use supabase_client_core::SupabaseResponse;
 
-use crate::execute;
+use crate::backend::QueryBackend;
 use crate::filter::Filterable;
 use crate::modifier::Modifiable;
 use crate::sql::{FilterCondition, ParamStore, SqlParts};
@@ -13,7 +12,7 @@ use crate::sql::{FilterCondition, ParamStore, SqlParts};
 /// Builder for DELETE queries. Implements Filterable and Modifiable.
 /// Call `.select()` to add RETURNING clause.
 pub struct DeleteBuilder<T> {
-    pub(crate) pool: Arc<PgPool>,
+    pub(crate) backend: QueryBackend,
     pub(crate) parts: SqlParts,
     pub(crate) params: ParamStore,
     pub(crate) _marker: PhantomData<T>,
@@ -72,12 +71,54 @@ impl<T> DeleteBuilder<T> {
     }
 }
 
+// REST-only mode: only DeserializeOwned + Send needed
+#[cfg(not(feature = "direct-sql"))]
 impl<T> DeleteBuilder<T>
 where
-    T: Send + Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
+    T: DeserializeOwned + Send,
 {
     /// Execute the DELETE query.
     pub async fn execute(self) -> SupabaseResponse<T> {
-        execute::execute_typed::<T>(&self.pool, &self.parts, &self.params).await
+        let QueryBackend::Rest { ref http, ref base_url, ref api_key, ref schema } = self.backend;
+        let (url, headers) = match crate::postgrest::build_postgrest_delete(
+            base_url, &self.parts, &self.params,
+        ) {
+            Ok(r) => r,
+            Err(e) => return SupabaseResponse::error(
+                supabase_client_core::SupabaseError::QueryBuilder(e),
+            ),
+        };
+        crate::postgrest_execute::execute_rest(
+            http, reqwest::Method::DELETE, &url, headers, None, api_key, schema, &self.parts,
+        ).await
+    }
+}
+
+// Direct-SQL mode: additional FromRow + Unpin bounds
+#[cfg(feature = "direct-sql")]
+impl<T> DeleteBuilder<T>
+where
+    T: DeserializeOwned + Send + Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
+{
+    /// Execute the DELETE query.
+    pub async fn execute(self) -> SupabaseResponse<T> {
+        match &self.backend {
+            QueryBackend::Rest { http, base_url, api_key, schema } => {
+                let (url, headers) = match crate::postgrest::build_postgrest_delete(
+                    base_url, &self.parts, &self.params,
+                ) {
+                    Ok(r) => r,
+                    Err(e) => return SupabaseResponse::error(
+                        supabase_client_core::SupabaseError::QueryBuilder(e),
+                    ),
+                };
+                crate::postgrest_execute::execute_rest(
+                    http, reqwest::Method::DELETE, &url, headers, None, api_key, schema, &self.parts,
+                ).await
+            }
+            QueryBackend::DirectSql { pool } => {
+                crate::execute::execute_typed::<T>(pool, &self.parts, &self.params).await
+            }
+        }
     }
 }

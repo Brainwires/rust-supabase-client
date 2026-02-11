@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+#[cfg(feature = "direct-sql")]
 use sqlx::Row as SqlxRow;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
@@ -93,6 +94,7 @@ impl<K: Into<String>, V: Into<JsonValue>, const N: usize> From<[(K, V); N]> for 
     }
 }
 
+#[cfg(feature = "direct-sql")]
 impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for Row {
     fn from_row(row: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
         use sqlx::Column;

@@ -4,11 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Query builder, filters, modifiers, and SQL generation for supabase-client"
+description = "Query builder, filters, modifiers, and SQL/PostgREST execution for supabase-client"
+
+[features]
+default = []
+direct-sql = ["dep:sqlx", "supabase-client-core/direct-sql"]
 
 [dependencies]
 supabase-client-core.workspace = true
-sqlx.workspace = true
+sqlx = { workspace = true, optional = true }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -16,3 +20,5 @@ thiserror.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+reqwest.workspace = true
+url.workspace = true

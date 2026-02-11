@@ -3,8 +3,19 @@ use std::fmt;
 /// All errors that can occur in the supabase-client crate.
 #[derive(Debug, thiserror::Error)]
 pub enum SupabaseError {
+    #[cfg(feature = "direct-sql")]
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
+
+    #[error("PostgREST error ({status}): {message}")]
+    PostgRest {
+        status: u16,
+        message: String,
+        code: Option<String>,
+    },
+
+    #[error("HTTP error: {0}")]
+    Http(String),
 
     #[error("Query builder error: {0}")]
     QueryBuilder(String),
@@ -46,11 +57,25 @@ impl SupabaseError {
     pub fn config(msg: impl Into<String>) -> Self {
         Self::Config(msg.into())
     }
+
+    pub fn postgrest(status: u16, message: impl Into<String>, code: Option<String>) -> Self {
+        Self::PostgRest {
+            status,
+            message: message.into(),
+            code,
+        }
+    }
 }
 
 impl From<serde_json::Error> for SupabaseError {
     fn from(e: serde_json::Error) -> Self {
         Self::Serialization(e.to_string())
+    }
+}
+
+impl From<reqwest::Error> for SupabaseError {
+    fn from(e: reqwest::Error) -> Self {
+        Self::Http(e.to_string())
     }
 }
 

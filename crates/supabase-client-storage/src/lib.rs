@@ -54,15 +54,6 @@ pub trait SupabaseClientStorageExt {
 
 impl SupabaseClientStorageExt for SupabaseClient {
     fn storage(&self) -> Result<StorageClient, StorageError> {
-        let config = self.config();
-        let url = config
-            .supabase_url
-            .as_ref()
-            .ok_or_else(|| StorageError::InvalidConfig("supabase_url is required for storage".into()))?;
-        let key = config
-            .supabase_key
-            .as_ref()
-            .ok_or_else(|| StorageError::InvalidConfig("supabase_key is required for storage".into()))?;
-        StorageClient::new(url, key)
+        StorageClient::new(self.supabase_url(), self.api_key())
     }
 }

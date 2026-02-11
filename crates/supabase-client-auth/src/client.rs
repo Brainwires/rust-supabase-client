@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use base64::Engine;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Value as JsonValue};
 use sha2::{Digest, Sha256};
+use tokio::sync::{broadcast, Mutex, RwLock};
 use url::Url;
 
 use crate::admin::AdminClient;
@@ -13,9 +16,33 @@ use crate::params::{
 };
 use crate::types::*;
 
+/// Broadcast channel capacity for auth state change events.
+const EVENT_CHANNEL_CAPACITY: usize = 64;
+
+struct AuthClientInner {
+    http: reqwest::Client,
+    base_url: Url,
+    api_key: String,
+    // Session state management
+    session: RwLock<Option<Session>>,
+    event_tx: broadcast::Sender<AuthStateChange>,
+    auto_refresh_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl std::fmt::Debug for AuthClientInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthClientInner")
+            .field("base_url", &self.base_url)
+            .field("api_key", &"***")
+            .finish()
+    }
+}
+
 /// HTTP client for Supabase GoTrue auth API.
 ///
 /// Communicates with GoTrue REST endpoints at `/auth/v1/...`.
+/// Provides built-in session state management, event broadcasting,
+/// and optional automatic token refresh.
 ///
 /// # Example
 /// ```ignore
@@ -23,12 +50,16 @@ use crate::types::*;
 ///
 /// let auth = AuthClient::new("https://your-project.supabase.co", "your-anon-key")?;
 /// let session = auth.sign_in_with_password_email("user@example.com", "password").await?;
+///
+/// // Session is automatically stored — retrieve it later:
+/// let stored = auth.get_session().await;
+///
+/// // Subscribe to auth state changes:
+/// let mut sub = auth.on_auth_state_change();
 /// ```
 #[derive(Debug, Clone)]
 pub struct AuthClient {
-    http: reqwest::Client,
-    base_url: Url,
-    api_key: String,
+    inner: Arc<AuthClientInner>,
 }
 
 impl AuthClient {
@@ -56,16 +87,143 @@ impl AuthClient {
             .build()
             .map_err(AuthError::Http)?;
 
+        let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+
         Ok(Self {
-            http,
-            base_url,
-            api_key: api_key.to_string(),
+            inner: Arc::new(AuthClientInner {
+                http,
+                base_url,
+                api_key: api_key.to_string(),
+                session: RwLock::new(None),
+                event_tx,
+                auto_refresh_handle: Mutex::new(None),
+            }),
         })
     }
 
     /// Get the base URL for the auth API.
     pub fn base_url(&self) -> &Url {
-        &self.base_url
+        &self.inner.base_url
+    }
+
+    // ─── Session State Management ─────────────────────────────
+
+    /// Get the currently stored session (no network call).
+    ///
+    /// Returns `None` if no session has been stored (e.g., user hasn't signed in yet).
+    pub async fn get_session(&self) -> Option<Session> {
+        self.inner.session.read().await.clone()
+    }
+
+    /// Set/replace the stored session and emit `SignedIn`.
+    ///
+    /// Use this to restore a session from external storage (e.g., persisted tokens).
+    pub async fn set_session(&self, session: Session) {
+        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+    }
+
+    /// Clear the stored session and emit `SignedOut`.
+    ///
+    /// This is a local operation — it does NOT call GoTrue `/logout`.
+    /// Use [`sign_out_current()`](AuthClient::sign_out_current) to also invalidate server-side.
+    pub async fn clear_session(&self) {
+        self.emit_signed_out().await;
+    }
+
+    // ─── Event Subscription ───────────────────────────────────
+
+    /// Subscribe to auth state change events.
+    ///
+    /// Returns an [`AuthSubscription`] that receives events via [`next()`](AuthSubscription::next).
+    /// Multiple subscriptions can be active simultaneously.
+    pub fn on_auth_state_change(&self) -> AuthSubscription {
+        AuthSubscription {
+            rx: self.inner.event_tx.subscribe(),
+        }
+    }
+
+    // ─── Auto-Refresh ─────────────────────────────────────────
+
+    /// Start automatic token refresh with default configuration.
+    ///
+    /// Spawns a background task that checks the stored session periodically
+    /// and refreshes it before expiry.
+    pub fn start_auto_refresh(&self) {
+        self.start_auto_refresh_with(AutoRefreshConfig::default());
+    }
+
+    /// Start automatic token refresh with custom configuration.
+    pub fn start_auto_refresh_with(&self, config: AutoRefreshConfig) {
+        // Stop any existing auto-refresh first
+        self.stop_auto_refresh_inner();
+
+        let inner = Arc::clone(&self.inner);
+        let handle = tokio::spawn(async move {
+            auto_refresh_loop(inner, config).await;
+        });
+
+        // Use try_lock to avoid blocking — if it fails, the old handle will be dropped
+        if let Ok(mut guard) = self.inner.auto_refresh_handle.try_lock() {
+            *guard = Some(handle);
+        }
+    }
+
+    /// Stop automatic token refresh.
+    pub fn stop_auto_refresh(&self) {
+        self.stop_auto_refresh_inner();
+    }
+
+    fn stop_auto_refresh_inner(&self) {
+        if let Ok(mut guard) = self.inner.auto_refresh_handle.try_lock() {
+            if let Some(handle) = guard.take() {
+                handle.abort();
+            }
+        }
+    }
+
+    // ─── Session-Aware Convenience Methods ────────────────────
+
+    /// Get the user from the stored session (calls GoTrue `/user`).
+    ///
+    /// Returns `AuthError::NoSession` if no session is stored.
+    pub async fn get_session_user(&self) -> Result<User, AuthError> {
+        let session = self.inner.session.read().await.clone();
+        match session {
+            Some(s) => self.get_user(&s.access_token).await,
+            None => Err(AuthError::NoSession),
+        }
+    }
+
+    /// Refresh the stored session using its refresh_token.
+    ///
+    /// Returns `AuthError::NoSession` if no session is stored.
+    pub async fn refresh_current_session(&self) -> Result<Session, AuthError> {
+        let session = self.inner.session.read().await.clone();
+        match session {
+            Some(s) => self.refresh_session(&s.refresh_token).await,
+            None => Err(AuthError::NoSession),
+        }
+    }
+
+    /// Sign out using the stored session's access_token, then clear session.
+    ///
+    /// Returns `AuthError::NoSession` if no session is stored.
+    pub async fn sign_out_current(&self) -> Result<(), AuthError> {
+        self.sign_out_current_with_scope(SignOutScope::Global).await
+    }
+
+    /// Sign out with scope using the stored session's access_token.
+    ///
+    /// Returns `AuthError::NoSession` if no session is stored.
+    pub async fn sign_out_current_with_scope(
+        &self,
+        scope: SignOutScope,
+    ) -> Result<(), AuthError> {
+        let session = self.inner.session.read().await.clone();
+        match session {
+            Some(s) => self.sign_out_with_scope(&s.access_token, scope).await,
+            None => Err(AuthError::NoSession),
+        }
     }
 
     // ─── Sign Up ───────────────────────────────────────────────
@@ -73,6 +231,7 @@ impl AuthClient {
     /// Sign up a new user with email and password.
     ///
     /// Mirrors `supabase.auth.signUp({ email, password })`.
+    /// If the response includes a session, it is stored and `SignedIn` is emitted.
     pub async fn sign_up_with_email(
         &self,
         email: &str,
@@ -84,6 +243,7 @@ impl AuthClient {
     /// Sign up a new user with email, password, and custom user metadata.
     ///
     /// Mirrors `supabase.auth.signUp({ email, password, options: { data } })`.
+    /// If the response includes a session, it is stored and `SignedIn` is emitted.
     pub async fn sign_up_with_email_and_data(
         &self,
         email: &str,
@@ -99,13 +259,18 @@ impl AuthClient {
         }
 
         let url = self.url("/signup");
-        let resp = self.http.post(url).json(&body).send().await?;
-        self.handle_auth_response(resp).await
+        let resp = self.inner.http.post(url).json(&body).send().await?;
+        let auth_resp = self.handle_auth_response(resp).await?;
+        if let Some(session) = &auth_resp.session {
+            self.store_session(session, AuthChangeEvent::SignedIn).await;
+        }
+        Ok(auth_resp)
     }
 
     /// Sign up a new user with phone and password.
     ///
     /// Mirrors `supabase.auth.signUp({ phone, password })`.
+    /// If the response includes a session, it is stored and `SignedIn` is emitted.
     pub async fn sign_up_with_phone(
         &self,
         phone: &str,
@@ -117,8 +282,12 @@ impl AuthClient {
         });
 
         let url = self.url("/signup");
-        let resp = self.http.post(url).json(&body).send().await?;
-        self.handle_auth_response(resp).await
+        let resp = self.inner.http.post(url).json(&body).send().await?;
+        let auth_resp = self.handle_auth_response(resp).await?;
+        if let Some(session) = &auth_resp.session {
+            self.store_session(session, AuthChangeEvent::SignedIn).await;
+        }
+        Ok(auth_resp)
     }
 
     // ─── Sign In ───────────────────────────────────────────────
@@ -126,6 +295,7 @@ impl AuthClient {
     /// Sign in with email and password.
     ///
     /// Mirrors `supabase.auth.signInWithPassword({ email, password })`.
+    /// Stores the session and emits `SignedIn`.
     pub async fn sign_in_with_password_email(
         &self,
         email: &str,
@@ -137,13 +307,16 @@ impl AuthClient {
         });
 
         let url = self.url("/token?grant_type=password");
-        let resp = self.http.post(url).json(&body).send().await?;
-        self.handle_session_response(resp).await
+        let resp = self.inner.http.post(url).json(&body).send().await?;
+        let session = self.handle_session_response(resp).await?;
+        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        Ok(session)
     }
 
     /// Sign in with phone and password.
     ///
     /// Mirrors `supabase.auth.signInWithPassword({ phone, password })`.
+    /// Stores the session and emits `SignedIn`.
     pub async fn sign_in_with_password_phone(
         &self,
         phone: &str,
@@ -155,8 +328,10 @@ impl AuthClient {
         });
 
         let url = self.url("/token?grant_type=password");
-        let resp = self.http.post(url).json(&body).send().await?;
-        self.handle_session_response(resp).await
+        let resp = self.inner.http.post(url).json(&body).send().await?;
+        let session = self.handle_session_response(resp).await?;
+        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        Ok(session)
     }
 
     /// Send a magic link / OTP to an email address.
@@ -168,7 +343,7 @@ impl AuthClient {
         });
 
         let url = self.url("/otp");
-        let resp = self.http.post(url).json(&body).send().await?;
+        let resp = self.inner.http.post(url).json(&body).send().await?;
         self.handle_empty_response(resp).await
     }
 
@@ -186,27 +361,33 @@ impl AuthClient {
         });
 
         let url = self.url("/otp");
-        let resp = self.http.post(url).json(&body).send().await?;
+        let resp = self.inner.http.post(url).json(&body).send().await?;
         self.handle_empty_response(resp).await
     }
 
     /// Verify an OTP token.
     ///
     /// Mirrors `supabase.auth.verifyOtp(params)`.
+    /// Stores the session and emits `SignedIn`.
     pub async fn verify_otp(&self, params: VerifyOtpParams) -> Result<Session, AuthError> {
         let url = self.url("/verify");
-        let resp = self.http.post(url).json(&params).send().await?;
-        self.handle_session_response(resp).await
+        let resp = self.inner.http.post(url).json(&params).send().await?;
+        let session = self.handle_session_response(resp).await?;
+        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        Ok(session)
     }
 
     /// Sign in anonymously, creating a new anonymous user.
     ///
     /// Mirrors `supabase.auth.signInAnonymously()`.
+    /// Stores the session and emits `SignedIn`.
     pub async fn sign_in_anonymous(&self) -> Result<Session, AuthError> {
         let url = self.url("/signup");
         let body = json!({});
-        let resp = self.http.post(url).json(&body).send().await?;
-        self.handle_session_response(resp).await
+        let resp = self.inner.http.post(url).json(&body).send().await?;
+        let session = self.handle_session_response(resp).await?;
+        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        Ok(session)
     }
 
     // ─── OAuth ─────────────────────────────────────────────────
@@ -240,6 +421,7 @@ impl AuthClient {
     /// Exchange an auth code (from PKCE flow) for a session.
     ///
     /// Mirrors `supabase.auth.exchangeCodeForSession(authCode)`.
+    /// Stores the session and emits `SignedIn`.
     pub async fn exchange_code_for_session(
         &self,
         code: &str,
@@ -253,8 +435,10 @@ impl AuthClient {
         }
 
         let url = self.url("/token?grant_type=pkce");
-        let resp = self.http.post(url).json(&body).send().await?;
-        self.handle_session_response(resp).await
+        let resp = self.inner.http.post(url).json(&body).send().await?;
+        let session = self.handle_session_response(resp).await?;
+        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        Ok(session)
     }
 
     // ─── Session Management ────────────────────────────────────
@@ -262,14 +446,17 @@ impl AuthClient {
     /// Refresh a session using a refresh token.
     ///
     /// Mirrors `supabase.auth.refreshSession()`.
+    /// Stores the new session and emits `TokenRefreshed`.
     pub async fn refresh_session(&self, refresh_token: &str) -> Result<Session, AuthError> {
         let body = json!({
             "refresh_token": refresh_token,
         });
 
         let url = self.url("/token?grant_type=refresh_token");
-        let resp = self.http.post(url).json(&body).send().await?;
-        self.handle_session_response(resp).await
+        let resp = self.inner.http.post(url).json(&body).send().await?;
+        let session = self.handle_session_response(resp).await?;
+        self.store_session(&session, AuthChangeEvent::TokenRefreshed).await;
+        Ok(session)
     }
 
     // ─── User Management ───────────────────────────────────────
@@ -282,6 +469,7 @@ impl AuthClient {
     pub async fn get_user(&self, access_token: &str) -> Result<User, AuthError> {
         let url = self.url("/user");
         let resp = self
+            .inner
             .http
             .get(url)
             .bearer_auth(access_token)
@@ -293,6 +481,7 @@ impl AuthClient {
     /// Update the current user's attributes.
     ///
     /// Mirrors `supabase.auth.updateUser(attributes)`.
+    /// Emits `UserUpdated` and updates the user in the stored session (if any).
     pub async fn update_user(
         &self,
         access_token: &str,
@@ -300,13 +489,31 @@ impl AuthClient {
     ) -> Result<User, AuthError> {
         let url = self.url("/user");
         let resp = self
+            .inner
             .http
             .put(url)
             .bearer_auth(access_token)
             .json(&params)
             .send()
             .await?;
-        self.handle_user_response(resp).await
+        let user = self.handle_user_response(resp).await?;
+
+        // Update the user in the stored session and emit UserUpdated
+        let mut guard = self.inner.session.write().await;
+        let session_clone = if let Some(session) = guard.as_mut() {
+            session.user = user.clone();
+            Some(session.clone())
+        } else {
+            None
+        };
+        drop(guard);
+
+        let _ = self.inner.event_tx.send(AuthStateChange {
+            event: AuthChangeEvent::UserUpdated,
+            session: session_clone,
+        });
+
+        Ok(user)
     }
 
     // ─── Sign Out ──────────────────────────────────────────────
@@ -314,6 +521,7 @@ impl AuthClient {
     /// Sign out the user (global scope by default).
     ///
     /// Mirrors `supabase.auth.signOut()`.
+    /// Clears the stored session and emits `SignedOut`.
     pub async fn sign_out(&self, access_token: &str) -> Result<(), AuthError> {
         self.sign_out_with_scope(access_token, SignOutScope::Global)
             .await
@@ -322,6 +530,7 @@ impl AuthClient {
     /// Sign out with a specific scope.
     ///
     /// Mirrors `supabase.auth.signOut({ scope })`.
+    /// Clears the stored session and emits `SignedOut`.
     pub async fn sign_out_with_scope(
         &self,
         access_token: &str,
@@ -329,12 +538,15 @@ impl AuthClient {
     ) -> Result<(), AuthError> {
         let url = self.url(&format!("/logout?scope={}", scope));
         let resp = self
+            .inner
             .http
             .post(url)
             .bearer_auth(access_token)
             .send()
             .await?;
-        self.handle_empty_response(resp).await
+        self.handle_empty_response(resp).await?;
+        self.emit_signed_out().await;
+        Ok(())
     }
 
     // ─── Password Recovery ─────────────────────────────────────
@@ -353,7 +565,7 @@ impl AuthClient {
         }
 
         let url = self.url("/recover");
-        let resp = self.http.post(url).json(&body).send().await?;
+        let resp = self.inner.http.post(url).json(&body).send().await?;
         self.handle_empty_response(resp).await
     }
 
@@ -385,6 +597,7 @@ impl AuthClient {
     ) -> Result<MfaEnrollResponse, AuthError> {
         let url = self.url("/factors");
         let resp = self
+            .inner
             .http
             .post(url)
             .bearer_auth(access_token)
@@ -422,6 +635,7 @@ impl AuthClient {
     ) -> Result<MfaChallengeResponse, AuthError> {
         let url = self.url(&format!("/factors/{}/challenge", factor_id));
         let resp = self
+            .inner
             .http
             .post(url)
             .bearer_auth(access_token)
@@ -439,6 +653,7 @@ impl AuthClient {
     /// Verify an MFA challenge with a TOTP/SMS code. Returns a new AAL2 session.
     ///
     /// Mirrors `supabase.auth.mfa.verify()`.
+    /// Stores the session and emits `SignedIn`.
     pub async fn mfa_verify(
         &self,
         access_token: &str,
@@ -447,18 +662,22 @@ impl AuthClient {
     ) -> Result<Session, AuthError> {
         let url = self.url(&format!("/factors/{}/verify", factor_id));
         let resp = self
+            .inner
             .http
             .post(url)
             .bearer_auth(access_token)
             .json(&params)
             .send()
             .await?;
-        self.handle_session_response(resp).await
+        let session = self.handle_session_response(resp).await?;
+        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        Ok(session)
     }
 
     /// Combined challenge + verify for TOTP factors (convenience).
     ///
     /// Mirrors `supabase.auth.mfa.challengeAndVerify()`.
+    /// Stores the session and emits `SignedIn`.
     pub async fn mfa_challenge_and_verify(
         &self,
         access_token: &str,
@@ -484,6 +703,7 @@ impl AuthClient {
     ) -> Result<MfaUnenrollResponse, AuthError> {
         let url = self.url(&format!("/factors/{}", factor_id));
         let resp = self
+            .inner
             .http
             .delete(url)
             .bearer_auth(access_token)
@@ -573,7 +793,7 @@ impl AuthClient {
         params: SsoSignInParams,
     ) -> Result<SsoSignInResponse, AuthError> {
         let url = self.url("/sso");
-        let resp = self.http.post(url).json(&params).send().await?;
+        let resp = self.inner.http.post(url).json(&params).send().await?;
         let status = resp.status().as_u16();
         if status >= 400 {
             return Err(self.parse_error(status, resp).await);
@@ -587,13 +807,16 @@ impl AuthClient {
     /// Sign in with an external OIDC ID token (e.g., from Google/Apple mobile SDK).
     ///
     /// Mirrors `supabase.auth.signInWithIdToken()`.
+    /// Stores the session and emits `SignedIn`.
     pub async fn sign_in_with_id_token(
         &self,
         params: SignInWithIdTokenParams,
     ) -> Result<Session, AuthError> {
         let url = self.url("/token?grant_type=id_token");
-        let resp = self.http.post(url).json(&params).send().await?;
-        self.handle_session_response(resp).await
+        let resp = self.inner.http.post(url).json(&params).send().await?;
+        let session = self.handle_session_response(resp).await?;
+        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        Ok(session)
     }
 
     // ─── Identity Linking ──────────────────────────────────────
@@ -613,6 +836,7 @@ impl AuthClient {
             .append_pair("provider", &provider.to_string())
             .append_pair("skip_http_redirect", "true");
         let resp = self
+            .inner
             .http
             .get(url)
             .bearer_auth(access_token)
@@ -642,6 +866,7 @@ impl AuthClient {
     ) -> Result<(), AuthError> {
         let url = self.url(&format!("/user/identities/{}", identity_id));
         let resp = self
+            .inner
             .http
             .delete(url)
             .bearer_auth(access_token)
@@ -657,7 +882,7 @@ impl AuthClient {
     /// Mirrors `supabase.auth.resend()`.
     pub async fn resend(&self, params: ResendParams) -> Result<(), AuthError> {
         let url = self.url("/resend");
-        let resp = self.http.post(url).json(&params).send().await?;
+        let resp = self.inner.http.post(url).json(&params).send().await?;
         self.handle_empty_response(resp).await
     }
 
@@ -669,6 +894,7 @@ impl AuthClient {
     pub async fn reauthenticate(&self, access_token: &str) -> Result<(), AuthError> {
         let url = self.url("/reauthenticate");
         let resp = self
+            .inner
             .http
             .get(url)
             .bearer_auth(access_token)
@@ -706,6 +932,7 @@ impl AuthClient {
     ) -> Result<OAuthAuthorizationDetailsResponse, AuthError> {
         let url = self.url(&format!("/oauth/authorizations/{}", authorization_id));
         let resp = self
+            .inner
             .http
             .get(url)
             .bearer_auth(access_token)
@@ -752,6 +979,7 @@ impl AuthClient {
     ) -> Result<Vec<OAuthGrant>, AuthError> {
         let url = self.url("/user/oauth/grants");
         let resp = self
+            .inner
             .http
             .get(url)
             .bearer_auth(access_token)
@@ -777,6 +1005,7 @@ impl AuthClient {
         url.query_pairs_mut()
             .append_pair("client_id", client_id);
         let resp = self
+            .inner
             .http
             .delete(url)
             .bearer_auth(access_token)
@@ -797,6 +1026,7 @@ impl AuthClient {
         ));
         let body = serde_json::json!({ "action": action });
         let resp = self
+            .inner
             .http
             .post(url)
             .bearer_auth(access_token)
@@ -884,7 +1114,7 @@ impl AuthClient {
             form.push(("code_verifier", verifier.clone()));
         }
 
-        let resp = self.http.post(url).form(&form).send().await?;
+        let resp = self.inner.http.post(url).form(&form).send().await?;
         let status = resp.status().as_u16();
         if status >= 400 {
             return Err(self.parse_error(status, resp).await);
@@ -912,7 +1142,7 @@ impl AuthClient {
             form.push(("client_secret", secret.to_string()));
         }
 
-        let resp = self.http.post(url).form(&form).send().await?;
+        let resp = self.inner.http.post(url).form(&form).send().await?;
         let status = resp.status().as_u16();
         if status >= 400 {
             return Err(self.parse_error(status, resp).await);
@@ -935,7 +1165,7 @@ impl AuthClient {
             form.push(("token_type_hint", hint.to_string()));
         }
 
-        let resp = self.http.post(url).form(&form).send().await?;
+        let resp = self.inner.http.post(url).form(&form).send().await?;
         self.handle_empty_response(resp).await
     }
 
@@ -946,7 +1176,7 @@ impl AuthClient {
         &self,
     ) -> Result<OpenIdConfiguration, AuthError> {
         let url = self.url("/.well-known/openid-configuration");
-        let resp = self.http.get(url).send().await?;
+        let resp = self.inner.http.get(url).send().await?;
         let status = resp.status().as_u16();
         if status >= 400 {
             return Err(self.parse_error(status, resp).await);
@@ -960,7 +1190,7 @@ impl AuthClient {
     /// GET `/.well-known/jwks.json`.
     pub async fn oauth_get_jwks(&self) -> Result<JwksResponse, AuthError> {
         let url = self.url("/.well-known/jwks.json");
-        let resp = self.http.get(url).send().await?;
+        let resp = self.inner.http.get(url).send().await?;
         let status = resp.status().as_u16();
         if status >= 400 {
             return Err(self.parse_error(status, resp).await);
@@ -978,6 +1208,7 @@ impl AuthClient {
     ) -> Result<JsonValue, AuthError> {
         let url = self.url("/oauth/userinfo");
         let resp = self
+            .inner
             .http
             .get(url)
             .bearer_auth(access_token)
@@ -993,8 +1224,26 @@ impl AuthClient {
 
     // ─── Internal Helpers ──────────────────────────────────────
 
+    /// Store session and emit an auth state change event.
+    async fn store_session(&self, session: &Session, event: AuthChangeEvent) {
+        *self.inner.session.write().await = Some(session.clone());
+        let _ = self.inner.event_tx.send(AuthStateChange {
+            event,
+            session: Some(session.clone()),
+        });
+    }
+
+    /// Clear session and emit SignedOut.
+    async fn emit_signed_out(&self) {
+        *self.inner.session.write().await = None;
+        let _ = self.inner.event_tx.send(AuthStateChange {
+            event: AuthChangeEvent::SignedOut,
+            session: None,
+        });
+    }
+
     pub(crate) fn url(&self, path: &str) -> Url {
-        let mut url = self.base_url.clone();
+        let mut url = self.inner.base_url.clone();
         let current = url.path().to_string();
         // path may contain query string (e.g. "/token?grant_type=password")
         if let Some(query_start) = path.find('?') {
@@ -1007,11 +1256,11 @@ impl AuthClient {
     }
 
     pub(crate) fn http(&self) -> &reqwest::Client {
-        &self.http
+        &self.inner.http
     }
 
     pub(crate) fn api_key(&self) -> &str {
-        &self.api_key
+        &self.inner.api_key
     }
 
     async fn handle_auth_response(
@@ -1084,6 +1333,80 @@ impl AuthClient {
             },
         }
     }
+}
+
+/// Background auto-refresh loop.
+async fn auto_refresh_loop(inner: Arc<AuthClientInner>, config: AutoRefreshConfig) {
+    let mut retries = 0u32;
+    loop {
+        tokio::time::sleep(config.check_interval).await;
+
+        let session = inner.session.read().await.clone();
+        if let Some(session) = session {
+            if should_refresh(&session, &config.refresh_margin) {
+                match refresh_session_internal(&inner, &session.refresh_token).await {
+                    Ok(new_session) => {
+                        *inner.session.write().await = Some(new_session.clone());
+                        let _ = inner.event_tx.send(AuthStateChange {
+                            event: AuthChangeEvent::TokenRefreshed,
+                            session: Some(new_session),
+                        });
+                        retries = 0;
+                    }
+                    Err(_) => {
+                        retries += 1;
+                        if retries >= config.max_retries {
+                            *inner.session.write().await = None;
+                            let _ = inner.event_tx.send(AuthStateChange {
+                                event: AuthChangeEvent::SignedOut,
+                                session: None,
+                            });
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Check if a session should be refreshed based on its expiry.
+fn should_refresh(session: &Session, margin: &std::time::Duration) -> bool {
+    session.expires_at.map(|exp| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        exp - now < margin.as_secs() as i64
+    }).unwrap_or(false)
+}
+
+/// Internal refresh call for the auto-refresh loop (doesn't go through AuthClient).
+async fn refresh_session_internal(
+    inner: &AuthClientInner,
+    refresh_token: &str,
+) -> Result<Session, AuthError> {
+    let body = json!({
+        "refresh_token": refresh_token,
+    });
+
+    let mut url = inner.base_url.clone();
+    let current = url.path().to_string();
+    url.set_path(&format!("{}/token", current));
+    url.set_query(Some("grant_type=refresh_token"));
+
+    let resp = inner.http.post(url).json(&body).send().await?;
+    let status = resp.status().as_u16();
+    if status >= 400 {
+        return Err(AuthError::Api {
+            status,
+            message: format!("Token refresh failed (HTTP {})", status),
+            error_code: None,
+        });
+    }
+
+    let session: Session = resp.json().await?;
+    Ok(session)
 }
 
 /// Parse AMR (Authentication Methods Reference) claims from a JWT access token.
@@ -1244,5 +1567,144 @@ mod tests {
         let url = client.build_oauth_authorize_url(&params);
         assert!(url.contains(&format!("code_challenge={}", pkce.challenge.as_str())));
         assert!(url.contains("code_challenge_method=S256"));
+    }
+
+    // ─── Session State Tests ────────────────────────────────
+
+    #[tokio::test]
+    async fn test_new_client_has_no_session() {
+        let client = AuthClient::new("https://example.supabase.co", "test-key").unwrap();
+        assert!(client.get_session().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_set_session_stores() {
+        let client = AuthClient::new("https://example.supabase.co", "test-key").unwrap();
+        let session = make_test_session();
+        client.set_session(session.clone()).await;
+        let stored = client.get_session().await.unwrap();
+        assert_eq!(stored.access_token, session.access_token);
+    }
+
+    #[tokio::test]
+    async fn test_clear_session() {
+        let client = AuthClient::new("https://example.supabase.co", "test-key").unwrap();
+        client.set_session(make_test_session()).await;
+        assert!(client.get_session().await.is_some());
+        client.clear_session().await;
+        assert!(client.get_session().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_event_emitted_on_set_session() {
+        let client = AuthClient::new("https://example.supabase.co", "test-key").unwrap();
+        let mut sub = client.on_auth_state_change();
+        client.set_session(make_test_session()).await;
+        let event = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            sub.next(),
+        ).await.unwrap().unwrap();
+        assert_eq!(event.event, AuthChangeEvent::SignedIn);
+        assert!(event.session.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_event_emitted_on_clear_session() {
+        let client = AuthClient::new("https://example.supabase.co", "test-key").unwrap();
+        let mut sub = client.on_auth_state_change();
+        client.clear_session().await;
+        let event = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            sub.next(),
+        ).await.unwrap().unwrap();
+        assert_eq!(event.event, AuthChangeEvent::SignedOut);
+        assert!(event.session.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_multiple_subscribers() {
+        let client = AuthClient::new("https://example.supabase.co", "test-key").unwrap();
+        let mut sub1 = client.on_auth_state_change();
+        let mut sub2 = client.on_auth_state_change();
+        client.set_session(make_test_session()).await;
+
+        let timeout = std::time::Duration::from_millis(100);
+        let e1 = tokio::time::timeout(timeout, sub1.next()).await.unwrap().unwrap();
+        let e2 = tokio::time::timeout(timeout, sub2.next()).await.unwrap().unwrap();
+        assert_eq!(e1.event, AuthChangeEvent::SignedIn);
+        assert_eq!(e2.event, AuthChangeEvent::SignedIn);
+    }
+
+    #[tokio::test]
+    async fn test_no_session_error() {
+        let client = AuthClient::new("https://example.supabase.co", "test-key").unwrap();
+        let err = client.get_session_user().await.unwrap_err();
+        assert!(matches!(err, AuthError::NoSession));
+    }
+
+    #[tokio::test]
+    async fn test_should_refresh_logic() {
+        let margin = std::time::Duration::from_secs(60);
+
+        // Session with expires_at in the past → should refresh
+        let mut session = make_test_session();
+        session.expires_at = Some(0);
+        assert!(should_refresh(&session, &margin));
+
+        // Session with no expires_at → should not refresh
+        session.expires_at = None;
+        assert!(!should_refresh(&session, &margin));
+
+        // Session expiring far in the future → should not refresh
+        let future = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64 + 3600;
+        session.expires_at = Some(future);
+        assert!(!should_refresh(&session, &margin));
+
+        // Session expiring within margin → should refresh
+        let soon = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64 + 30;
+        session.expires_at = Some(soon);
+        assert!(should_refresh(&session, &margin));
+    }
+
+    /// Helper to create a test session for unit tests.
+    fn make_test_session() -> Session {
+        Session {
+            access_token: "test-access-token".to_string(),
+            refresh_token: "test-refresh-token".to_string(),
+            expires_in: 3600,
+            expires_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64
+                    + 3600,
+            ),
+            token_type: "bearer".to_string(),
+            user: User {
+                id: "test-user-id".to_string(),
+                aud: Some("authenticated".to_string()),
+                role: Some("authenticated".to_string()),
+                email: Some("test@example.com".to_string()),
+                phone: None,
+                email_confirmed_at: None,
+                phone_confirmed_at: None,
+                confirmation_sent_at: None,
+                recovery_sent_at: None,
+                last_sign_in_at: None,
+                created_at: None,
+                updated_at: None,
+                user_metadata: None,
+                app_metadata: None,
+                identities: None,
+                factors: None,
+                is_anonymous: None,
+            },
+        }
     }
 }
