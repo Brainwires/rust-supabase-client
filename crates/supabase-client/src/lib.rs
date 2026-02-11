@@ -59,6 +59,16 @@ pub mod prelude {
         LinkIdentityResponse,
         // Resend
         ResendParams, ResendType,
+        // OAuth Server types
+        OAuthClient, OAuthClientType, OAuthClientGrantType, OAuthClientResponseType,
+        OAuthClientRegistrationType, OAuthClientListResponse,
+        OAuthAuthorizationClient, OAuthAuthorizationUser, OAuthAuthorizationDetails,
+        OAuthAuthorizationDetailsResponse, OAuthRedirect, OAuthGrant,
+        CreateOAuthClientParams, UpdateOAuthClientParams,
+        // OAuth Client-Side Flow types
+        PkceCodeVerifier, PkceCodeChallenge, PkcePair,
+        OAuthTokenResponse, OpenIdConfiguration, JwksResponse, Jwk,
+        OAuthAuthorizeUrlParams, OAuthTokenExchangeParams,
     };
 
     #[cfg(feature = "realtime")]

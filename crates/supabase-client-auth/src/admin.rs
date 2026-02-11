@@ -2,8 +2,11 @@ use serde_json::json;
 
 use crate::client::AuthClient;
 use crate::error::AuthError;
-use crate::params::{AdminCreateUserParams, AdminUpdateUserParams, GenerateLinkParams};
-use crate::types::{AdminUserListResponse, Factor, User};
+use crate::params::{
+    AdminCreateUserParams, AdminUpdateUserParams, CreateOAuthClientParams, GenerateLinkParams,
+    UpdateOAuthClientParams,
+};
+use crate::types::{AdminUserListResponse, Factor, OAuthClient, OAuthClientListResponse, User};
 
 /// Admin client for Supabase GoTrue admin operations.
 ///
@@ -246,6 +249,168 @@ impl<'a> AdminClient<'a> {
 
         let factors: Vec<Factor> = resp.json().await?;
         Ok(factors)
+    }
+
+    // ─── OAuth Client Management ─────────────────────────────
+
+    /// List all registered OAuth clients (paginated).
+    ///
+    /// Mirrors `supabase.auth.admin.oauth.listClients()`.
+    pub async fn oauth_list_clients(
+        &self,
+        page: Option<u32>,
+        per_page: Option<u32>,
+    ) -> Result<OAuthClientListResponse, AuthError> {
+        let mut url = self.auth.url("/admin/oauth/clients");
+        {
+            let mut pairs = url.query_pairs_mut();
+            if let Some(page) = page {
+                pairs.append_pair("page", &page.to_string());
+            }
+            if let Some(per_page) = per_page {
+                pairs.append_pair("per_page", &per_page.to_string());
+            }
+        }
+
+        let resp = self
+            .auth
+            .http()
+            .get(url)
+            .bearer_auth(self.bearer_token())
+            .send()
+            .await?;
+
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            return Err(parse_admin_error(status, resp).await);
+        }
+
+        let list: OAuthClientListResponse = resp.json().await?;
+        Ok(list)
+    }
+
+    /// Create a new OAuth client.
+    ///
+    /// Mirrors `supabase.auth.admin.oauth.createClient()`.
+    pub async fn oauth_create_client(
+        &self,
+        params: CreateOAuthClientParams,
+    ) -> Result<OAuthClient, AuthError> {
+        let url = self.auth.url("/admin/oauth/clients");
+        let resp = self
+            .auth
+            .http()
+            .post(url)
+            .bearer_auth(self.bearer_token())
+            .json(&params)
+            .send()
+            .await?;
+
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            return Err(parse_admin_error(status, resp).await);
+        }
+
+        let client: OAuthClient = resp.json().await?;
+        Ok(client)
+    }
+
+    /// Get an OAuth client by its client ID.
+    ///
+    /// Mirrors `supabase.auth.admin.oauth.getClient()`.
+    pub async fn oauth_get_client(
+        &self,
+        client_id: &str,
+    ) -> Result<OAuthClient, AuthError> {
+        let url = self.auth.url(&format!("/admin/oauth/clients/{}", client_id));
+        let resp = self
+            .auth
+            .http()
+            .get(url)
+            .bearer_auth(self.bearer_token())
+            .send()
+            .await?;
+
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            return Err(parse_admin_error(status, resp).await);
+        }
+
+        let client: OAuthClient = resp.json().await?;
+        Ok(client)
+    }
+
+    /// Update an OAuth client.
+    ///
+    /// Mirrors `supabase.auth.admin.oauth.updateClient()`.
+    pub async fn oauth_update_client(
+        &self,
+        client_id: &str,
+        params: UpdateOAuthClientParams,
+    ) -> Result<OAuthClient, AuthError> {
+        let url = self.auth.url(&format!("/admin/oauth/clients/{}", client_id));
+        let resp = self
+            .auth
+            .http()
+            .put(url)
+            .bearer_auth(self.bearer_token())
+            .json(&params)
+            .send()
+            .await?;
+
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            return Err(parse_admin_error(status, resp).await);
+        }
+
+        let client: OAuthClient = resp.json().await?;
+        Ok(client)
+    }
+
+    /// Delete an OAuth client.
+    ///
+    /// Mirrors `supabase.auth.admin.oauth.deleteClient()`.
+    pub async fn oauth_delete_client(
+        &self,
+        client_id: &str,
+    ) -> Result<(), AuthError> {
+        let url = self.auth.url(&format!("/admin/oauth/clients/{}", client_id));
+        let resp = self
+            .auth
+            .http()
+            .delete(url)
+            .bearer_auth(self.bearer_token())
+            .send()
+            .await?;
+        self.auth.handle_empty_response(resp).await
+    }
+
+    /// Regenerate the client secret for an OAuth client.
+    ///
+    /// Mirrors `supabase.auth.admin.oauth.regenerateClientSecret()`.
+    pub async fn oauth_regenerate_client_secret(
+        &self,
+        client_id: &str,
+    ) -> Result<OAuthClient, AuthError> {
+        let url = self.auth.url(&format!(
+            "/admin/oauth/clients/{}/regenerate_secret",
+            client_id
+        ));
+        let resp = self
+            .auth
+            .http()
+            .post(url)
+            .bearer_auth(self.bearer_token())
+            .send()
+            .await?;
+
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            return Err(parse_admin_error(status, resp).await);
+        }
+
+        let client: OAuthClient = resp.json().await?;
+        Ok(client)
     }
 
     /// Delete an MFA factor for a user (admin).

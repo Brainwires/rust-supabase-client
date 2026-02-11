@@ -104,6 +104,10 @@ pub enum AuthErrorCode {
     IdentityNotFound,
     ManualLinkingDisabled,
     SingleIdentityNotDeletable,
+    // OAuth server error codes
+    OAuthClientNotFound,
+    OAuthClientAlreadyExists,
+    OAuthInvalidGrant,
     Unknown(String),
 }
 
@@ -137,6 +141,9 @@ impl fmt::Display for AuthErrorCode {
             Self::IdentityNotFound => write!(f, "identity_not_found"),
             Self::ManualLinkingDisabled => write!(f, "manual_linking_disabled"),
             Self::SingleIdentityNotDeletable => write!(f, "single_identity_not_deletable"),
+            Self::OAuthClientNotFound => write!(f, "oauth_client_not_found"),
+            Self::OAuthClientAlreadyExists => write!(f, "oauth_client_already_exists"),
+            Self::OAuthInvalidGrant => write!(f, "oauth_invalid_grant"),
             Self::Unknown(code) => write!(f, "{}", code),
         }
     }
@@ -174,6 +181,9 @@ impl From<&str> for AuthErrorCode {
             "identity_not_found" => Self::IdentityNotFound,
             "manual_linking_disabled" => Self::ManualLinkingDisabled,
             "single_identity_not_deletable" => Self::SingleIdentityNotDeletable,
+            "oauth_client_not_found" => Self::OAuthClientNotFound,
+            "oauth_client_already_exists" => Self::OAuthClientAlreadyExists,
+            "oauth_invalid_grant" => Self::OAuthInvalidGrant,
             other => Self::Unknown(other.to_string()),
         }
     }
@@ -225,6 +235,20 @@ mod tests {
             ("identity_not_found", AuthErrorCode::IdentityNotFound),
             ("manual_linking_disabled", AuthErrorCode::ManualLinkingDisabled),
             ("single_identity_not_deletable", AuthErrorCode::SingleIdentityNotDeletable),
+        ];
+        for (s, expected) in &codes {
+            let parsed: AuthErrorCode = (*s).into();
+            assert_eq!(parsed, *expected);
+            assert_eq!(parsed.to_string(), *s);
+        }
+    }
+
+    #[test]
+    fn oauth_error_codes_roundtrip() {
+        let codes = [
+            ("oauth_client_not_found", AuthErrorCode::OAuthClientNotFound),
+            ("oauth_client_already_exists", AuthErrorCode::OAuthClientAlreadyExists),
+            ("oauth_invalid_grant", AuthErrorCode::OAuthInvalidGrant),
         ];
         for (s, expected) in &codes {
             let parsed: AuthErrorCode = (*s).into();

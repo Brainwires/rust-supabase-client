@@ -21,6 +21,8 @@ A Rust crate wrapping [sqlx](https://github.com/launchbadge/sqlx) with a Supabas
 - Phone, OAuth, magic link, OTP, anonymous auth
 - Token refresh, password recovery, user management
 - Admin API (list/create/update/delete users)
+- MFA: TOTP enroll/challenge/verify, phone factors, AAL detection
+- OAuth Server: consent management, grant listing/revocation, admin client CRUD
 
 **Realtime (WebSocket)** - Phoenix Channels v1.0.0 protocol
 - Postgres Changes: listen for INSERT, UPDATE, DELETE events with filters
@@ -195,6 +197,115 @@ let user = auth.get_user(&session.access_token).await?;
 // Admin operations (requires service_role key)
 let admin = auth.admin();
 let users = admin.list_users(None, None).await?;
+```
+
+### OAuth Server (Auth Provider)
+
+When Supabase acts as an OAuth 2.1 identity provider, third-party apps can register as OAuth clients and users can consent/revoke access.
+
+```rust
+use supabase_client::prelude::*;
+
+let auth = client.auth()?;
+
+// ── Admin: OAuth Client Management (requires service_role key) ──
+
+let admin = auth.admin();
+
+// Create an OAuth client
+let params = CreateOAuthClientParams::new("My App", vec!["https://myapp.com/callback".into()])
+    .client_uri("https://myapp.com")
+    .scope("openid profile");
+let new_client = admin.oauth_create_client(params).await?;
+println!("Client ID: {}", new_client.client_id);
+println!("Secret: {:?}", new_client.client_secret);
+
+// List, get, update, regenerate secret, delete
+let clients = admin.oauth_list_clients(None, None).await?;
+let fetched = admin.oauth_get_client(&new_client.client_id).await?;
+let updated = admin.oauth_update_client(
+    &new_client.client_id,
+    UpdateOAuthClientParams::new().client_name("Updated App"),
+).await?;
+let refreshed = admin.oauth_regenerate_client_secret(&new_client.client_id).await?;
+admin.oauth_delete_client(&new_client.client_id).await?;
+
+// ── User: OAuth Consent & Grants (requires user JWT) ────────
+
+let session = auth.sign_in_with_password_email("user@example.com", "pass").await?;
+let token = &session.access_token;
+
+// Get authorization details (when redirected from OAuth client)
+let details = auth.oauth_get_authorization_details(token, "auth-id-123").await?;
+
+// Approve or deny
+let redirect = auth.oauth_approve_authorization(token, "auth-id-123").await?;
+let redirect = auth.oauth_deny_authorization(token, "auth-id-123").await?;
+
+// List and revoke granted permissions
+let grants = auth.oauth_list_grants(token).await?;
+auth.oauth_revoke_grant(token, "client-id-456").await?;
+```
+
+### OAuth Client-Side Flow (PKCE)
+
+When using Supabase as an OAuth 2.1 identity provider, clients can use the authorization code flow with PKCE. Includes OIDC discovery and JWKS for token verification.
+
+```rust
+use supabase_client::prelude::*;
+
+let auth = client.auth()?;
+
+// ── PKCE Authorization Code Flow ─────────────────────────
+
+// 1. Generate a PKCE pair (verifier + challenge)
+let pkce = AuthClient::generate_pkce_pair();
+
+// 2. Build the authorization URL
+let url_params = OAuthAuthorizeUrlParams::new("client-id", "https://myapp.com/callback")
+    .scope("openid profile")
+    .state("random-csrf-token")
+    .pkce(&pkce.challenge);
+let authorize_url = auth.build_oauth_authorize_url(&url_params);
+// → Redirect the user to authorize_url
+
+// 3. After the user approves, exchange the code for tokens
+let exchange_params = OAuthTokenExchangeParams::new(
+    "auth-code-from-callback",
+    "https://myapp.com/callback",
+    "client-id",
+)
+.client_secret("client-secret")
+.pkce_verifier(&pkce.verifier);
+let tokens = auth.oauth_token_exchange(exchange_params).await?;
+println!("Access token: {}", tokens.access_token);
+
+// 4. Refresh tokens
+let new_tokens = auth.oauth_token_refresh(
+    "client-id",
+    tokens.refresh_token.as_deref().unwrap(),
+    Some("client-secret"),
+).await?;
+
+// 5. Revoke a token
+auth.oauth_revoke_token(&tokens.access_token, Some("access_token")).await?;
+
+// ── Discovery & Verification ─────────────────────────────
+
+// Fetch OIDC configuration
+let config = auth.oauth_get_openid_configuration().await?;
+println!("Issuer: {}", config.issuer);
+println!("Token endpoint: {}", config.token_endpoint);
+
+// Fetch JWKS for token signature verification
+let jwks = auth.oauth_get_jwks().await?;
+for key in &jwks.keys {
+    println!("Key: {} ({})", key.kid.as_deref().unwrap_or("?"), key.kty);
+}
+
+// Fetch user info with an access token
+let userinfo = auth.oauth_get_userinfo(&tokens.access_token).await?;
+println!("Subject: {}", userinfo["sub"]);
 ```
 
 ### Realtime (WebSocket)

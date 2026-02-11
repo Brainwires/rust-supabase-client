@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::types::{FactorType, OtpChannel, OtpType};
+use crate::types::{FactorType, OAuthClientGrantType, OAuthClientResponseType, OtpChannel, OtpType};
 
 /// Parameters for updating the current user.
 ///
@@ -340,6 +340,207 @@ impl ResendParams {
     }
 }
 
+// ─── OAuth Client Params ─────────────────────────────────────
+
+/// Parameters for creating an OAuth client (admin).
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateOAuthClientParams {
+    pub client_name: String,
+    pub redirect_uris: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_types: Option<Vec<OAuthClientGrantType>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_types: Option<Vec<OAuthClientResponseType>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+}
+
+impl CreateOAuthClientParams {
+    /// Create params with required fields.
+    pub fn new(client_name: &str, redirect_uris: Vec<String>) -> Self {
+        Self {
+            client_name: client_name.to_string(),
+            redirect_uris,
+            client_uri: None,
+            grant_types: None,
+            response_types: None,
+            scope: None,
+        }
+    }
+
+    /// Set the client URI.
+    pub fn client_uri(mut self, uri: &str) -> Self {
+        self.client_uri = Some(uri.to_string());
+        self
+    }
+
+    /// Set the grant types.
+    pub fn grant_types(mut self, types: Vec<OAuthClientGrantType>) -> Self {
+        self.grant_types = Some(types);
+        self
+    }
+
+    /// Set the response types.
+    pub fn response_types(mut self, types: Vec<OAuthClientResponseType>) -> Self {
+        self.response_types = Some(types);
+        self
+    }
+
+    /// Set the scope.
+    pub fn scope(mut self, scope: &str) -> Self {
+        self.scope = Some(scope.to_string());
+        self
+    }
+}
+
+/// Parameters for updating an OAuth client (admin).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UpdateOAuthClientParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo_uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redirect_uris: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_types: Option<Vec<OAuthClientGrantType>>,
+}
+
+impl UpdateOAuthClientParams {
+    /// Create empty update params.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the client name.
+    pub fn client_name(mut self, name: &str) -> Self {
+        self.client_name = Some(name.to_string());
+        self
+    }
+
+    /// Set the client URI.
+    pub fn client_uri(mut self, uri: &str) -> Self {
+        self.client_uri = Some(uri.to_string());
+        self
+    }
+
+    /// Set the logo URI.
+    pub fn logo_uri(mut self, uri: &str) -> Self {
+        self.logo_uri = Some(uri.to_string());
+        self
+    }
+
+    /// Set the redirect URIs.
+    pub fn redirect_uris(mut self, uris: Vec<String>) -> Self {
+        self.redirect_uris = Some(uris);
+        self
+    }
+
+    /// Set the grant types.
+    pub fn grant_types(mut self, types: Vec<OAuthClientGrantType>) -> Self {
+        self.grant_types = Some(types);
+        self
+    }
+}
+
+// ─── OAuth Client-Side Flow Params ───────────────────────────
+
+/// Parameters for building an OAuth authorization URL.
+#[derive(Debug, Clone)]
+pub struct OAuthAuthorizeUrlParams {
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub scope: Option<String>,
+    pub state: Option<String>,
+    pub code_challenge: Option<String>,
+    pub code_challenge_method: Option<String>,
+}
+
+impl OAuthAuthorizeUrlParams {
+    /// Create params with required fields.
+    pub fn new(client_id: &str, redirect_uri: &str) -> Self {
+        Self {
+            client_id: client_id.to_string(),
+            redirect_uri: redirect_uri.to_string(),
+            scope: None,
+            state: None,
+            code_challenge: None,
+            code_challenge_method: None,
+        }
+    }
+
+    /// Set the scope.
+    pub fn scope(mut self, scope: &str) -> Self {
+        self.scope = Some(scope.to_string());
+        self
+    }
+
+    /// Set the state parameter (for CSRF protection).
+    pub fn state(mut self, state: &str) -> Self {
+        self.state = Some(state.to_string());
+        self
+    }
+
+    /// Set the PKCE code challenge from a `PkceCodeChallenge`.
+    pub fn pkce(mut self, challenge: &crate::types::PkceCodeChallenge) -> Self {
+        self.code_challenge = Some(challenge.as_str().to_string());
+        self.code_challenge_method = Some("S256".to_string());
+        self
+    }
+
+    /// Set the PKCE code challenge from a raw string (with method).
+    pub fn code_challenge(mut self, challenge: &str, method: &str) -> Self {
+        self.code_challenge = Some(challenge.to_string());
+        self.code_challenge_method = Some(method.to_string());
+        self
+    }
+}
+
+/// Parameters for exchanging an authorization code for tokens.
+#[derive(Debug, Clone)]
+pub struct OAuthTokenExchangeParams {
+    pub code: String,
+    pub redirect_uri: String,
+    pub client_id: String,
+    pub client_secret: Option<String>,
+    pub code_verifier: Option<String>,
+}
+
+impl OAuthTokenExchangeParams {
+    /// Create params with required fields.
+    pub fn new(code: &str, redirect_uri: &str, client_id: &str) -> Self {
+        Self {
+            code: code.to_string(),
+            redirect_uri: redirect_uri.to_string(),
+            client_id: client_id.to_string(),
+            client_secret: None,
+            code_verifier: None,
+        }
+    }
+
+    /// Set the client secret (for confidential clients).
+    pub fn client_secret(mut self, secret: &str) -> Self {
+        self.client_secret = Some(secret.to_string());
+        self
+    }
+
+    /// Set the PKCE code verifier.
+    pub fn code_verifier(mut self, verifier: &str) -> Self {
+        self.code_verifier = Some(verifier.to_string());
+        self
+    }
+
+    /// Set the PKCE code verifier from a `PkceCodeVerifier`.
+    pub fn pkce_verifier(mut self, verifier: &crate::types::PkceCodeVerifier) -> Self {
+        self.code_verifier = Some(verifier.as_str().to_string());
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,5 +651,107 @@ mod tests {
         assert_eq!(json["type"], "signup");
         assert_eq!(json["email"], "test@example.com");
         assert!(json.get("phone").is_none());
+    }
+
+    // ─── OAuth Params Tests ──────────────────────────────────
+
+    #[test]
+    fn create_oauth_client_params_builder() {
+        let params = CreateOAuthClientParams::new(
+            "My App",
+            vec!["https://myapp.com/callback".to_string()],
+        )
+        .client_uri("https://myapp.com")
+        .scope("openid profile");
+
+        assert_eq!(params.client_name, "My App");
+        assert_eq!(params.redirect_uris.len(), 1);
+        assert_eq!(params.client_uri.as_deref(), Some("https://myapp.com"));
+        assert_eq!(params.scope.as_deref(), Some("openid profile"));
+        assert!(params.grant_types.is_none());
+        assert!(params.response_types.is_none());
+    }
+
+    #[test]
+    fn create_oauth_client_params_serialization() {
+        let params = CreateOAuthClientParams::new(
+            "Test App",
+            vec!["https://test.com/cb".to_string()],
+        );
+        let json = serde_json::to_value(&params).unwrap();
+        assert_eq!(json["client_name"], "Test App");
+        assert_eq!(json["redirect_uris"][0], "https://test.com/cb");
+        // Optional fields should be absent
+        assert!(json.get("client_uri").is_none());
+        assert!(json.get("grant_types").is_none());
+        assert!(json.get("scope").is_none());
+    }
+
+    #[test]
+    fn update_oauth_client_params_builder() {
+        let params = UpdateOAuthClientParams::new()
+            .client_name("Updated App")
+            .logo_uri("https://app.com/logo.png")
+            .redirect_uris(vec!["https://app.com/new-cb".to_string()]);
+
+        assert_eq!(params.client_name.as_deref(), Some("Updated App"));
+        assert_eq!(params.logo_uri.as_deref(), Some("https://app.com/logo.png"));
+        assert!(params.redirect_uris.is_some());
+        assert!(params.client_uri.is_none());
+        assert!(params.grant_types.is_none());
+    }
+
+    #[test]
+    fn update_oauth_client_params_serialization() {
+        let params = UpdateOAuthClientParams::new()
+            .client_name("New Name");
+        let json = serde_json::to_value(&params).unwrap();
+        assert_eq!(json["client_name"], "New Name");
+        // Optional fields should be absent
+        assert!(json.get("client_uri").is_none());
+        assert!(json.get("logo_uri").is_none());
+        assert!(json.get("redirect_uris").is_none());
+        assert!(json.get("grant_types").is_none());
+    }
+
+    // ─── OAuth Client-Side Flow Params Tests ─────────────────
+
+    #[test]
+    fn oauth_authorize_url_params_builder() {
+        let params = OAuthAuthorizeUrlParams::new("client-123", "https://app.com/cb")
+            .scope("openid profile")
+            .state("random-state");
+        assert_eq!(params.client_id, "client-123");
+        assert_eq!(params.redirect_uri, "https://app.com/cb");
+        assert_eq!(params.scope.as_deref(), Some("openid profile"));
+        assert_eq!(params.state.as_deref(), Some("random-state"));
+        assert!(params.code_challenge.is_none());
+    }
+
+    #[test]
+    fn oauth_authorize_url_params_with_pkce() {
+        let params = OAuthAuthorizeUrlParams::new("client-123", "https://app.com/cb")
+            .code_challenge("challenge-abc", "S256");
+        assert_eq!(params.code_challenge.as_deref(), Some("challenge-abc"));
+        assert_eq!(params.code_challenge_method.as_deref(), Some("S256"));
+    }
+
+    #[test]
+    fn oauth_token_exchange_params_builder() {
+        let params = OAuthTokenExchangeParams::new("code-abc", "https://app.com/cb", "client-123")
+            .client_secret("secret-456")
+            .code_verifier("verifier-789");
+        assert_eq!(params.code, "code-abc");
+        assert_eq!(params.redirect_uri, "https://app.com/cb");
+        assert_eq!(params.client_id, "client-123");
+        assert_eq!(params.client_secret.as_deref(), Some("secret-456"));
+        assert_eq!(params.code_verifier.as_deref(), Some("verifier-789"));
+    }
+
+    #[test]
+    fn oauth_token_exchange_params_minimal() {
+        let params = OAuthTokenExchangeParams::new("code-abc", "https://app.com/cb", "client-123");
+        assert!(params.client_secret.is_none());
+        assert!(params.code_verifier.is_none());
     }
 }

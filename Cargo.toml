@@ -58,6 +58,10 @@ futures-util = "0.3"
 # Base64 (for JWT parsing)
 base64 = "0.22"
 
+# PKCE (for OAuth client-side flow)
+sha2 = "0.10"
+rand = "0.9"
+
 # Proc macros
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"

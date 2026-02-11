@@ -11,6 +11,8 @@ use supabase_client_auth::{
     AdminCreateUserParams, AdminUpdateUserParams, UpdateUserParams,
     MfaEnrollParams, MfaVerifyParams, ResendParams, ResendType,
     SsoSignInParams, SignInWithIdTokenParams, AuthenticatorAssuranceLevel,
+    CreateOAuthClientParams, UpdateOAuthClientParams,
+    OAuthAuthorizeUrlParams, OAuthTokenExchangeParams,
     User,
 };
 
@@ -946,5 +948,476 @@ mod integration {
         assert!(factors.is_empty());
 
         cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    // ─── OAuth: Admin Client CRUD ─────────────────────────────
+    //
+    // NOTE: Requires GoTrue v2.186.0+ with [auth.oauth_server] enabled = true in config.toml.
+
+    #[tokio::test]
+    async fn oauth_admin_create_client() {
+        let admin = admin_auth_client();
+
+        let params = CreateOAuthClientParams::new(
+            "Test OAuth App",
+            vec!["https://testapp.com/callback".to_string()],
+        );
+        let result = admin.admin().oauth_create_client(params).await;
+        assert!(result.is_ok(), "oauth_create_client failed: {:?}", result.err());
+
+        let client = result.unwrap();
+        assert_eq!(client.client_name, "Test OAuth App");
+        assert!(!client.client_id.is_empty());
+        assert!(client.client_secret.is_some());
+        assert_eq!(client.redirect_uris, vec!["https://testapp.com/callback"]);
+
+        // Cleanup
+        let _ = admin.admin().oauth_delete_client(&client.client_id).await;
+    }
+
+    #[tokio::test]
+async fn oauth_admin_get_client() {
+        let admin = admin_auth_client();
+
+        let params = CreateOAuthClientParams::new(
+            "Get Test App",
+            vec!["https://gettest.com/callback".to_string()],
+        );
+        let created = admin.admin().oauth_create_client(params).await.unwrap();
+
+        let fetched = admin.admin().oauth_get_client(&created.client_id).await;
+        assert!(fetched.is_ok(), "oauth_get_client failed: {:?}", fetched.err());
+
+        let fetched = fetched.unwrap();
+        assert_eq!(fetched.client_id, created.client_id);
+        assert_eq!(fetched.client_name, "Get Test App");
+
+        // Cleanup
+        let _ = admin.admin().oauth_delete_client(&created.client_id).await;
+    }
+
+    #[tokio::test]
+async fn oauth_admin_list_clients() {
+        let admin = admin_auth_client();
+
+        let params = CreateOAuthClientParams::new(
+            "List Test App",
+            vec!["https://listtest.com/callback".to_string()],
+        );
+        let created = admin.admin().oauth_create_client(params).await.unwrap();
+
+        let list = admin.admin().oauth_list_clients(None, None).await;
+        assert!(list.is_ok(), "oauth_list_clients failed: {:?}", list.err());
+
+        let list = list.unwrap();
+        assert!(
+            list.clients.iter().any(|c| c.client_id == created.client_id),
+            "Created client not found in list"
+        );
+
+        // Cleanup
+        let _ = admin.admin().oauth_delete_client(&created.client_id).await;
+    }
+
+    #[tokio::test]
+async fn oauth_admin_update_client() {
+        let admin = admin_auth_client();
+
+        let params = CreateOAuthClientParams::new(
+            "Update Test App",
+            vec!["https://updatetest.com/callback".to_string()],
+        );
+        let created = admin.admin().oauth_create_client(params).await.unwrap();
+
+        let update_params = UpdateOAuthClientParams::new()
+            .client_name("Updated App Name");
+        let updated = admin
+            .admin()
+            .oauth_update_client(&created.client_id, update_params)
+            .await;
+        assert!(updated.is_ok(), "oauth_update_client failed: {:?}", updated.err());
+
+        let updated = updated.unwrap();
+        assert_eq!(updated.client_name, "Updated App Name");
+        assert_eq!(updated.client_id, created.client_id);
+
+        // Cleanup
+        let _ = admin.admin().oauth_delete_client(&created.client_id).await;
+    }
+
+    #[tokio::test]
+async fn oauth_admin_delete_client() {
+        let admin = admin_auth_client();
+
+        let params = CreateOAuthClientParams::new(
+            "Delete Test App",
+            vec!["https://deletetest.com/callback".to_string()],
+        );
+        let created = admin.admin().oauth_create_client(params).await.unwrap();
+
+        let result = admin.admin().oauth_delete_client(&created.client_id).await;
+        assert!(result.is_ok(), "oauth_delete_client failed: {:?}", result.err());
+
+        // Verify deleted — get should fail
+        let get_after = admin.admin().oauth_get_client(&created.client_id).await;
+        assert!(get_after.is_err(), "Expected error getting deleted OAuth client");
+    }
+
+    #[tokio::test]
+async fn oauth_admin_regenerate_secret() {
+        let admin = admin_auth_client();
+
+        let params = CreateOAuthClientParams::new(
+            "Regen Secret App",
+            vec!["https://regensecret.com/callback".to_string()],
+        );
+        let created = admin.admin().oauth_create_client(params).await.unwrap();
+        let original_secret = created.client_secret.clone();
+
+        let regenerated = admin
+            .admin()
+            .oauth_regenerate_client_secret(&created.client_id)
+            .await;
+        assert!(regenerated.is_ok(), "oauth_regenerate_client_secret failed: {:?}", regenerated.err());
+
+        let regenerated = regenerated.unwrap();
+        assert_eq!(regenerated.client_id, created.client_id);
+        // Secret should have changed
+        assert_ne!(regenerated.client_secret, original_secret);
+
+        // Cleanup
+        let _ = admin.admin().oauth_delete_client(&created.client_id).await;
+    }
+
+    // ─── OAuth: Full Client Lifecycle ─────────────────────────
+
+    #[tokio::test]
+async fn oauth_full_client_lifecycle() {
+        let admin = admin_auth_client();
+
+        // 1. Create
+        let params = CreateOAuthClientParams::new(
+            "Lifecycle App",
+            vec!["https://lifecycle.com/callback".to_string()],
+        )
+        .client_uri("https://lifecycle.com");
+        let created = admin.admin().oauth_create_client(params).await.unwrap();
+        assert!(!created.client_id.is_empty());
+
+        // 2. List → verify appears
+        let list = admin.admin().oauth_list_clients(None, None).await.unwrap();
+        assert!(list.clients.iter().any(|c| c.client_id == created.client_id));
+
+        // 3. Get → verify match
+        let fetched = admin.admin().oauth_get_client(&created.client_id).await.unwrap();
+        assert_eq!(fetched.client_name, "Lifecycle App");
+
+        // 4. Update
+        let update_params = UpdateOAuthClientParams::new()
+            .client_name("Lifecycle App v2")
+            .logo_uri("https://lifecycle.com/logo.png");
+        let updated = admin
+            .admin()
+            .oauth_update_client(&created.client_id, update_params)
+            .await
+            .unwrap();
+        assert_eq!(updated.client_name, "Lifecycle App v2");
+
+        // 5. Regenerate secret
+        let original_secret = created.client_secret.clone();
+        let regen = admin
+            .admin()
+            .oauth_regenerate_client_secret(&created.client_id)
+            .await
+            .unwrap();
+        assert_ne!(regen.client_secret, original_secret);
+
+        // 6. Delete
+        let deleted = admin.admin().oauth_delete_client(&created.client_id).await;
+        assert!(deleted.is_ok());
+
+        // Verify gone
+        let gone = admin.admin().oauth_get_client(&created.client_id).await;
+        assert!(gone.is_err());
+    }
+
+    // ─── OAuth: User Consent (error cases) ────────────────────
+
+    #[tokio::test]
+async fn oauth_list_grants_empty() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("oauth-grants");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        let grants = auth.oauth_list_grants(&session.access_token).await;
+        assert!(grants.is_ok(), "oauth_list_grants failed: {:?}", grants.err());
+
+        let grants = grants.unwrap();
+        assert!(grants.is_empty(), "Expected empty grants for new user");
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    #[tokio::test]
+async fn oauth_get_authorization_details_invalid() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("oauth-auth-det");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        let result = auth
+            .oauth_get_authorization_details(&session.access_token, "nonexistent-auth-id")
+            .await;
+        assert!(result.is_err(), "Expected error for invalid authorization ID");
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    #[tokio::test]
+async fn oauth_approve_authorization_invalid() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("oauth-approve");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        let result = auth
+            .oauth_approve_authorization(&session.access_token, "nonexistent-auth-id")
+            .await;
+        assert!(result.is_err(), "Expected error for invalid authorization ID");
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    #[tokio::test]
+async fn oauth_deny_authorization_invalid() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("oauth-deny");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        let result = auth
+            .oauth_deny_authorization(&session.access_token, "nonexistent-auth-id")
+            .await;
+        assert!(result.is_err(), "Expected error for invalid authorization ID");
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    #[tokio::test]
+async fn oauth_revoke_grant_nonexistent() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("oauth-revoke");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        // Revoking a non-existent grant — GoTrue may return success or error
+        let result = auth
+            .oauth_revoke_grant(&session.access_token, "nonexistent-client-id")
+            .await;
+        // Just verify it doesn't panic; behavior varies by GoTrue version
+        let _ = result;
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    // ─── OAuth Client-Side Flow (Phase 9) ────────────────────
+
+    #[tokio::test]
+    async fn oauth_get_openid_configuration() {
+        let auth = auth_client();
+
+        let config = auth.oauth_get_openid_configuration().await;
+        assert!(config.is_ok(), "oauth_get_openid_configuration failed: {:?}", config.err());
+
+        let config = config.unwrap();
+        assert!(!config.issuer.is_empty());
+        assert!(!config.authorization_endpoint.is_empty());
+        assert!(!config.token_endpoint.is_empty());
+        assert!(!config.jwks_uri.is_empty());
+        assert!(config.scopes_supported.contains(&"openid".to_string()));
+    }
+
+    #[tokio::test]
+    async fn oauth_get_jwks() {
+        let auth = auth_client();
+
+        let jwks = auth.oauth_get_jwks().await;
+        assert!(jwks.is_ok(), "oauth_get_jwks failed: {:?}", jwks.err());
+
+        let jwks = jwks.unwrap();
+        assert!(!jwks.keys.is_empty(), "JWKS should have at least one key");
+        let key = &jwks.keys[0];
+        assert!(!key.kty.is_empty());
+    }
+
+    #[tokio::test]
+    async fn oauth_get_userinfo() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("oauth-userinfo");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        let userinfo = auth.oauth_get_userinfo(&session.access_token).await;
+        assert!(userinfo.is_ok(), "oauth_get_userinfo failed: {:?}", userinfo.err());
+
+        let userinfo = userinfo.unwrap();
+        // Should contain the user's sub (subject) claim
+        assert!(userinfo.get("sub").is_some(), "userinfo should have 'sub' claim");
+        assert_eq!(userinfo["sub"].as_str().unwrap(), user.id);
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    #[tokio::test]
+    async fn oauth_build_authorize_url_integration() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+
+        // Create an OAuth client to use in the URL
+        let params = CreateOAuthClientParams::new(
+            "URL Test App",
+            vec!["https://urltest.com/callback".to_string()],
+        );
+        let client = admin.admin().oauth_create_client(params).await.unwrap();
+
+        // Generate PKCE pair and build authorize URL
+        let pkce = AuthClient::generate_pkce_pair();
+        let url_params = OAuthAuthorizeUrlParams::new(
+            &client.client_id,
+            "https://urltest.com/callback",
+        )
+        .scope("openid")
+        .state("test-state-123")
+        .pkce(&pkce.challenge);
+
+        let url = auth.build_oauth_authorize_url(&url_params);
+        assert!(url.contains(&client.client_id));
+        assert!(url.contains("response_type=code"));
+        assert!(url.contains("scope=openid"));
+        assert!(url.contains("state=test-state-123"));
+        assert!(url.contains("code_challenge="));
+        assert!(url.contains("code_challenge_method=S256"));
+
+        // Cleanup
+        let _ = admin.admin().oauth_delete_client(&client.client_id).await;
+    }
+
+    #[tokio::test]
+    async fn oauth_token_exchange_invalid_code() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+
+        // Create an OAuth client
+        let params = CreateOAuthClientParams::new(
+            "Token Exchange Test App",
+            vec!["https://tokentest.com/callback".to_string()],
+        );
+        let client = admin.admin().oauth_create_client(params).await.unwrap();
+
+        // Try to exchange an invalid code — should fail
+        let exchange_params = OAuthTokenExchangeParams::new(
+            "invalid-code",
+            "https://tokentest.com/callback",
+            &client.client_id,
+        )
+        .client_secret(client.client_secret.as_deref().unwrap_or(""));
+        let result = auth.oauth_token_exchange(exchange_params).await;
+        assert!(result.is_err(), "Expected error for invalid code");
+
+        // Cleanup
+        let _ = admin.admin().oauth_delete_client(&client.client_id).await;
+    }
+
+    #[tokio::test]
+    async fn oauth_token_refresh_invalid() {
+        let auth = auth_client();
+
+        // Try to refresh with invalid token — should fail
+        let result = auth
+            .oauth_token_refresh("nonexistent-client", "invalid-refresh-token", None)
+            .await;
+        assert!(result.is_err(), "Expected error for invalid refresh token");
+    }
+
+    #[tokio::test]
+    async fn oauth_revoke_token_invalid() {
+        let auth = auth_client();
+
+        // Revoking an invalid token — GoTrue may succeed silently or return error
+        let result = auth
+            .oauth_revoke_token("invalid-token", Some("access_token"))
+            .await;
+        // Just verify it doesn't panic
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn oauth_pkce_full_flow_setup() {
+        // This tests the full setup of a PKCE-based OAuth flow:
+        // 1. Create OAuth client (admin)
+        // 2. Generate PKCE pair
+        // 3. Build authorize URL
+        // 4. Verify the URL is well-formed
+        // (We can't complete the flow without a browser to follow the redirect)
+        let auth = auth_client();
+        let admin = admin_auth_client();
+
+        // 1. Create OAuth client
+        let params = CreateOAuthClientParams::new(
+            "PKCE Flow Test App",
+            vec!["https://pkcetest.com/callback".to_string()],
+        )
+        .scope("openid");
+        let client = admin.admin().oauth_create_client(params).await.unwrap();
+        assert!(client.client_secret.is_some());
+
+        // 2. Generate PKCE pair
+        let pkce = AuthClient::generate_pkce_pair();
+        assert_eq!(pkce.verifier.as_str().len(), 43);
+        assert_eq!(pkce.challenge.as_str().len(), 43);
+
+        // 3. Build authorize URL
+        let url_params = OAuthAuthorizeUrlParams::new(
+            &client.client_id,
+            "https://pkcetest.com/callback",
+        )
+        .scope("openid")
+        .state("pkce-test-state")
+        .pkce(&pkce.challenge);
+        let authorize_url = auth.build_oauth_authorize_url(&url_params);
+
+        // 4. Verify URL structure
+        let parsed = url::Url::parse(&authorize_url).expect("Should be a valid URL");
+        let query_pairs: std::collections::HashMap<_, _> =
+            parsed.query_pairs().into_owned().collect();
+        assert_eq!(query_pairs["client_id"], client.client_id);
+        assert_eq!(query_pairs["redirect_uri"], "https://pkcetest.com/callback");
+        assert_eq!(query_pairs["response_type"], "code");
+        assert_eq!(query_pairs["scope"], "openid");
+        assert_eq!(query_pairs["state"], "pkce-test-state");
+        assert_eq!(query_pairs["code_challenge"], pkce.challenge.as_str());
+        assert_eq!(query_pairs["code_challenge_method"], "S256");
+
+        // Cleanup
+        let _ = admin.admin().oauth_delete_client(&client.client_id).await;
     }
 }
