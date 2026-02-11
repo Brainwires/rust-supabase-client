@@ -75,6 +75,8 @@ pub mod prelude {
         Bucket, BucketOptions, FileObject, FileOptions,
         SearchOptions, SortOrder, SignedUrlResponse,
         SupabaseClientStorageExt,
+        // Phase 7: Storage enhancements
+        TransformOptions, ResizeMode, ImageFormat, FileInfo,
     };
 
     #[cfg(feature = "functions")]

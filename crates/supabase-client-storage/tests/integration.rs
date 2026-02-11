@@ -7,7 +7,8 @@
 //! Run with: cargo test -p supabase-client-storage --test integration -- --test-threads=1
 
 use supabase_client_storage::{
-    BucketOptions, FileOptions, SearchOptions, SortOrder, StorageClient, StorageError,
+    BucketOptions, FileOptions, ImageFormat, ResizeMode, SearchOptions, SortOrder, StorageClient,
+    StorageError, TransformOptions,
 };
 
 /// Default local Supabase URL (from `supabase start` output).
@@ -715,6 +716,276 @@ mod integration_tests {
             )
             .await;
         assert!(result.is_err());
+    }
+
+    // ─── File Info & Exists ─────────────────────────────────
+
+    #[tokio::test]
+    async fn info_existing_file() {
+        let storage = storage_client();
+        let name = test_bucket_name("info");
+
+        storage
+            .create_bucket(&name, BucketOptions::new())
+            .await
+            .expect("create_bucket failed");
+
+        let file_api = storage.from(&name);
+        let content = b"hello info test".to_vec();
+        file_api
+            .upload(
+                "info-test.txt",
+                content.clone(),
+                FileOptions::new().content_type("text/plain"),
+            )
+            .await
+            .expect("upload failed");
+
+        let info = file_api.info("info-test.txt").await;
+        assert!(info.is_ok(), "info failed: {:?}", info.err());
+        let info = info.unwrap();
+        // Size should match uploaded content
+        assert_eq!(info.size, Some(content.len() as i64));
+        // Content type should be set
+        assert!(
+            info.content_type.is_some(),
+            "Expected content_type to be populated"
+        );
+
+        cleanup_bucket(&storage, &name).await;
+    }
+
+    #[tokio::test]
+    async fn info_nonexistent_file() {
+        let storage = storage_client();
+        let name = test_bucket_name("info-miss");
+
+        storage
+            .create_bucket(&name, BucketOptions::new())
+            .await
+            .expect("create_bucket failed");
+
+        let file_api = storage.from(&name);
+        let result = file_api.info("does-not-exist.txt").await;
+        assert!(result.is_err(), "Expected error for nonexistent file info");
+
+        cleanup_bucket(&storage, &name).await;
+    }
+
+    #[tokio::test]
+    async fn exists_true() {
+        let storage = storage_client();
+        let name = test_bucket_name("exists-t");
+
+        storage
+            .create_bucket(&name, BucketOptions::new())
+            .await
+            .expect("create_bucket failed");
+
+        let file_api = storage.from(&name);
+        file_api
+            .upload(
+                "existing.txt",
+                b"data".to_vec(),
+                FileOptions::new().content_type("text/plain"),
+            )
+            .await
+            .expect("upload failed");
+
+        let found = file_api.exists("existing.txt").await;
+        assert!(found.is_ok(), "exists failed: {:?}", found.err());
+        assert!(found.unwrap(), "Expected file to exist");
+
+        cleanup_bucket(&storage, &name).await;
+    }
+
+    #[tokio::test]
+    async fn exists_false() {
+        let storage = storage_client();
+        let name = test_bucket_name("exists-f");
+
+        storage
+            .create_bucket(&name, BucketOptions::new())
+            .await
+            .expect("create_bucket failed");
+
+        let file_api = storage.from(&name);
+        let found = file_api.exists("no-such-file.txt").await;
+        assert!(found.is_ok(), "exists failed: {:?}", found.err());
+        assert!(!found.unwrap(), "Expected file to NOT exist");
+
+        cleanup_bucket(&storage, &name).await;
+    }
+
+    // ─── Transform URLs ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn public_url_with_transform() {
+        let storage = storage_client();
+        let api = storage.from("photos");
+        let transform = TransformOptions::new()
+            .width(200)
+            .height(200)
+            .resize(ResizeMode::Cover)
+            .quality(80)
+            .format(ImageFormat::Origin);
+
+        let url = api.get_public_url_with_transform("photo.jpg", &transform);
+        assert!(
+            url.contains("/render/image/public/"),
+            "URL should use render path: {}",
+            url
+        );
+        assert!(url.contains("width=200"), "URL missing width: {}", url);
+        assert!(url.contains("height=200"), "URL missing height: {}", url);
+        assert!(url.contains("resize=cover"), "URL missing resize: {}", url);
+        assert!(url.contains("quality=80"), "URL missing quality: {}", url);
+        assert!(url.contains("format=origin"), "URL missing format: {}", url);
+    }
+
+    #[tokio::test]
+    async fn create_signed_url_with_transform() {
+        let storage = storage_client();
+        let name = test_bucket_name("sig-tfm");
+
+        storage
+            .create_bucket(&name, BucketOptions::new())
+            .await
+            .expect("create_bucket failed");
+
+        let file_api = storage.from(&name);
+        file_api
+            .upload(
+                "image.txt",
+                b"fake image data".to_vec(),
+                FileOptions::new().content_type("text/plain"),
+            )
+            .await
+            .expect("upload failed");
+
+        let transform = TransformOptions::new().width(100).height(100);
+
+        let signed = file_api
+            .create_signed_url_with_transform("image.txt", 3600, &transform)
+            .await;
+        assert!(
+            signed.is_ok(),
+            "create_signed_url_with_transform failed: {:?}",
+            signed.err()
+        );
+        let signed = signed.unwrap();
+        assert!(!signed.signed_url.is_empty());
+        assert!(signed.signed_url.contains("token="));
+
+        cleanup_bucket(&storage, &name).await;
+    }
+
+    #[tokio::test]
+    async fn create_signed_urls_with_transform_batch() {
+        let storage = storage_client();
+        let name = test_bucket_name("sig-tfm-batch");
+
+        storage
+            .create_bucket(&name, BucketOptions::new())
+            .await
+            .expect("create_bucket failed");
+
+        let file_api = storage.from(&name);
+        for fname in &["a.txt", "b.txt"] {
+            file_api
+                .upload(
+                    fname,
+                    format!("content of {}", fname).into_bytes(),
+                    FileOptions::new().content_type("text/plain"),
+                )
+                .await
+                .expect("upload failed");
+        }
+
+        let transform = TransformOptions::new().width(50);
+
+        let result = file_api
+            .create_signed_urls_with_transform(vec!["a.txt", "b.txt"], 3600, &transform)
+            .await;
+        assert!(
+            result.is_ok(),
+            "create_signed_urls_with_transform failed: {:?}",
+            result.err()
+        );
+        let entries = result.unwrap();
+        assert_eq!(entries.len(), 2);
+        for entry in &entries {
+            assert!(
+                entry.signed_url.is_some(),
+                "Missing signed URL for {:?}",
+                entry.path
+            );
+            assert!(entry.error.is_none());
+        }
+
+        cleanup_bucket(&storage, &name).await;
+    }
+
+    #[tokio::test]
+    async fn download_with_transform() {
+        let storage = storage_client();
+        let name = test_bucket_name("dl-tfm");
+
+        storage
+            .create_bucket(&name, BucketOptions::new())
+            .await
+            .expect("create_bucket failed");
+
+        let file_api = storage.from(&name);
+        // Upload a minimal 1x1 red PNG (67 bytes)
+        let png_data: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
+            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, // RGB, no interlace
+            0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, // IDAT chunk
+            0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, // compressed data
+            0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC, 0x33, // CRC
+            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, // IEND chunk
+            0xAE, 0x42, 0x60, 0x82,
+        ];
+
+        file_api
+            .upload(
+                "tiny.png",
+                png_data,
+                FileOptions::new().content_type("image/png"),
+            )
+            .await
+            .expect("upload failed");
+
+        let transform = TransformOptions::new().width(1).height(1);
+
+        // Note: Local Supabase may not have image transformation service (Pro feature).
+        // We test that the request is made correctly; it may return an error from the
+        // server if the transform service is not available.
+        let result = file_api
+            .download_with_transform("tiny.png", &transform)
+            .await;
+
+        // Accept either success (transform service available) or specific error
+        // (transform service not available). The request should not crash.
+        match &result {
+            Ok(bytes) => {
+                assert!(!bytes.is_empty(), "Expected non-empty response");
+            }
+            Err(StorageError::Api { status, .. }) => {
+                // 400, 404, or 422 are acceptable if transform service isn't available
+                assert!(
+                    *status == 400 || *status == 404 || *status == 422,
+                    "Unexpected error status: {}",
+                    status
+                );
+            }
+            Err(e) => panic!("Unexpected error type: {:?}", e),
+        }
+
+        cleanup_bucket(&storage, &name).await;
     }
 
     // ─── Full Lifecycle ──────────────────────────────────────

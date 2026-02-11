@@ -216,6 +216,180 @@ pub struct CreateBucketResponse {
     pub name: String,
 }
 
+/// Image resize mode for transforms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeMode {
+    /// Crop to fit exact dimensions (default).
+    Cover,
+    /// Scale down to fit within dimensions, preserving aspect ratio.
+    Contain,
+    /// Stretch to fill exact dimensions.
+    Fill,
+}
+
+impl ResizeMode {
+    pub fn as_str(&self) -> &str {
+        match self {
+            ResizeMode::Cover => "cover",
+            ResizeMode::Contain => "contain",
+            ResizeMode::Fill => "fill",
+        }
+    }
+}
+
+impl std::fmt::Display for ResizeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Image output format for transforms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    /// Keep original format.
+    Origin,
+}
+
+impl ImageFormat {
+    pub fn as_str(&self) -> &str {
+        match self {
+            ImageFormat::Origin => "origin",
+        }
+    }
+}
+
+impl std::fmt::Display for ImageFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Options for server-side image transformation.
+///
+/// Matches the `transform` option in Supabase JS `download()`, `getPublicUrl()`,
+/// `createSignedUrl()`, and `createSignedUrls()`.
+#[derive(Debug, Clone, Default)]
+pub struct TransformOptions {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub resize: Option<ResizeMode>,
+    pub quality: Option<u8>,
+    pub format: Option<ImageFormat>,
+}
+
+impl TransformOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn width(mut self, width: u32) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    pub fn height(mut self, height: u32) -> Self {
+        self.height = Some(height);
+        self
+    }
+
+    pub fn resize(mut self, resize: ResizeMode) -> Self {
+        self.resize = Some(resize);
+        self
+    }
+
+    pub fn quality(mut self, quality: u8) -> Self {
+        self.quality = Some(quality);
+        self
+    }
+
+    pub fn format(mut self, format: ImageFormat) -> Self {
+        self.format = Some(format);
+        self
+    }
+
+    /// Build a query string from the transform options.
+    ///
+    /// Returns an empty string if no options are set.
+    pub fn to_query_string(&self) -> String {
+        let mut params = Vec::new();
+        if let Some(w) = self.width {
+            params.push(format!("width={}", w));
+        }
+        if let Some(h) = self.height {
+            params.push(format!("height={}", h));
+        }
+        if let Some(r) = &self.resize {
+            params.push(format!("resize={}", r));
+        }
+        if let Some(q) = self.quality {
+            params.push(format!("quality={}", q));
+        }
+        if let Some(f) = &self.format {
+            params.push(format!("format={}", f));
+        }
+        params.join("&")
+    }
+
+    /// Convert to a JSON value for inclusion in signed URL request bodies.
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        if let Some(w) = self.width {
+            map.insert("width".into(), serde_json::json!(w));
+        }
+        if let Some(h) = self.height {
+            map.insert("height".into(), serde_json::json!(h));
+        }
+        if let Some(r) = &self.resize {
+            map.insert("resize".into(), serde_json::json!(r.as_str()));
+        }
+        if let Some(q) = self.quality {
+            map.insert("quality".into(), serde_json::json!(q));
+        }
+        if let Some(f) = &self.format {
+            map.insert("format".into(), serde_json::json!(f.as_str()));
+        }
+        serde_json::Value::Object(map)
+    }
+
+    /// Returns true if no transform options are set.
+    pub fn is_empty(&self) -> bool {
+        self.width.is_none()
+            && self.height.is_none()
+            && self.resize.is_none()
+            && self.quality.is_none()
+            && self.format.is_none()
+    }
+}
+
+/// File metadata returned by `info()`.
+///
+/// Matches the response from Supabase Storage `info` endpoint.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FileInfo {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub size: Option<i64>,
+    #[serde(default)]
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub cache_control: Option<String>,
+    #[serde(default)]
+    pub etag: Option<String>,
+    #[serde(default)]
+    pub last_modified: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub bucket_id: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,5 +507,113 @@ mod tests {
         let resp: SignedUploadUrlResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.token, "abc123");
         assert_eq!(resp.path.as_deref(), Some("folder/file.png"));
+    }
+
+    // ─── TransformOptions Tests ─────────────────────────────
+
+    #[test]
+    fn transform_options_builder_all() {
+        let opts = TransformOptions::new()
+            .width(200)
+            .height(150)
+            .resize(ResizeMode::Cover)
+            .quality(80)
+            .format(ImageFormat::Origin);
+
+        assert_eq!(opts.width, Some(200));
+        assert_eq!(opts.height, Some(150));
+        assert_eq!(opts.resize, Some(ResizeMode::Cover));
+        assert_eq!(opts.quality, Some(80));
+        assert_eq!(opts.format, Some(ImageFormat::Origin));
+    }
+
+    #[test]
+    fn transform_options_default_is_empty() {
+        let opts = TransformOptions::default();
+        assert!(opts.is_empty());
+        assert_eq!(opts.to_query_string(), "");
+    }
+
+    #[test]
+    fn transform_options_to_query_string_all() {
+        let qs = TransformOptions::new()
+            .width(200)
+            .height(150)
+            .resize(ResizeMode::Cover)
+            .quality(80)
+            .format(ImageFormat::Origin)
+            .to_query_string();
+        assert_eq!(qs, "width=200&height=150&resize=cover&quality=80&format=origin");
+    }
+
+    #[test]
+    fn transform_options_to_query_string_partial() {
+        let qs = TransformOptions::new()
+            .width(300)
+            .quality(60)
+            .to_query_string();
+        assert_eq!(qs, "width=300&quality=60");
+    }
+
+    #[test]
+    fn transform_options_to_json() {
+        let json = TransformOptions::new()
+            .width(200)
+            .height(150)
+            .resize(ResizeMode::Contain)
+            .to_json();
+        assert_eq!(json["width"], 200);
+        assert_eq!(json["height"], 150);
+        assert_eq!(json["resize"], "contain");
+        assert!(json.get("quality").is_none());
+        assert!(json.get("format").is_none());
+    }
+
+    #[test]
+    fn resize_mode_display() {
+        assert_eq!(ResizeMode::Cover.to_string(), "cover");
+        assert_eq!(ResizeMode::Contain.to_string(), "contain");
+        assert_eq!(ResizeMode::Fill.to_string(), "fill");
+    }
+
+    #[test]
+    fn image_format_display() {
+        assert_eq!(ImageFormat::Origin.to_string(), "origin");
+    }
+
+    #[test]
+    fn file_info_deserialization() {
+        let json = r#"{
+            "id": "abc-123",
+            "name": "photo.png",
+            "version": "v1",
+            "size": 12345,
+            "content_type": "image/png",
+            "cache_control": "max-age=3600",
+            "etag": "\"abc\"",
+            "last_modified": "2024-01-01T00:00:00Z",
+            "created_at": "2024-01-01T00:00:00Z",
+            "bucket_id": "photos",
+            "metadata": {"custom": "value"}
+        }"#;
+        let info: FileInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.id.as_deref(), Some("abc-123"));
+        assert_eq!(info.name.as_deref(), Some("photo.png"));
+        assert_eq!(info.size, Some(12345));
+        assert_eq!(info.content_type.as_deref(), Some("image/png"));
+        assert_eq!(info.cache_control.as_deref(), Some("max-age=3600"));
+        assert_eq!(info.etag.as_deref(), Some("\"abc\""));
+        assert_eq!(info.created_at.as_deref(), Some("2024-01-01T00:00:00Z"));
+        assert_eq!(info.bucket_id.as_deref(), Some("photos"));
+    }
+
+    #[test]
+    fn file_info_deserialization_minimal() {
+        let json = r#"{}"#;
+        let info: FileInfo = serde_json::from_str(json).unwrap();
+        assert!(info.id.is_none());
+        assert!(info.name.is_none());
+        assert!(info.size.is_none());
+        assert!(info.content_type.is_none());
     }
 }

@@ -31,8 +31,10 @@ A Rust crate wrapping [sqlx](https://github.com/launchbadge/sqlx) with a Supabas
 **Storage** - HTTP client for Supabase Object Storage
 - Bucket management: create, list, get, update, empty, delete
 - File operations: upload, download, update, list, move, copy, remove
+- File metadata (`info`) and existence checking (`exists`)
 - Signed URLs for time-limited access and delegated uploads
 - Public URL construction for public buckets
+- Image transform options (resize, quality, format) on download, public URL, and signed URLs
 
 **Edge Functions** - HTTP client for Supabase Edge Functions
 - Invoke deployed Deno/TypeScript functions
@@ -287,6 +289,30 @@ println!("Signed URL: {}", signed.signed_url);
 
 // Public URL (no HTTP call)
 let public_url = file_api.get_public_url("photo.png");
+
+// File metadata
+let info = file_api.info("photo.png").await?;
+println!("Size: {} bytes, Type: {:?}", info.size.unwrap_or(0), info.content_type);
+
+// Check if file exists
+let exists = file_api.exists("photo.png").await?;
+assert!(exists);
+
+// Image transforms (resize, quality, format)
+let transform = TransformOptions::new()
+    .width(200)
+    .height(200)
+    .resize(ResizeMode::Cover)
+    .quality(80);
+
+// Download with transform
+let thumb = file_api.download_with_transform("photo.png", &transform).await?;
+
+// Public URL with transform
+let url = file_api.get_public_url_with_transform("photo.png", &transform);
+
+// Signed URL with transform
+let signed = file_api.create_signed_url_with_transform("photo.png", 3600, &transform).await?;
 
 // Cleanup
 storage.empty_bucket("photos").await?;

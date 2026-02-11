@@ -327,6 +327,151 @@ impl StorageBucketApi {
         self.client.handle_empty_response(resp).await
     }
 
+    /// Get file metadata.
+    ///
+    /// Mirrors `supabase.storage.from('bucket').info(path)`.
+    pub async fn info(&self, path: &str) -> Result<FileInfo, StorageError> {
+        let url = self.client.url(&format!(
+            "/object/info/authenticated/{}/{}",
+            self.bucket_id, path
+        ));
+        let resp = self.client.http().get(url).send().await?;
+        self.client.handle_response(resp).await
+    }
+
+    /// Check if a file exists.
+    ///
+    /// Mirrors `supabase.storage.from('bucket').exists(path)`.
+    /// Returns `true` if the file exists, `false` if it does not (404).
+    pub async fn exists(&self, path: &str) -> Result<bool, StorageError> {
+        let url = self
+            .client
+            .url(&format!("/object/{}/{}", self.bucket_id, path));
+        let resp = self.client.http().head(url).send().await?;
+        let status = resp.status().as_u16();
+        if status >= 200 && status < 300 {
+            Ok(true)
+        } else if status == 404 || status == 400 {
+            Ok(false)
+        } else {
+            Err(StorageError::Api {
+                status,
+                message: format!("HTTP {}", status),
+            })
+        }
+    }
+
+    /// Download with server-side image transformation.
+    ///
+    /// Mirrors `supabase.storage.from('bucket').download(path, { transform })`.
+    pub async fn download_with_transform(
+        &self,
+        path: &str,
+        transform: &TransformOptions,
+    ) -> Result<Vec<u8>, StorageError> {
+        let qs = transform.to_query_string();
+        let url_path = if qs.is_empty() {
+            format!(
+                "/render/image/authenticated/{}/{}",
+                self.bucket_id, path
+            )
+        } else {
+            format!(
+                "/render/image/authenticated/{}/{}?{}",
+                self.bucket_id, path, qs
+            )
+        };
+        let url = self.client.url(&url_path);
+        let resp = self.client.http().get(url).send().await?;
+        self.client.handle_bytes_response(resp).await
+    }
+
+    /// Get public URL with image transformation (no HTTP call).
+    ///
+    /// Mirrors `supabase.storage.from('bucket').getPublicUrl(path, { transform })`.
+    pub fn get_public_url_with_transform(
+        &self,
+        path: &str,
+        transform: &TransformOptions,
+    ) -> String {
+        let base = self.client.base_url().as_str().trim_end_matches('/');
+        let qs = transform.to_query_string();
+        if qs.is_empty() {
+            format!(
+                "{}/render/image/public/{}/{}",
+                base, self.bucket_id, path
+            )
+        } else {
+            format!(
+                "{}/render/image/public/{}/{}?{}",
+                base, self.bucket_id, path, qs
+            )
+        }
+    }
+
+    /// Create a signed URL with image transformation.
+    ///
+    /// Mirrors `supabase.storage.from('bucket').createSignedUrl(path, expiresIn, { transform })`.
+    pub async fn create_signed_url_with_transform(
+        &self,
+        path: &str,
+        expires_in: u64,
+        transform: &TransformOptions,
+    ) -> Result<SignedUrlResponse, StorageError> {
+        let url = self
+            .client
+            .url(&format!("/object/sign/{}/{}", self.bucket_id, path));
+        let mut body = json!({ "expiresIn": expires_in });
+        if !transform.is_empty() {
+            body["transform"] = transform.to_json();
+        }
+
+        let resp = self.client.http().post(url).json(&body).send().await?;
+        let mut result: SignedUrlResponse = self.client.handle_response(resp).await?;
+
+        if result.signed_url.starts_with('/') {
+            let base = self.client.base_url().as_str().trim_end_matches('/');
+            result.signed_url = format!("{}{}", base, result.signed_url);
+        }
+
+        Ok(result)
+    }
+
+    /// Create batch signed URLs with image transformation.
+    ///
+    /// Mirrors `supabase.storage.from('bucket').createSignedUrls(paths, expiresIn, { transform })`.
+    pub async fn create_signed_urls_with_transform(
+        &self,
+        paths: Vec<&str>,
+        expires_in: u64,
+        transform: &TransformOptions,
+    ) -> Result<Vec<SignedUrlBatchEntry>, StorageError> {
+        let url = self
+            .client
+            .url(&format!("/object/sign/{}", self.bucket_id));
+        let mut body = json!({
+            "expiresIn": expires_in,
+            "paths": paths,
+        });
+        if !transform.is_empty() {
+            body["transform"] = transform.to_json();
+        }
+
+        let resp = self.client.http().post(url).json(&body).send().await?;
+        let mut results: Vec<SignedUrlBatchEntry> = self.client.handle_response(resp).await?;
+
+        let base = self.client.base_url().as_str().trim_end_matches('/');
+        for entry in &mut results {
+            if let Some(ref mut signed_url) = entry.signed_url {
+                if signed_url.starts_with('/') {
+                    *signed_url = format!("{}{}", base, signed_url);
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Get the bucket ID this API is scoped to.
     pub fn bucket_id(&self) -> &str {
         &self.bucket_id

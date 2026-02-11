@@ -278,4 +278,51 @@ mod tests {
             "https://example.supabase.co/storage/v1/object/public/avatars/folder/photo.png"
         );
     }
+
+    #[test]
+    fn public_url_with_transform_all_options() {
+        use crate::types::{TransformOptions, ResizeMode, ImageFormat};
+
+        let client = StorageClient::new("https://example.supabase.co", "test-key").unwrap();
+        let api = client.from("photos");
+        let transform = TransformOptions::new()
+            .width(200)
+            .height(150)
+            .resize(ResizeMode::Cover)
+            .quality(80)
+            .format(ImageFormat::Origin);
+        let url = api.get_public_url_with_transform("photo.jpg", &transform);
+        assert_eq!(
+            url,
+            "https://example.supabase.co/storage/v1/render/image/public/photos/photo.jpg?width=200&height=150&resize=cover&quality=80&format=origin"
+        );
+    }
+
+    #[test]
+    fn public_url_with_transform_partial() {
+        use crate::types::TransformOptions;
+
+        let client = StorageClient::new("https://example.supabase.co", "test-key").unwrap();
+        let api = client.from("photos");
+        let transform = TransformOptions::new().width(300);
+        let url = api.get_public_url_with_transform("img.png", &transform);
+        assert_eq!(
+            url,
+            "https://example.supabase.co/storage/v1/render/image/public/photos/img.png?width=300"
+        );
+    }
+
+    #[test]
+    fn public_url_with_empty_transform() {
+        use crate::types::TransformOptions;
+
+        let client = StorageClient::new("https://example.supabase.co", "test-key").unwrap();
+        let api = client.from("photos");
+        let transform = TransformOptions::default();
+        let url = api.get_public_url_with_transform("img.png", &transform);
+        assert_eq!(
+            url,
+            "https://example.supabase.co/storage/v1/render/image/public/photos/img.png"
+        );
+    }
 }
