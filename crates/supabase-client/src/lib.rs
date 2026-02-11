@@ -44,4 +44,12 @@ pub mod prelude {
         AuthClient, AuthError, AuthResponse, Session, User,
         SupabaseClientAuthExt,
     };
+
+    #[cfg(feature = "realtime")]
+    pub use supabase_client_realtime::{
+        RealtimeClient, RealtimeChannel, RealtimeConfig, RealtimeError,
+        ChannelBuilder, SupabaseClientRealtimeExt,
+        PostgresChangesEvent, PostgresChangesFilter, PostgresChangePayload,
+        SubscriptionStatus, ChannelState, PresenceState, PresenceMeta,
+    };
 }

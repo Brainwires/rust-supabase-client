@@ -49,6 +49,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 url = "2"
 
+# WebSocket (for realtime)
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+
 # Proc macros
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
