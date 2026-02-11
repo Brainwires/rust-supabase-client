@@ -1,4 +1,4 @@
-# Rust Supabase Client
+# supabase-client - Rust Supabase Client
 
 [![Tests](https://img.shields.io/badge/tests-360%2B%20passing-brightgreen)](#testing)
 [![Rust](https://img.shields.io/badge/rust-2021%20edition-orange)](https://www.rust-lang.org/)
