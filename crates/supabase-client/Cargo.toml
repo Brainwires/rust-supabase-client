@@ -13,7 +13,8 @@ derive = ["dep:supabase-client-derive"]
 auth = ["dep:supabase-client-auth"]
 realtime = ["dep:supabase-client-realtime"]
 storage = ["dep:supabase-client-storage"]
-full = ["query", "derive", "auth", "realtime", "storage"]
+functions = ["dep:supabase-client-functions"]
+full = ["query", "derive", "auth", "realtime", "storage", "functions"]
 
 [dependencies]
 supabase-client-core.workspace = true
@@ -22,6 +23,7 @@ supabase-client-derive = { workspace = true, optional = true }
 supabase-client-auth = { workspace = true, optional = true }
 supabase-client-realtime = { workspace = true, optional = true }
 supabase-client-storage = { workspace = true, optional = true }
+supabase-client-functions = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

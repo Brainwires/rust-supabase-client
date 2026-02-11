@@ -1894,6 +1894,7 @@ dependencies = [
  "supabase-client-auth",
  "supabase-client-core",
  "supabase-client-derive",
+ "supabase-client-functions",
  "supabase-client-query",
  "supabase-client-realtime",
  "supabase-client-storage",
@@ -1938,6 +1939,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "supabase-client-functions"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "supabase-client-core",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]

@@ -34,6 +34,12 @@ A Rust crate wrapping [sqlx](https://github.com/launchbadge/sqlx) with a Supabas
 - Signed URLs for time-limited access and delegated uploads
 - Public URL construction for public buckets
 
+**Edge Functions** - HTTP client for Supabase Edge Functions
+- Invoke deployed Deno/TypeScript functions
+- JSON, binary, and text request/response bodies
+- Custom headers, authorization override, and region routing
+- Full HTTP method support (GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD)
+
 ## Installation
 
 Add to your `Cargo.toml`:
@@ -54,6 +60,7 @@ supabase-client = { path = "crates/supabase-client", features = ["auth", "realti
 | `auth` | No | GoTrue authentication client |
 | `realtime` | No | WebSocket realtime subscriptions |
 | `storage` | No | Object storage client |
+| `functions` | No | Edge Functions client |
 | `full` | No | All features enabled |
 
 ## Quick Start
@@ -286,6 +293,54 @@ storage.empty_bucket("photos").await?;
 storage.delete_bucket("photos").await?;
 ```
 
+### Edge Functions
+
+Requires the `functions` feature.
+
+```rust
+use supabase_client::prelude::*;
+use serde_json::json;
+
+let functions = client.functions()?;
+
+// Basic JSON invocation (default: POST)
+let response = functions.invoke("hello", InvokeOptions::new()
+    .body(json!({"name": "World"}))
+).await?;
+let data: serde_json::Value = response.json()?;
+
+// GET request
+let response = functions.invoke("get-data", InvokeOptions::new()
+    .method(HttpMethod::Get)
+).await?;
+
+// Custom headers + region
+let response = functions.invoke("hello", InvokeOptions::new()
+    .body(json!({"name": "World"}))
+    .header("x-custom", "value")
+    .region(FunctionRegion::UsEast1)
+).await?;
+
+// Binary body/response
+let response = functions.invoke("process", InvokeOptions::new()
+    .body_bytes(raw_bytes)
+).await?;
+let output = response.bytes();
+
+// Override authorization (e.g., user JWT)
+let response = functions.invoke("protected", InvokeOptions::new()
+    .authorization(format!("Bearer {}", user_jwt))
+).await?;
+
+// Response accessors
+response.status();           // u16
+response.json::<T>()?;       // deserialize JSON
+response.text()?;            // UTF-8 string
+response.bytes();            // &[u8]
+response.content_type();     // Option<&str>
+response.header("x-foo");   // case-insensitive lookup
+```
+
 ## Architecture
 
 This project is a Cargo workspace with the following crates:
@@ -299,12 +354,14 @@ This project is a Cargo workspace with the following crates:
 | `supabase-client-auth` | GoTrue auth HTTP client via reqwest |
 | `supabase-client-realtime` | WebSocket realtime client via tokio-tungstenite |
 | `supabase-client-storage` | Object storage HTTP client via reqwest |
+| `supabase-client-functions` | Edge Functions HTTP client via reqwest |
 
 Each sub-crate provides an extension trait on `SupabaseClient`:
 - `SupabaseClientQueryExt` - `.from()`, `.from_typed()`, `.rpc()`
 - `SupabaseClientAuthExt` - `.auth()`
 - `SupabaseClientRealtimeExt` - `.realtime()`
 - `SupabaseClientStorageExt` - `.storage()`
+- `SupabaseClientFunctionsExt` - `.functions()`
 
 ## Configuration
 
@@ -318,8 +375,8 @@ let config = SupabaseConfig::new("postgres://user:pass@host/db")
 ```
 
 - `database_url` - PostgreSQL connection string (required for queries)
-- `supabase_url` - Supabase project URL (required for auth, realtime, storage)
-- `supabase_key` - Supabase anon or service_role key (required for auth, realtime, storage)
+- `supabase_url` - Supabase project URL (required for auth, realtime, storage, functions)
+- `supabase_key` - Supabase anon or service_role key (required for auth, realtime, storage, functions)
 
 ## Testing
 
@@ -337,6 +394,7 @@ cargo test -p supabase-client-query
 cargo test -p supabase-client-auth
 cargo test -p supabase-client-realtime
 cargo test -p supabase-client-storage --test integration -- --test-threads=1
+cargo test -p supabase-client-functions --test integration -- --test-threads=1
 ```
 
 The local Supabase instance runs on custom ports (API: 64321, DB: 64322). Integration tests default to these ports and use hardcoded local development keys.

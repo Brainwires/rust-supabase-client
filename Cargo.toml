@@ -8,6 +8,7 @@ members = [
     "crates/supabase-client-auth",
     "crates/supabase-client-realtime",
     "crates/supabase-client-storage",
+    "crates/supabase-client-functions",
 ]
 
 [workspace.package]
@@ -24,6 +25,7 @@ supabase-client-derive = { path = "crates/supabase-client-derive" }
 supabase-client-auth = { path = "crates/supabase-client-auth" }
 supabase-client-realtime = { path = "crates/supabase-client-realtime" }
 supabase-client-storage = { path = "crates/supabase-client-storage" }
+supabase-client-functions = { path = "crates/supabase-client-functions" }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "json", "chrono", "uuid"] }

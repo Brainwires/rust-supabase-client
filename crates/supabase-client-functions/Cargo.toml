@@ -1,0 +1,19 @@
+[package]
+name = "supabase-client-functions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Edge Functions client for supabase-client (Phase 5)"
+
+[dependencies]
+supabase-client-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+reqwest.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

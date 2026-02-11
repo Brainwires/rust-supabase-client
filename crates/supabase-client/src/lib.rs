@@ -19,6 +19,9 @@ pub use supabase_client_realtime;
 #[cfg(feature = "storage")]
 pub use supabase_client_storage;
 
+#[cfg(feature = "functions")]
+pub use supabase_client_functions;
+
 /// Prelude module for convenient imports.
 ///
 /// ```ignore
@@ -59,5 +62,12 @@ pub mod prelude {
         Bucket, BucketOptions, FileObject, FileOptions,
         SearchOptions, SortOrder, SignedUrlResponse,
         SupabaseClientStorageExt,
+    };
+
+    #[cfg(feature = "functions")]
+    pub use supabase_client_functions::{
+        FunctionsClient, FunctionsError, FunctionResponse,
+        InvokeOptions, InvokeBody, HttpMethod, FunctionRegion,
+        SupabaseClientFunctionsExt,
     };
 }

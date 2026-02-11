@@ -29,6 +29,9 @@ pub enum SupabaseError {
 
     #[error("Realtime error: {0}")]
     Realtime(String),
+
+    #[error("Functions error: {0}")]
+    Functions(String),
 }
 
 impl SupabaseError {
