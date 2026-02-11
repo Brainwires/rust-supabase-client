@@ -24,6 +24,9 @@ pub use delete::DeleteBuilder;
 pub use upsert::UpsertBuilder;
 pub use rpc::{RpcBuilder, TypedRpcBuilder};
 
+// Re-export Phase 10 types for convenience
+pub use sql::{ExplainOptions, ExplainFormat};
+
 use serde_json::Value as JsonValue;
 use supabase_client_core::SupabaseClient;
 

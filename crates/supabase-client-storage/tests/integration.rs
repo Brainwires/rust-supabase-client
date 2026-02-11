@@ -988,6 +988,169 @@ mod integration_tests {
         cleanup_bucket(&storage, &name).await;
     }
 
+    // ─── Cross-bucket Move/Copy ─────────────────────────────
+
+    #[tokio::test]
+    async fn move_to_bucket() {
+        let storage = storage_client();
+        let src = test_bucket_name("mv-src");
+        let dst = test_bucket_name("mv-dst");
+
+        storage
+            .create_bucket(&src, BucketOptions::new())
+            .await
+            .expect("create src bucket failed");
+        storage
+            .create_bucket(&dst, BucketOptions::new())
+            .await
+            .expect("create dst bucket failed");
+
+        let src_api = storage.from(&src);
+        let dst_api = storage.from(&dst);
+
+        src_api
+            .upload(
+                "moveme.txt",
+                b"moving data".to_vec(),
+                FileOptions::new().content_type("text/plain"),
+            )
+            .await
+            .expect("upload failed");
+
+        // Move to different bucket
+        let result = src_api.move_to_bucket("moveme.txt", &dst, "moved.txt").await;
+        assert!(result.is_ok(), "move_to_bucket failed: {:?}", result.err());
+
+        // Source should be gone
+        assert!(src_api.download("moveme.txt").await.is_err());
+
+        // Destination should have the file
+        let data = dst_api.download("moved.txt").await.expect("download from dst failed");
+        assert_eq!(data, b"moving data");
+
+        cleanup_bucket(&storage, &src).await;
+        cleanup_bucket(&storage, &dst).await;
+    }
+
+    #[tokio::test]
+    async fn copy_to_bucket() {
+        let storage = storage_client();
+        let src = test_bucket_name("cp-src");
+        let dst = test_bucket_name("cp-dst");
+
+        storage
+            .create_bucket(&src, BucketOptions::new())
+            .await
+            .expect("create src bucket failed");
+        storage
+            .create_bucket(&dst, BucketOptions::new())
+            .await
+            .expect("create dst bucket failed");
+
+        let src_api = storage.from(&src);
+        let dst_api = storage.from(&dst);
+
+        src_api
+            .upload(
+                "copyme.txt",
+                b"copy data".to_vec(),
+                FileOptions::new().content_type("text/plain"),
+            )
+            .await
+            .expect("upload failed");
+
+        // Copy to different bucket
+        let result = src_api.copy_to_bucket("copyme.txt", &dst, "copied.txt").await;
+        assert!(result.is_ok(), "copy_to_bucket failed: {:?}", result.err());
+
+        // Source should still exist
+        let orig = src_api.download("copyme.txt").await.expect("download from src failed");
+        assert_eq!(orig, b"copy data");
+
+        // Destination should have the copy
+        let copied = dst_api.download("copied.txt").await.expect("download from dst failed");
+        assert_eq!(copied, b"copy data");
+
+        cleanup_bucket(&storage, &src).await;
+        cleanup_bucket(&storage, &dst).await;
+    }
+
+    // ─── Download URLs ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn public_url_with_download_filename() {
+        let storage = storage_client();
+        let name = test_bucket_name("dl-pub");
+
+        storage
+            .create_bucket(&name, BucketOptions::new().public(true))
+            .await
+            .expect("create_bucket failed");
+
+        let file_api = storage.from(&name);
+        file_api
+            .upload(
+                "report.pdf",
+                b"pdf data".to_vec(),
+                FileOptions::new().content_type("application/pdf"),
+            )
+            .await
+            .expect("upload failed");
+
+        // With custom filename
+        let url = file_api.get_public_url_with_download("report.pdf", Some("my-report.pdf"));
+        assert!(url.contains("?download=my-report.pdf"), "URL should contain download param: {}", url);
+
+        // Download via the URL — server should set Content-Disposition
+        let resp = reqwest::get(&url).await.expect("GET failed");
+        assert!(resp.status().is_success(), "Download failed: {}", resp.status());
+        let body = resp.bytes().await.expect("read body failed");
+        assert_eq!(body.as_ref(), b"pdf data");
+
+        cleanup_bucket(&storage, &name).await;
+    }
+
+    #[tokio::test]
+    async fn signed_url_with_download() {
+        let storage = storage_client();
+        let name = test_bucket_name("dl-sig");
+
+        storage
+            .create_bucket(&name, BucketOptions::new())
+            .await
+            .expect("create_bucket failed");
+
+        let file_api = storage.from(&name);
+        file_api
+            .upload(
+                "secret.txt",
+                b"secret content".to_vec(),
+                FileOptions::new().content_type("text/plain"),
+            )
+            .await
+            .expect("upload failed");
+
+        // Create signed URL with download
+        let signed = file_api
+            .create_signed_url_with_download("secret.txt", 3600, Some("download.txt"))
+            .await;
+        assert!(signed.is_ok(), "create_signed_url_with_download failed: {:?}", signed.err());
+        let signed = signed.unwrap();
+        assert!(
+            signed.signed_url.contains("download=download.txt"),
+            "Signed URL should contain download param: {}",
+            signed.signed_url
+        );
+
+        // Download via the signed URL
+        let resp = reqwest::get(&signed.signed_url).await.expect("GET failed");
+        assert!(resp.status().is_success(), "Download failed: {}", resp.status());
+        let body = resp.bytes().await.expect("read body failed");
+        assert_eq!(body.as_ref(), b"secret content");
+
+        cleanup_bucket(&storage, &name).await;
+    }
+
     // ─── Full Lifecycle ──────────────────────────────────────
 
     #[tokio::test]

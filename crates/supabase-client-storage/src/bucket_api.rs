@@ -472,6 +472,90 @@ impl StorageBucketApi {
         Ok(results)
     }
 
+    /// Move a file to a different bucket.
+    ///
+    /// Mirrors `supabase.storage.from('bucket').move(from, to, { destinationBucket })`.
+    pub async fn move_to_bucket(
+        &self,
+        from: &str,
+        to_bucket: &str,
+        to_path: &str,
+    ) -> Result<(), StorageError> {
+        let url = self.client.url("/object/move");
+        let body = json!({
+            "bucketId": self.bucket_id,
+            "sourceKey": from,
+            "destinationBucket": to_bucket,
+            "destinationKey": to_path,
+        });
+
+        let resp = self.client.http().post(url).json(&body).send().await?;
+        self.client.handle_empty_response(resp).await
+    }
+
+    /// Copy a file to a different bucket.
+    ///
+    /// Returns the key of the new file.
+    ///
+    /// Mirrors `supabase.storage.from('bucket').copy(from, to, { destinationBucket })`.
+    pub async fn copy_to_bucket(
+        &self,
+        from: &str,
+        to_bucket: &str,
+        to_path: &str,
+    ) -> Result<String, StorageError> {
+        let url = self.client.url("/object/copy");
+        let body = json!({
+            "bucketId": self.bucket_id,
+            "sourceKey": from,
+            "destinationBucket": to_bucket,
+            "destinationKey": to_path,
+        });
+
+        let resp = self.client.http().post(url).json(&body).send().await?;
+        let result: serde_json::Value = self.client.handle_response(resp).await?;
+        Ok(result
+            .get("Key")
+            .or_else(|| result.get("key"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(to_path)
+            .to_string())
+    }
+
+    /// Get a public URL with optional download disposition.
+    ///
+    /// When `filename` is `Some("file.txt")`, appends `?download=file.txt` to the URL.
+    /// When `filename` is `Some("")`, appends `?download=` (uses original filename).
+    ///
+    /// Mirrors `supabase.storage.from('bucket').getPublicUrl(path, { download })`.
+    pub fn get_public_url_with_download(&self, path: &str, filename: Option<&str>) -> String {
+        let base_url = self.get_public_url(path);
+        match filename {
+            Some(name) => format!("{}?download={}", base_url, name),
+            None => base_url,
+        }
+    }
+
+    /// Create a signed URL with optional download disposition.
+    ///
+    /// When `filename` is `Some("file.txt")`, appends `&download=file.txt` to the signed URL.
+    /// When `filename` is `Some("")`, appends `&download=` (uses original filename).
+    ///
+    /// Mirrors `supabase.storage.from('bucket').createSignedUrl(path, expiresIn, { download })`.
+    pub async fn create_signed_url_with_download(
+        &self,
+        path: &str,
+        expires_in: u64,
+        filename: Option<&str>,
+    ) -> Result<SignedUrlResponse, StorageError> {
+        let mut result = self.create_signed_url(path, expires_in).await?;
+        if let Some(name) = filename {
+            let separator = if result.signed_url.contains('?') { "&" } else { "?" };
+            result.signed_url = format!("{}{}download={}", result.signed_url, separator, name);
+        }
+        Ok(result)
+    }
+
     /// Get the bucket ID this API is scoped to.
     pub fn bucket_id(&self) -> &str {
         &self.bucket_id

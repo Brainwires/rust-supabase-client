@@ -677,6 +677,21 @@ impl AuthClient {
         self.handle_empty_response(resp).await
     }
 
+    // ─── User Identities ──────────────────────────────────────
+
+    /// Get the identities linked to the current user.
+    ///
+    /// Convenience method that calls `get_user()` and returns the `identities` field.
+    ///
+    /// Mirrors `supabase.auth.getUserIdentities()`.
+    pub async fn get_user_identities(
+        &self,
+        access_token: &str,
+    ) -> Result<Vec<Identity>, AuthError> {
+        let user = self.get_user(access_token).await?;
+        Ok(user.identities.unwrap_or_default())
+    }
+
     // ─── OAuth Server ─────────────────────────────────────────
 
     /// Get authorization details for an OAuth authorization request.

@@ -8,6 +8,9 @@ impl SqlParts {
     pub fn build_sql(&self) -> Result<String, SupabaseError> {
         validate_identifier(&self.schema, "Schema")?;
         validate_identifier(&self.table, "Table")?;
+        if let Some(ref s) = self.schema_override {
+            validate_identifier(s, "Schema override")?;
+        }
 
         match self.operation {
             SqlOperation::Select => self.build_select(),
@@ -19,28 +22,29 @@ impl SqlParts {
     }
 
     fn build_select(&self) -> Result<String, SupabaseError> {
-        let cols = self
-            .select_columns
-            .as_deref()
-            .unwrap_or("*");
+        let table = self.qualified_table();
 
-        let mut sql = if self.count == CountOption::Exact {
+        let mut sql = if self.head {
+            // Head mode: count only, no rows
+            let mut s = format!("SELECT count(*) FROM {}", table);
+            self.append_where_clause(&mut s)?;
+            return self.maybe_wrap_explain(s);
+        } else if self.count == CountOption::Exact {
+            let cols = self.select_columns.as_deref().unwrap_or("*");
             format!(
-                "SELECT {cols}, COUNT(*) OVER() AS \"__count\" FROM \"{}\".\"{}\"",
-                self.schema, self.table
+                "SELECT {cols}, COUNT(*) OVER() AS \"__count\" FROM {}",
+                table
             )
         } else {
-            format!(
-                "SELECT {cols} FROM \"{}\".\"{}\"",
-                self.schema, self.table
-            )
+            let cols = self.select_columns.as_deref().unwrap_or("*");
+            format!("SELECT {cols} FROM {}", table)
         };
 
         self.append_where_clause(&mut sql)?;
         self.append_order_clause(&mut sql)?;
         self.append_limit_offset(&mut sql);
 
-        Ok(sql)
+        self.maybe_wrap_explain(sql)
     }
 
     fn build_insert(&self) -> Result<String, SupabaseError> {
@@ -75,10 +79,10 @@ impl SqlParts {
             })
             .collect();
 
+        let table = self.qualified_table();
         let mut sql = format!(
-            "INSERT INTO \"{}\".\"{}\" ({}) VALUES {}",
-            self.schema,
-            self.table,
+            "INSERT INTO {} ({}) VALUES {}",
+            table,
             col_list,
             value_groups.join(", ")
         );
@@ -101,10 +105,10 @@ impl SqlParts {
             })
             .collect::<Result<Vec<_>, SupabaseError>>()?;
 
+        let table = self.qualified_table();
         let mut sql = format!(
-            "UPDATE \"{}\".\"{}\" SET {}",
-            self.schema,
-            self.table,
+            "UPDATE {} SET {}",
+            table,
             set_parts.join(", ")
         );
 
@@ -114,7 +118,8 @@ impl SqlParts {
     }
 
     fn build_delete(&self) -> Result<String, SupabaseError> {
-        let mut sql = format!("DELETE FROM \"{}\".\"{}\"", self.schema, self.table);
+        let table = self.qualified_table();
+        let mut sql = format!("DELETE FROM {}", table);
         self.append_where_clause(&mut sql)?;
         self.append_returning(&mut sql);
         Ok(sql)
@@ -151,10 +156,10 @@ impl SqlParts {
             })
             .collect();
 
+        let table = self.qualified_table();
         let mut sql = format!(
-            "INSERT INTO \"{}\".\"{}\" ({}) VALUES {}",
-            self.schema,
-            self.table,
+            "INSERT INTO {} ({}) VALUES {}",
+            table,
             col_list,
             value_groups.join(", ")
         );
@@ -172,17 +177,22 @@ impl SqlParts {
             sql.push_str(" ON CONFLICT");
         }
 
-        // DO UPDATE SET for non-conflict columns
-        let update_cols: Vec<String> = columns
-            .iter()
-            .filter(|c| !self.conflict_columns.iter().any(|cc| cc == **c))
-            .map(|c| format!("\"{}\" = EXCLUDED.\"{}\"", c, c))
-            .collect();
-
-        if update_cols.is_empty() {
+        // ignore_duplicates → DO NOTHING regardless of columns
+        if self.ignore_duplicates {
             sql.push_str(" DO NOTHING");
         } else {
-            sql.push_str(&format!(" DO UPDATE SET {}", update_cols.join(", ")));
+            // DO UPDATE SET for non-conflict columns
+            let update_cols: Vec<String> = columns
+                .iter()
+                .filter(|c| !self.conflict_columns.iter().any(|cc| cc == **c))
+                .map(|c| format!("\"{}\" = EXCLUDED.\"{}\"", c, c))
+                .collect();
+
+            if update_cols.is_empty() {
+                sql.push_str(" DO NOTHING");
+            } else {
+                sql.push_str(&format!(" DO UPDATE SET {}", update_cols.join(", ")));
+            }
         }
 
         self.append_returning(&mut sql);
@@ -241,6 +251,23 @@ impl SqlParts {
     fn append_returning(&self, sql: &mut String) {
         if let Some(ref returning) = self.returning {
             sql.push_str(&format!(" RETURNING {}", returning));
+        }
+    }
+
+    fn maybe_wrap_explain(&self, sql: String) -> Result<String, SupabaseError> {
+        match &self.explain {
+            Some(opts) => {
+                let mut options = Vec::new();
+                if opts.analyze {
+                    options.push("ANALYZE".to_string());
+                }
+                if opts.verbose {
+                    options.push("VERBOSE".to_string());
+                }
+                options.push(format!("FORMAT {}", opts.format.as_sql()));
+                Ok(format!("EXPLAIN ({}) {}", options.join(", "), sql))
+            }
+            None => Ok(sql),
         }
     }
 }
@@ -594,6 +621,210 @@ mod tests {
             operator: FilterOperator::Eq,
             param_index: 1,
         });
+        assert!(parts.build_sql().is_err());
+    }
+
+    // ─── Phase 10: New Feature Tests ─────────────────────────
+
+    #[test]
+    fn test_upsert_ignore_duplicates() {
+        let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "cities");
+        parts.set_clauses = vec![
+            ("id".to_string(), 1),
+            ("name".to_string(), 2),
+        ];
+        parts.conflict_columns = vec!["id".to_string()];
+        parts.ignore_duplicates = true;
+        let sql = parts.build_sql().unwrap();
+        assert_eq!(
+            sql,
+            "INSERT INTO \"public\".\"cities\" (\"id\", \"name\") VALUES ($1, $2) ON CONFLICT (\"id\") DO NOTHING"
+        );
+    }
+
+    #[test]
+    fn test_upsert_ignore_duplicates_no_conflict_cols() {
+        let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "cities");
+        parts.set_clauses = vec![
+            ("id".to_string(), 1),
+            ("name".to_string(), 2),
+        ];
+        parts.ignore_duplicates = true;
+        let sql = parts.build_sql().unwrap();
+        assert_eq!(
+            sql,
+            "INSERT INTO \"public\".\"cities\" (\"id\", \"name\") VALUES ($1, $2) ON CONFLICT DO NOTHING"
+        );
+    }
+
+    #[test]
+    fn test_upsert_ignore_duplicates_with_constraint() {
+        let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "cities");
+        parts.set_clauses = vec![
+            ("id".to_string(), 1),
+            ("name".to_string(), 2),
+        ];
+        parts.conflict_constraint = Some("cities_pkey".to_string());
+        parts.ignore_duplicates = true;
+        let sql = parts.build_sql().unwrap();
+        assert_eq!(
+            sql,
+            "INSERT INTO \"public\".\"cities\" (\"id\", \"name\") VALUES ($1, $2) ON CONFLICT ON CONSTRAINT \"cities_pkey\" DO NOTHING"
+        );
+    }
+
+    #[test]
+    fn test_schema_override_select() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.schema_override = Some("custom_schema".to_string());
+        let sql = parts.build_sql().unwrap();
+        assert_eq!(sql, "SELECT * FROM \"custom_schema\".\"cities\"");
+    }
+
+    #[test]
+    fn test_schema_override_insert() {
+        let mut parts = SqlParts::new(SqlOperation::Insert, "public", "cities");
+        parts.schema_override = Some("myschema".to_string());
+        parts.set_clauses = vec![("name".to_string(), 1)];
+        let sql = parts.build_sql().unwrap();
+        assert_eq!(
+            sql,
+            "INSERT INTO \"myschema\".\"cities\" (\"name\") VALUES ($1)"
+        );
+    }
+
+    #[test]
+    fn test_schema_override_update() {
+        let mut parts = SqlParts::new(SqlOperation::Update, "public", "cities");
+        parts.schema_override = Some("myschema".to_string());
+        parts.set_clauses = vec![("name".to_string(), 1)];
+        let sql = parts.build_sql().unwrap();
+        assert_eq!(
+            sql,
+            "UPDATE \"myschema\".\"cities\" SET \"name\" = $1"
+        );
+    }
+
+    #[test]
+    fn test_schema_override_delete() {
+        let mut parts = SqlParts::new(SqlOperation::Delete, "public", "cities");
+        parts.schema_override = Some("myschema".to_string());
+        parts.filters.push(FilterCondition::Comparison {
+            column: "id".to_string(),
+            operator: FilterOperator::Eq,
+            param_index: 1,
+        });
+        let sql = parts.build_sql().unwrap();
+        assert_eq!(
+            sql,
+            "DELETE FROM \"myschema\".\"cities\" WHERE \"id\" = $1"
+        );
+    }
+
+    #[test]
+    fn test_schema_override_upsert() {
+        let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "cities");
+        parts.schema_override = Some("myschema".to_string());
+        parts.set_clauses = vec![
+            ("id".to_string(), 1),
+            ("name".to_string(), 2),
+        ];
+        parts.conflict_columns = vec!["id".to_string()];
+        let sql = parts.build_sql().unwrap();
+        assert!(sql.starts_with("INSERT INTO \"myschema\".\"cities\""));
+    }
+
+    #[test]
+    fn test_explain_default() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.explain = Some(ExplainOptions::default());
+        let sql = parts.build_sql().unwrap();
+        assert_eq!(
+            sql,
+            "EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM \"public\".\"cities\""
+        );
+    }
+
+    #[test]
+    fn test_explain_with_verbose() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.explain = Some(ExplainOptions {
+            analyze: true,
+            verbose: true,
+            format: ExplainFormat::Text,
+        });
+        let sql = parts.build_sql().unwrap();
+        assert_eq!(
+            sql,
+            "EXPLAIN (ANALYZE, VERBOSE, FORMAT TEXT) SELECT * FROM \"public\".\"cities\""
+        );
+    }
+
+    #[test]
+    fn test_explain_no_analyze() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.explain = Some(ExplainOptions {
+            analyze: false,
+            verbose: false,
+            format: ExplainFormat::Json,
+        });
+        let sql = parts.build_sql().unwrap();
+        assert_eq!(
+            sql,
+            "EXPLAIN (FORMAT JSON) SELECT * FROM \"public\".\"cities\""
+        );
+    }
+
+    #[test]
+    fn test_head_mode() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.head = true;
+        let sql = parts.build_sql().unwrap();
+        assert_eq!(
+            sql,
+            "SELECT count(*) FROM \"public\".\"cities\""
+        );
+    }
+
+    #[test]
+    fn test_head_mode_with_filters() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.head = true;
+        parts.filters.push(FilterCondition::Comparison {
+            column: "country".to_string(),
+            operator: FilterOperator::Eq,
+            param_index: 1,
+        });
+        let sql = parts.build_sql().unwrap();
+        assert_eq!(
+            sql,
+            "SELECT count(*) FROM \"public\".\"cities\" WHERE \"country\" = $1"
+        );
+    }
+
+    #[test]
+    fn test_head_mode_ignores_columns_and_order() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.head = true;
+        parts.select_columns = Some("\"name\"".to_string());
+        parts.orders.push(OrderClause {
+            column: "name".to_string(),
+            direction: OrderDirection::Ascending,
+            nulls: None,
+        });
+        parts.limit = Some(10);
+        let sql = parts.build_sql().unwrap();
+        // head mode should not include columns, order, or limit
+        assert_eq!(
+            sql,
+            "SELECT count(*) FROM \"public\".\"cities\""
+        );
+    }
+
+    #[test]
+    fn test_schema_override_validation() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.schema_override = Some("bad;schema".to_string());
         assert!(parts.build_sql().is_err());
     }
 }

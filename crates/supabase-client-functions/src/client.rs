@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use tracing::debug;
@@ -27,6 +28,8 @@ pub struct FunctionsClient {
     http: reqwest::Client,
     base_url: Url,
     api_key: String,
+    /// Overridden auth token (if set via `set_auth`).
+    auth_override: Arc<RwLock<Option<String>>>,
 }
 
 impl FunctionsClient {
@@ -59,6 +62,7 @@ impl FunctionsClient {
             http,
             base_url,
             api_key: api_key.to_string(),
+            auth_override: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -70,6 +74,16 @@ impl FunctionsClient {
     /// Get the API key used by this client.
     pub fn api_key(&self) -> &str {
         &self.api_key
+    }
+
+    /// Update the default auth token for function invocations.
+    ///
+    /// Subsequent invocations will use `Bearer <token>` unless overridden per-request.
+    ///
+    /// Mirrors `supabase.functions.setAuth(token)`.
+    pub fn set_auth(&self, token: &str) {
+        let mut auth = self.auth_override.write().unwrap();
+        *auth = Some(token.to_string());
     }
 
     /// Invoke an Edge Function.
@@ -101,12 +115,18 @@ impl FunctionsClient {
             HttpMethod::Head => self.http.head(&url),
         };
 
-        // Override Authorization if provided
+        // Override Authorization: per-request first, then client-level set_auth, then default (from reqwest default headers)
         if let Some(ref auth) = options.authorization {
             request = request.header(
                 reqwest::header::AUTHORIZATION,
                 HeaderValue::from_str(auth)
                     .map_err(|e| FunctionsError::InvalidConfig(format!("Invalid authorization header: {}", e)))?,
+            );
+        } else if let Some(ref token) = *self.auth_override.read().unwrap() {
+            request = request.header(
+                reqwest::header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {}", token))
+                    .map_err(|e| FunctionsError::InvalidConfig(format!("Invalid auth override header: {}", e)))?,
             );
         }
 
@@ -239,5 +259,27 @@ mod tests {
     fn parse_error_message_plain_text() {
         let body = b"Something went wrong";
         assert_eq!(parse_error_message(body), "Something went wrong");
+    }
+
+    #[test]
+    fn set_auth_updates_override() {
+        let client = FunctionsClient::new("https://example.supabase.co", "test-key").unwrap();
+        assert!(client.auth_override.read().unwrap().is_none());
+        client.set_auth("new-token");
+        assert_eq!(
+            client.auth_override.read().unwrap().as_deref(),
+            Some("new-token")
+        );
+    }
+
+    #[test]
+    fn set_auth_clone_shares_state() {
+        let client = FunctionsClient::new("https://example.supabase.co", "test-key").unwrap();
+        let clone = client.clone();
+        client.set_auth("shared-token");
+        assert_eq!(
+            clone.auth_override.read().unwrap().as_deref(),
+            Some("shared-token")
+        );
     }
 }

@@ -37,6 +37,22 @@ impl<T> UpsertBuilder<T> {
         self
     }
 
+    /// Use ON CONFLICT DO NOTHING instead of DO UPDATE.
+    ///
+    /// When set, duplicate rows are silently ignored instead of updated.
+    pub fn ignore_duplicates(mut self) -> Self {
+        self.parts.ignore_duplicates = true;
+        self
+    }
+
+    /// Override the schema for this query.
+    ///
+    /// Generates `"schema"."table"` instead of the default schema.
+    pub fn schema(mut self, schema: &str) -> Self {
+        self.parts.schema_override = Some(schema.to_string());
+        self
+    }
+
     /// Add RETURNING * clause.
     pub fn select(mut self) -> Self {
         self.parts.returning = Some("*".to_string());

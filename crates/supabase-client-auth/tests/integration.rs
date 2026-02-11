@@ -1420,4 +1420,42 @@ async fn oauth_revoke_grant_nonexistent() {
         // Cleanup
         let _ = admin.admin().oauth_delete_client(&client.client_id).await;
     }
+
+    // ─── Phase 10: get_user_identities ──────────────────────
+
+    #[tokio::test]
+    async fn get_user_identities() {
+        let auth = auth_client();
+        let admin_client = admin_auth_client();
+        let admin = admin_client.admin();
+        let email = test_email("identities");
+        let password = "test-password-123!";
+
+        let user = create_test_user(&admin, &email, password).await;
+
+        // Sign in to get a token
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .expect("sign_in_with_password_email failed");
+
+        // Get identities
+        let identities = auth
+            .get_user_identities(&session.access_token)
+            .await
+            .expect("get_user_identities failed");
+
+        // Should have at least one identity (email)
+        assert!(
+            !identities.is_empty(),
+            "Expected at least one identity for email user"
+        );
+        assert!(
+            identities.iter().any(|id| id.provider == "email"),
+            "Expected an 'email' identity provider, got: {:?}",
+            identities.iter().map(|id| &id.provider).collect::<Vec<_>>()
+        );
+
+        cleanup_user(&admin, &user.id).await;
+    }
 }

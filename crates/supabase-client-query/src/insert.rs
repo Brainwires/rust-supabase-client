@@ -25,6 +25,14 @@ impl<T> Modifiable for InsertBuilder<T> {
 }
 
 impl<T> InsertBuilder<T> {
+    /// Override the schema for this query.
+    ///
+    /// Generates `"schema"."table"` instead of the default schema.
+    pub fn schema(mut self, schema: &str) -> Self {
+        self.parts.schema_override = Some(schema.to_string());
+        self
+    }
+
     /// Add RETURNING clause to get inserted rows back.
     pub fn select(mut self) -> Self {
         self.parts.returning = Some("*".to_string());

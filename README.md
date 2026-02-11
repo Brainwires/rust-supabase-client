@@ -8,7 +8,9 @@ A Rust crate wrapping [sqlx](https://github.com/launchbadge/sqlx) with a Supabas
 
 **Query Builder** - Fluent API for SELECT, INSERT, UPDATE, DELETE, and UPSERT
 - 20+ filter methods (`eq`, `neq`, `gt`, `lt`, `like`, `ilike`, `in_`, `is`, `contains`, `overlaps`, `text_search`, `or_`, `not_`, ...)
-- Modifiers: `order`, `limit`, `range`, `single`, `count`
+- Modifiers: `order`, `limit`, `range`, `single`, `count`, `head`, `explain`
+- Per-query `.schema()` override for multi-schema databases
+- Upsert with `ignore_duplicates()` for `ON CONFLICT DO NOTHING`
 - RPC/stored procedure calls with `rpc()` / `rpc_typed()`
 
 **Derive Macros** - `#[derive(Table)]` for type-safe queries
@@ -19,7 +21,7 @@ A Rust crate wrapping [sqlx](https://github.com/launchbadge/sqlx) with a Supabas
 **Auth (GoTrue)** - HTTP client for Supabase authentication
 - Email/password sign-up and sign-in
 - Phone, OAuth, magic link, OTP, anonymous auth
-- Token refresh, password recovery, user management
+- Token refresh, password recovery, user management, `get_user_identities()`
 - Admin API (list/create/update/delete users)
 - MFA: TOTP enroll/challenge/verify, phone factors, AAL detection
 - OAuth Server: consent management, grant listing/revocation, admin client CRUD
@@ -28,20 +30,22 @@ A Rust crate wrapping [sqlx](https://github.com/launchbadge/sqlx) with a Supabas
 - Postgres Changes: listen for INSERT, UPDATE, DELETE events with filters
 - Broadcast: send/receive ephemeral messages between clients
 - Presence: track and sync online user state
+- `set_auth()` to update token on existing connections
 - Automatic heartbeat and reconnection with exponential backoff
 
 **Storage** - HTTP client for Supabase Object Storage
 - Bucket management: create, list, get, update, empty, delete
-- File operations: upload, download, update, list, move, copy, remove
+- File operations: upload, download, update, list, move, copy, remove (including cross-bucket)
 - File metadata (`info`) and existence checking (`exists`)
 - Signed URLs for time-limited access and delegated uploads
-- Public URL construction for public buckets
+- Public URL construction for public buckets (with optional download disposition)
 - Image transform options (resize, quality, format) on download, public URL, and signed URLs
 
 **Edge Functions** - HTTP client for Supabase Edge Functions
 - Invoke deployed Deno/TypeScript functions
 - JSON, binary, and text request/response bodies
 - Custom headers, authorization override, and region routing
+- `set_auth()` to update default token for subsequent invocations
 - Full HTTP method support (GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD)
 
 ## Installation

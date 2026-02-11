@@ -449,6 +449,52 @@ pub struct SqlParts {
     pub conflict_columns: Vec<String>,
     /// ON CONFLICT constraint name (alternative to columns)
     pub conflict_constraint: Option<String>,
+    /// When true, upsert generates ON CONFLICT DO NOTHING instead of DO UPDATE
+    pub ignore_duplicates: bool,
+    /// Schema override for per-query schema qualification
+    pub schema_override: Option<String>,
+    /// EXPLAIN options (only for SELECT)
+    pub explain: Option<ExplainOptions>,
+    /// Head mode: SELECT count(*) only, no rows
+    pub head: bool,
+}
+
+/// Options for the EXPLAIN modifier.
+#[derive(Debug, Clone)]
+pub struct ExplainOptions {
+    pub analyze: bool,
+    pub verbose: bool,
+    pub format: ExplainFormat,
+}
+
+impl Default for ExplainOptions {
+    fn default() -> Self {
+        Self {
+            analyze: true,
+            verbose: false,
+            format: ExplainFormat::Json,
+        }
+    }
+}
+
+/// Output format for EXPLAIN.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplainFormat {
+    Text,
+    Json,
+    Xml,
+    Yaml,
+}
+
+impl ExplainFormat {
+    pub fn as_sql(&self) -> &'static str {
+        match self {
+            Self::Text => "TEXT",
+            Self::Json => "JSON",
+            Self::Xml => "XML",
+            Self::Yaml => "YAML",
+        }
+    }
 }
 
 impl SqlParts {
@@ -470,7 +516,17 @@ impl SqlParts {
             returning: None,
             conflict_columns: Vec::new(),
             conflict_constraint: None,
+            ignore_duplicates: false,
+            schema_override: None,
+            explain: None,
+            head: false,
         }
+    }
+
+    /// Get the fully-qualified table name, using schema_override if set.
+    pub fn qualified_table(&self) -> String {
+        let schema = self.schema_override.as_deref().unwrap_or(&self.schema);
+        format!("\"{}\".\"{}\"", schema, self.table)
     }
 }
 

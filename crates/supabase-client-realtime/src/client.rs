@@ -456,6 +456,39 @@ impl RealtimeClient {
         }
     }
 
+    /// Update the auth token for the realtime connection.
+    ///
+    /// If connected, pushes the new access token to the server for each subscribed channel.
+    ///
+    /// Mirrors `supabase.realtime.setAuth(token)`.
+    pub async fn set_auth(&self, token: &str) -> Result<(), RealtimeError> {
+        if !self.is_connected() {
+            return Err(RealtimeError::ConnectionClosed);
+        }
+
+        let channels: Vec<RealtimeChannel> = {
+            self.inner.channels.read().await.values().cloned().collect()
+        };
+
+        let sender = ClientSender {
+            inner: Arc::clone(&self.inner),
+        };
+
+        for channel in &channels {
+            let state = *channel.inner.state.read().await;
+            if state == ChannelState::Joined {
+                let join_ref = channel.inner.join_ref.read().await;
+                if let Some(ref jr) = *join_ref {
+                    sender
+                        .send_access_token(channel.topic(), token, jr)
+                        .await?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Check if the client is currently connected.
     pub fn is_connected(&self) -> bool {
         self.inner.connected.load(Ordering::SeqCst)
@@ -802,6 +835,18 @@ mod tests {
     #[test]
     fn test_build_ws_url_invalid_scheme() {
         let result = build_ws_url("ftp://localhost", "key");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_auth_requires_connection() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let client = RealtimeClient::new("http://localhost:54321", "test-key").unwrap();
+        // Not connected → should error
+        let result = rt.block_on(client.set_auth("new-token"));
         assert!(result.is_err());
     }
 }

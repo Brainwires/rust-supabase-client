@@ -325,4 +325,39 @@ mod tests {
             "https://example.supabase.co/storage/v1/render/image/public/photos/img.png"
         );
     }
+
+    // ─── Phase 10: Download URL Tests ────────────────────────
+
+    #[test]
+    fn public_url_with_download_filename() {
+        let client = StorageClient::new("https://example.supabase.co", "test-key").unwrap();
+        let api = client.from("docs");
+        let url = api.get_public_url_with_download("report.pdf", Some("my-report.pdf"));
+        assert_eq!(
+            url,
+            "https://example.supabase.co/storage/v1/object/public/docs/report.pdf?download=my-report.pdf"
+        );
+    }
+
+    #[test]
+    fn public_url_with_download_default() {
+        let client = StorageClient::new("https://example.supabase.co", "test-key").unwrap();
+        let api = client.from("docs");
+        let url = api.get_public_url_with_download("report.pdf", Some(""));
+        assert_eq!(
+            url,
+            "https://example.supabase.co/storage/v1/object/public/docs/report.pdf?download="
+        );
+    }
+
+    #[test]
+    fn public_url_with_download_none() {
+        let client = StorageClient::new("https://example.supabase.co", "test-key").unwrap();
+        let api = client.from("docs");
+        let url = api.get_public_url_with_download("report.pdf", None);
+        assert_eq!(
+            url,
+            "https://example.supabase.co/storage/v1/object/public/docs/report.pdf"
+        );
+    }
 }

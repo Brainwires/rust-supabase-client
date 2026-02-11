@@ -37,6 +37,7 @@ pub mod prelude {
     pub use supabase_client_query::{
         Filterable, Modifiable, OrderDirection, IsValue, TextSearchType,
         SupabaseClientQueryExt, Table,
+        ExplainOptions, ExplainFormat,
     };
 
     #[cfg(feature = "derive")]
