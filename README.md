@@ -28,6 +28,12 @@ A Rust crate wrapping [sqlx](https://github.com/launchbadge/sqlx) with a Supabas
 - Presence: track and sync online user state
 - Automatic heartbeat and reconnection with exponential backoff
 
+**Storage** - HTTP client for Supabase Object Storage
+- Bucket management: create, list, get, update, empty, delete
+- File operations: upload, download, update, list, move, copy, remove
+- Signed URLs for time-limited access and delegated uploads
+- Public URL construction for public buckets
+
 ## Installation
 
 Add to your `Cargo.toml`:
@@ -47,7 +53,7 @@ supabase-client = { path = "crates/supabase-client", features = ["auth", "realti
 | `derive` | Yes | `#[derive(Table)]` proc macro |
 | `auth` | No | GoTrue authentication client |
 | `realtime` | No | WebSocket realtime subscriptions |
-| `storage` | No | Object storage client (planned) |
+| `storage` | No | Object storage client |
 | `full` | No | All features enabled |
 
 ## Quick Start
@@ -231,6 +237,55 @@ realtime.remove_all_channels().await?;
 realtime.disconnect().await?;
 ```
 
+### Storage
+
+Requires the `storage` feature.
+
+```rust
+use supabase_client::prelude::*;
+
+let storage = client.storage()?;
+
+// Bucket management
+storage.create_bucket("photos", BucketOptions::new().public(true)).await?;
+let buckets = storage.list_buckets().await?;
+
+// File operations via .from("bucket")
+let file_api = storage.from("photos");
+
+// Upload
+let data = std::fs::read("photo.png")?;
+file_api.upload("folder/photo.png", data, FileOptions::new()
+    .content_type("image/png")
+    .upsert(true)
+).await?;
+
+// Download
+let bytes = file_api.download("folder/photo.png").await?;
+
+// List files
+let files = file_api.list(Some("folder"), Some(SearchOptions::new()
+    .limit(100)
+    .sort_by("name", SortOrder::Asc)
+)).await?;
+
+// Move, copy, remove
+file_api.move_file("old.png", "new.png").await?;
+file_api.copy("original.png", "backup.png").await?;
+file_api.remove(vec!["old.png"]).await?;
+
+// Signed URLs (time-limited access)
+let signed = file_api.create_signed_url("photo.png", 3600).await?;
+println!("Signed URL: {}", signed.signed_url);
+
+// Public URL (no HTTP call)
+let public_url = file_api.get_public_url("photo.png");
+
+// Cleanup
+storage.empty_bucket("photos").await?;
+storage.delete_bucket("photos").await?;
+```
+
 ## Architecture
 
 This project is a Cargo workspace with the following crates:
@@ -243,12 +298,13 @@ This project is a Cargo workspace with the following crates:
 | `supabase-client-derive` | `#[derive(Table)]` proc macro |
 | `supabase-client-auth` | GoTrue auth HTTP client via reqwest |
 | `supabase-client-realtime` | WebSocket realtime client via tokio-tungstenite |
-| `supabase-client-storage` | Object storage client (planned) |
+| `supabase-client-storage` | Object storage HTTP client via reqwest |
 
 Each sub-crate provides an extension trait on `SupabaseClient`:
 - `SupabaseClientQueryExt` - `.from()`, `.from_typed()`, `.rpc()`
 - `SupabaseClientAuthExt` - `.auth()`
 - `SupabaseClientRealtimeExt` - `.realtime()`
+- `SupabaseClientStorageExt` - `.storage()`
 
 ## Configuration
 
@@ -280,6 +336,7 @@ cargo test --workspace -- --test-threads=1
 cargo test -p supabase-client-query
 cargo test -p supabase-client-auth
 cargo test -p supabase-client-realtime
+cargo test -p supabase-client-storage --test integration -- --test-threads=1
 ```
 
 The local Supabase instance runs on custom ports (API: 64321, DB: 64322). Integration tests default to these ports and use hardcoded local development keys.

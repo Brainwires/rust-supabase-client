@@ -1976,11 +1976,14 @@ dependencies = [
 name = "supabase-client-storage"
 version = "0.1.0"
 dependencies = [
+ "reqwest",
  "serde",
  "serde_json",
  "supabase-client-core",
  "thiserror",
+ "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

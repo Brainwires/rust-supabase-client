@@ -52,4 +52,12 @@ pub mod prelude {
         PostgresChangesEvent, PostgresChangesFilter, PostgresChangePayload,
         SubscriptionStatus, ChannelState, PresenceState, PresenceMeta,
     };
+
+    #[cfg(feature = "storage")]
+    pub use supabase_client_storage::{
+        StorageClient, StorageBucketApi, StorageError,
+        Bucket, BucketOptions, FileObject, FileOptions,
+        SearchOptions, SortOrder, SignedUrlResponse,
+        SupabaseClientStorageExt,
+    };
 }
