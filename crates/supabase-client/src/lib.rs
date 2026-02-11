@@ -46,6 +46,19 @@ pub mod prelude {
     pub use supabase_client_auth::{
         AuthClient, AuthError, AuthResponse, Session, User,
         SupabaseClientAuthExt,
+        // MFA types
+        MfaEnrollParams, MfaVerifyParams, MfaChallengeParams,
+        MfaEnrollResponse, MfaTotpInfo, MfaChallengeResponse, MfaUnenrollResponse,
+        MfaListFactorsResponse, AuthenticatorAssuranceLevelInfo,
+        AuthenticatorAssuranceLevel, AmrEntry, FactorType, FactorStatus,
+        // SSO
+        SsoSignInParams, SsoSignInResponse,
+        // ID Token
+        SignInWithIdTokenParams,
+        // Identity linking
+        LinkIdentityResponse,
+        // Resend
+        ResendParams, ResendType,
     };
 
     #[cfg(feature = "realtime")]

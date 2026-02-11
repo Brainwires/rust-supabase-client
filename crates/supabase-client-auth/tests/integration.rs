@@ -9,6 +9,8 @@
 use supabase_client_auth::{
     AdminClient, AuthClient, AuthError, OAuthProvider, SignOutScope,
     AdminCreateUserParams, AdminUpdateUserParams, UpdateUserParams,
+    MfaEnrollParams, MfaVerifyParams, ResendParams, ResendType,
+    SsoSignInParams, SignInWithIdTokenParams, AuthenticatorAssuranceLevel,
     User,
 };
 
@@ -543,5 +545,406 @@ mod integration {
 
         // Cleanup
         cleanup_user(&admin.admin(), &user_id).await;
+    }
+
+    // ─── MFA: TOTP Enroll ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn mfa_enroll_totp() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("mfa-enroll");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        let factor = auth
+            .mfa_enroll(
+                &session.access_token,
+                MfaEnrollParams::totp().friendly_name("Test TOTP"),
+            )
+            .await;
+        assert!(factor.is_ok(), "mfa_enroll failed: {:?}", factor.err());
+
+        let factor = factor.unwrap();
+        assert!(!factor.id.is_empty());
+        assert_eq!(factor.factor_type, "totp");
+        assert!(factor.totp.is_some());
+        let totp_info = factor.totp.unwrap();
+        assert!(!totp_info.qr_code.is_empty());
+        assert!(!totp_info.secret.is_empty());
+        assert!(!totp_info.uri.is_empty());
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    // ─── MFA: TOTP Challenge ──────────────────────────────────
+
+    #[tokio::test]
+    async fn mfa_challenge_totp() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("mfa-challenge");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        let factor = auth
+            .mfa_enroll(&session.access_token, MfaEnrollParams::totp())
+            .await
+            .unwrap();
+
+        let challenge = auth.mfa_challenge(&session.access_token, &factor.id).await;
+        assert!(challenge.is_ok(), "mfa_challenge failed: {:?}", challenge.err());
+
+        let challenge = challenge.unwrap();
+        assert!(!challenge.id.is_empty());
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    // ─── MFA: Full TOTP Flow (enroll → challenge → verify) ───
+
+    #[tokio::test]
+    async fn mfa_full_totp_flow() {
+        use totp_rs::{Algorithm, TOTP, Secret};
+
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("mfa-flow");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        // 1. Enroll
+        let factor = auth
+            .mfa_enroll(&session.access_token, MfaEnrollParams::totp())
+            .await
+            .unwrap();
+        let secret = factor.totp.as_ref().unwrap().secret.clone();
+
+        // 2. Challenge
+        let challenge = auth
+            .mfa_challenge(&session.access_token, &factor.id)
+            .await
+            .unwrap();
+
+        // 3. Generate TOTP code from the secret
+        let secret_bytes = Secret::Encoded(secret).to_bytes().unwrap();
+        let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret_bytes).unwrap();
+        let code = totp.generate_current().unwrap();
+
+        // 4. Verify
+        let new_session = auth
+            .mfa_verify(
+                &session.access_token,
+                &factor.id,
+                MfaVerifyParams::new(&challenge.id, &code),
+            )
+            .await;
+        assert!(new_session.is_ok(), "mfa_verify failed: {:?}", new_session.err());
+
+        let new_session = new_session.unwrap();
+        assert!(!new_session.access_token.is_empty());
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    // ─── MFA: challenge_and_verify convenience ────────────────
+
+    #[tokio::test]
+    async fn mfa_challenge_and_verify() {
+        use totp_rs::{Algorithm, TOTP, Secret};
+
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("mfa-cav");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        let factor = auth
+            .mfa_enroll(&session.access_token, MfaEnrollParams::totp())
+            .await
+            .unwrap();
+        let secret = factor.totp.as_ref().unwrap().secret.clone();
+
+        // First verify to make factor "verified" status
+        let challenge = auth.mfa_challenge(&session.access_token, &factor.id).await.unwrap();
+        let secret_bytes = Secret::Encoded(secret.clone()).to_bytes().unwrap();
+        let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret_bytes).unwrap();
+        let code = totp.generate_current().unwrap();
+        let aal2_session = auth
+            .mfa_verify(
+                &session.access_token,
+                &factor.id,
+                MfaVerifyParams::new(&challenge.id, &code),
+            )
+            .await
+            .unwrap();
+
+        // Now use the convenience method with the AAL2 session
+        // Need to wait a moment for TOTP time window to potentially rotate
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let code2 = totp.generate_current().unwrap();
+        let result = auth
+            .mfa_challenge_and_verify(&aal2_session.access_token, &factor.id, &code2)
+            .await;
+        assert!(result.is_ok(), "mfa_challenge_and_verify failed: {:?}", result.err());
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    // ─── MFA: Unenroll ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn mfa_unenroll() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("mfa-unenroll");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        let factor = auth
+            .mfa_enroll(&session.access_token, MfaEnrollParams::totp())
+            .await
+            .unwrap();
+
+        let result = auth.mfa_unenroll(&session.access_token, &factor.id).await;
+        assert!(result.is_ok(), "mfa_unenroll failed: {:?}", result.err());
+        assert_eq!(result.unwrap().id, factor.id);
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    // ─── MFA: List Factors ────────────────────────────────────
+
+    #[tokio::test]
+    async fn mfa_list_factors() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("mfa-list");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        // Enroll a TOTP factor
+        auth.mfa_enroll(&session.access_token, MfaEnrollParams::totp())
+            .await
+            .unwrap();
+
+        let factors = auth.mfa_list_factors(&session.access_token).await;
+        assert!(factors.is_ok(), "mfa_list_factors failed: {:?}", factors.err());
+
+        let factors = factors.unwrap();
+        assert_eq!(factors.totp.len(), 1);
+        assert_eq!(factors.phone.len(), 0);
+        assert_eq!(factors.all.len(), 1);
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    // ─── MFA: Get AAL ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn mfa_get_aal_before_and_after() {
+        use totp_rs::{Algorithm, TOTP, Secret};
+
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("mfa-aal");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        // Before MFA: AAL1, next_level should be AAL1 (no verified factors)
+        let aal = auth
+            .mfa_get_authenticator_assurance_level(&session.access_token)
+            .await;
+        assert!(aal.is_ok(), "mfa_get_aal failed: {:?}", aal.err());
+        let aal = aal.unwrap();
+        assert_eq!(aal.current_level, Some(AuthenticatorAssuranceLevel::Aal1));
+        assert_eq!(aal.next_level, Some(AuthenticatorAssuranceLevel::Aal1));
+
+        // Enroll and verify a TOTP factor
+        let factor = auth
+            .mfa_enroll(&session.access_token, MfaEnrollParams::totp())
+            .await
+            .unwrap();
+        let secret = factor.totp.as_ref().unwrap().secret.clone();
+        let challenge = auth.mfa_challenge(&session.access_token, &factor.id).await.unwrap();
+        let secret_bytes = Secret::Encoded(secret).to_bytes().unwrap();
+        let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret_bytes).unwrap();
+        let code = totp.generate_current().unwrap();
+        let aal2_session = auth
+            .mfa_verify(
+                &session.access_token,
+                &factor.id,
+                MfaVerifyParams::new(&challenge.id, &code),
+            )
+            .await
+            .unwrap();
+
+        // After MFA verify: should be AAL2
+        let aal = auth
+            .mfa_get_authenticator_assurance_level(&aal2_session.access_token)
+            .await
+            .unwrap();
+        assert_eq!(aal.current_level, Some(AuthenticatorAssuranceLevel::Aal2));
+        assert_eq!(aal.next_level, Some(AuthenticatorAssuranceLevel::Aal2));
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    // ─── SSO: Sign In (expect error — no SSO provider) ───────
+
+    #[tokio::test]
+    async fn sign_in_with_sso_no_provider() {
+        let auth = auth_client();
+
+        let result = auth
+            .sign_in_with_sso(SsoSignInParams::domain("nonexistent-domain.com"))
+            .await;
+        // Should fail — no SSO provider configured locally
+        assert!(result.is_err());
+    }
+
+    // ─── ID Token: Sign In (expect error — no provider) ──────
+
+    #[tokio::test]
+    async fn sign_in_with_id_token_no_provider() {
+        let auth = auth_client();
+
+        let result = auth
+            .sign_in_with_id_token(SignInWithIdTokenParams::new("google", "fake-token"))
+            .await;
+        // Should fail — no Google provider configured locally
+        assert!(result.is_err());
+    }
+
+    // ─── Identity: Unlink single identity (expect error) ──────
+
+    #[tokio::test]
+    async fn unlink_single_identity_fails() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("unlink-id");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        // Get the user's identity
+        let fetched = auth.get_user(&session.access_token).await.unwrap();
+        let identities = fetched.identities.unwrap_or_default();
+        assert!(!identities.is_empty(), "User should have at least one identity");
+
+        let identity_id = identities[0].identity_id.as_deref()
+            .unwrap_or(&identities[0].id);
+
+        // Try to unlink the only identity — should fail
+        let result = auth.unlink_identity(&session.access_token, identity_id).await;
+        assert!(result.is_err(), "Should fail to unlink single identity");
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    // ─── Resend: OTP for nonexistent email ────────────────────
+
+    #[tokio::test]
+    async fn resend_otp_nonexistent_email() {
+        let auth = auth_client();
+
+        // GoTrue doesn't reveal user existence, so this should succeed
+        let result = auth
+            .resend(ResendParams::email("nonexistent@example.com", ResendType::Signup))
+            .await;
+        // May succeed or return a specific error — GoTrue behavior varies
+        // Just verify it doesn't panic
+        let _ = result;
+    }
+
+    // ─── Reauthenticate ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn reauthenticate() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("reauth");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        let result = auth.reauthenticate(&session.access_token).await;
+        // Reauthenticate sends a nonce email. Should succeed for a signed-in user.
+        assert!(result.is_ok(), "reauthenticate failed: {:?}", result.err());
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    // ─── Admin: MFA List Factors ──────────────────────────────
+
+    #[tokio::test]
+    async fn admin_mfa_list_factors() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("admin-mfa-list");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        // Enroll a factor
+        auth.mfa_enroll(&session.access_token, MfaEnrollParams::totp())
+            .await
+            .unwrap();
+
+        // Admin list factors
+        let factors = admin.admin().mfa_list_factors(&user.id).await;
+        assert!(factors.is_ok(), "admin mfa_list_factors failed: {:?}", factors.err());
+
+        let factors = factors.unwrap();
+        assert!(!factors.is_empty());
+        assert_eq!(factors[0].factor_type, "totp");
+
+        cleanup_user(&admin.admin(), &user.id).await;
+    }
+
+    // ─── Admin: MFA Delete Factor ─────────────────────────────
+
+    #[tokio::test]
+    async fn admin_mfa_delete_factor() {
+        let auth = auth_client();
+        let admin = admin_auth_client();
+        let email = test_email("admin-mfa-del");
+        let password = "password123456";
+
+        let user = create_test_user(&admin.admin(), &email, password).await;
+        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+
+        // Enroll a factor
+        let factor = auth
+            .mfa_enroll(&session.access_token, MfaEnrollParams::totp())
+            .await
+            .unwrap();
+
+        // Admin delete factor
+        let result = admin.admin().mfa_delete_factor(&user.id, &factor.id).await;
+        assert!(result.is_ok(), "admin mfa_delete_factor failed: {:?}", result.err());
+
+        // Verify factor was deleted
+        let factors = admin.admin().mfa_list_factors(&user.id).await.unwrap();
+        assert!(factors.is_empty());
+
+        cleanup_user(&admin.admin(), &user.id).await;
     }
 }

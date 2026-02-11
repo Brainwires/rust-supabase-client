@@ -55,6 +55,9 @@ url = "2"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 
+# Base64 (for JWT parsing)
+base64 = "0.22"
+
 # Proc macros
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"

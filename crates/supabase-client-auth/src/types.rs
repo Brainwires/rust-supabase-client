@@ -84,9 +84,139 @@ pub struct Factor {
     pub factor_type: String,
     pub status: String,
     #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub last_challenged_at: Option<DateTime<Utc>>,
+    #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+/// MFA factor type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FactorType {
+    Totp,
+    Phone,
+}
+
+impl fmt::Display for FactorType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Totp => write!(f, "totp"),
+            Self::Phone => write!(f, "phone"),
+        }
+    }
+}
+
+/// MFA factor status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FactorStatus {
+    Unverified,
+    Verified,
+}
+
+impl fmt::Display for FactorStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unverified => write!(f, "unverified"),
+            Self::Verified => write!(f, "verified"),
+        }
+    }
+}
+
+/// Authenticator Assurance Level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthenticatorAssuranceLevel {
+    /// Single-factor authentication (password, OTP, etc.).
+    Aal1,
+    /// Multi-factor authentication (password + TOTP/phone).
+    Aal2,
+}
+
+impl fmt::Display for AuthenticatorAssuranceLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Aal1 => write!(f, "aal1"),
+            Self::Aal2 => write!(f, "aal2"),
+        }
+    }
+}
+
+/// Response from MFA enroll.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MfaEnrollResponse {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub factor_type: String,
+    #[serde(default)]
+    pub friendly_name: Option<String>,
+    #[serde(default)]
+    pub totp: Option<MfaTotpInfo>,
+    #[serde(default)]
+    pub phone: Option<String>,
+}
+
+/// TOTP-specific info from MFA enroll.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MfaTotpInfo {
+    pub qr_code: String,
+    pub secret: String,
+    pub uri: String,
+}
+
+/// Response from MFA challenge.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MfaChallengeResponse {
+    pub id: String,
+    #[serde(default, rename = "type")]
+    pub factor_type: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<i64>,
+}
+
+/// Response from MFA unenroll.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MfaUnenrollResponse {
+    pub id: String,
+}
+
+/// Categorized list of enrolled MFA factors.
+#[derive(Debug, Clone)]
+pub struct MfaListFactorsResponse {
+    pub totp: Vec<Factor>,
+    pub phone: Vec<Factor>,
+    pub all: Vec<Factor>,
+}
+
+/// Authenticator assurance level info.
+#[derive(Debug, Clone)]
+pub struct AuthenticatorAssuranceLevelInfo {
+    pub current_level: Option<AuthenticatorAssuranceLevel>,
+    pub next_level: Option<AuthenticatorAssuranceLevel>,
+    pub current_authentication_methods: Vec<AmrEntry>,
+}
+
+/// Authentication Method Reference entry from the JWT.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmrEntry {
+    pub method: String,
+    #[serde(default)]
+    pub timestamp: Option<i64>,
+}
+
+/// Response from SSO sign-in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SsoSignInResponse {
+    pub url: String,
+}
+
+/// Response from identity link (returns redirect URL).
+#[derive(Debug, Clone)]
+pub struct LinkIdentityResponse {
+    pub url: String,
 }
 
 /// Response from sign-up and some auth operations.
@@ -243,5 +373,128 @@ impl fmt::Display for OtpType {
             Self::Invite => write!(f, "invite"),
             Self::MagicLink => write!(f, "magiclink"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn factor_type_display() {
+        assert_eq!(FactorType::Totp.to_string(), "totp");
+        assert_eq!(FactorType::Phone.to_string(), "phone");
+    }
+
+    #[test]
+    fn factor_type_serde_roundtrip() {
+        let json = serde_json::to_string(&FactorType::Totp).unwrap();
+        assert_eq!(json, "\"totp\"");
+        let parsed: FactorType = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, FactorType::Totp);
+    }
+
+    #[test]
+    fn factor_status_display() {
+        assert_eq!(FactorStatus::Unverified.to_string(), "unverified");
+        assert_eq!(FactorStatus::Verified.to_string(), "verified");
+    }
+
+    #[test]
+    fn authenticator_assurance_level_display() {
+        assert_eq!(AuthenticatorAssuranceLevel::Aal1.to_string(), "aal1");
+        assert_eq!(AuthenticatorAssuranceLevel::Aal2.to_string(), "aal2");
+    }
+
+    #[test]
+    fn mfa_list_factors_categorization() {
+        let factors = vec![
+            Factor {
+                id: "f1".into(),
+                friendly_name: Some("My TOTP".into()),
+                factor_type: "totp".into(),
+                status: "verified".into(),
+                phone: None,
+                last_challenged_at: None,
+                created_at: None,
+                updated_at: None,
+            },
+            Factor {
+                id: "f2".into(),
+                friendly_name: Some("My Phone".into()),
+                factor_type: "phone".into(),
+                status: "unverified".into(),
+                phone: Some("+1234567890".into()),
+                last_challenged_at: None,
+                created_at: None,
+                updated_at: None,
+            },
+        ];
+
+        let totp: Vec<_> = factors.iter().filter(|f| f.factor_type == "totp").collect();
+        let phone: Vec<_> = factors.iter().filter(|f| f.factor_type == "phone").collect();
+
+        assert_eq!(totp.len(), 1);
+        assert_eq!(totp[0].id, "f1");
+        assert_eq!(phone.len(), 1);
+        assert_eq!(phone[0].id, "f2");
+    }
+
+    #[test]
+    fn mfa_enroll_response_deserialize() {
+        let json = r#"{
+            "id": "factor-uuid",
+            "type": "totp",
+            "friendly_name": "My Authenticator",
+            "totp": {
+                "qr_code": "data:image/svg+xml;...",
+                "secret": "BASE32SECRET",
+                "uri": "otpauth://totp/..."
+            }
+        }"#;
+        let resp: MfaEnrollResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id, "factor-uuid");
+        assert_eq!(resp.factor_type, "totp");
+        assert!(resp.totp.is_some());
+        let totp = resp.totp.unwrap();
+        assert_eq!(totp.secret, "BASE32SECRET");
+    }
+
+    #[test]
+    fn mfa_challenge_response_deserialize() {
+        let json = r#"{"id": "challenge-uuid", "type": "totp", "expires_at": 1700000000}"#;
+        let resp: MfaChallengeResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id, "challenge-uuid");
+        assert_eq!(resp.factor_type.as_deref(), Some("totp"));
+        assert_eq!(resp.expires_at, Some(1700000000));
+    }
+
+    #[test]
+    fn sso_sign_in_response_deserialize() {
+        let json = r#"{"url": "https://sso.example.com/login"}"#;
+        let resp: SsoSignInResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.url, "https://sso.example.com/login");
+    }
+
+    #[test]
+    fn factor_with_new_fields_deserialize() {
+        let json = r#"{
+            "id": "f1",
+            "factor_type": "phone",
+            "status": "verified",
+            "phone": "+1234567890",
+            "last_challenged_at": "2024-01-01T00:00:00Z"
+        }"#;
+        let factor: Factor = serde_json::from_str(json).unwrap();
+        assert_eq!(factor.phone.as_deref(), Some("+1234567890"));
+        assert!(factor.last_challenged_at.is_some());
+    }
+
+    #[test]
+    fn amr_entry_deserialize() {
+        let json = r#"{"method": "totp", "timestamp": 1700000000}"#;
+        let entry: AmrEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.method, "totp");
+        assert_eq!(entry.timestamp, Some(1700000000));
     }
 }

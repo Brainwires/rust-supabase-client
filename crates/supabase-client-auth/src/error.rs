@@ -87,6 +87,23 @@ pub enum AuthErrorCode {
     SamePassword,
     ValidationFailed,
     OverRequestRateLimit,
+    // MFA error codes
+    MfaFactorNameConflict,
+    MfaFactorNotFound,
+    MfaChallengeExpired,
+    MfaVerificationFailed,
+    MfaVerificationRejected,
+    MfaIpAddressMismatch,
+    MfaEnrollNotEnabled,
+    MfaVerifyNotEnabled,
+    // SSO error codes
+    SsoProviderNotFound,
+    SsoDomainAlreadyExists,
+    // Identity error codes
+    IdentityAlreadyExists,
+    IdentityNotFound,
+    ManualLinkingDisabled,
+    SingleIdentityNotDeletable,
     Unknown(String),
 }
 
@@ -106,6 +123,20 @@ impl fmt::Display for AuthErrorCode {
             Self::SamePassword => write!(f, "same_password"),
             Self::ValidationFailed => write!(f, "validation_failed"),
             Self::OverRequestRateLimit => write!(f, "over_request_rate_limit"),
+            Self::MfaFactorNameConflict => write!(f, "mfa_factor_name_conflict"),
+            Self::MfaFactorNotFound => write!(f, "mfa_factor_not_found"),
+            Self::MfaChallengeExpired => write!(f, "mfa_challenge_expired"),
+            Self::MfaVerificationFailed => write!(f, "mfa_verification_failed"),
+            Self::MfaVerificationRejected => write!(f, "mfa_verification_rejected"),
+            Self::MfaIpAddressMismatch => write!(f, "mfa_ip_address_mismatch"),
+            Self::MfaEnrollNotEnabled => write!(f, "mfa_enroll_not_enabled"),
+            Self::MfaVerifyNotEnabled => write!(f, "mfa_verify_not_enabled"),
+            Self::SsoProviderNotFound => write!(f, "sso_provider_not_found"),
+            Self::SsoDomainAlreadyExists => write!(f, "sso_domain_already_exists"),
+            Self::IdentityAlreadyExists => write!(f, "identity_already_exists"),
+            Self::IdentityNotFound => write!(f, "identity_not_found"),
+            Self::ManualLinkingDisabled => write!(f, "manual_linking_disabled"),
+            Self::SingleIdentityNotDeletable => write!(f, "single_identity_not_deletable"),
             Self::Unknown(code) => write!(f, "{}", code),
         }
     }
@@ -129,6 +160,20 @@ impl From<&str> for AuthErrorCode {
             "same_password" => Self::SamePassword,
             "validation_failed" => Self::ValidationFailed,
             "over_request_rate_limit" => Self::OverRequestRateLimit,
+            "mfa_factor_name_conflict" => Self::MfaFactorNameConflict,
+            "mfa_factor_not_found" => Self::MfaFactorNotFound,
+            "mfa_challenge_expired" => Self::MfaChallengeExpired,
+            "mfa_verification_failed" => Self::MfaVerificationFailed,
+            "mfa_verification_rejected" => Self::MfaVerificationRejected,
+            "mfa_ip_address_mismatch" => Self::MfaIpAddressMismatch,
+            "mfa_enroll_not_enabled" => Self::MfaEnrollNotEnabled,
+            "mfa_verify_not_enabled" => Self::MfaVerifyNotEnabled,
+            "sso_provider_not_found" => Self::SsoProviderNotFound,
+            "sso_domain_already_exists" => Self::SsoDomainAlreadyExists,
+            "identity_already_exists" => Self::IdentityAlreadyExists,
+            "identity_not_found" => Self::IdentityNotFound,
+            "manual_linking_disabled" => Self::ManualLinkingDisabled,
+            "single_identity_not_deletable" => Self::SingleIdentityNotDeletable,
             other => Self::Unknown(other.to_string()),
         }
     }
@@ -137,5 +182,54 @@ impl From<&str> for AuthErrorCode {
 impl From<AuthError> for SupabaseError {
     fn from(err: AuthError) -> Self {
         SupabaseError::Auth(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mfa_error_codes_roundtrip() {
+        let codes = [
+            ("mfa_factor_name_conflict", AuthErrorCode::MfaFactorNameConflict),
+            ("mfa_factor_not_found", AuthErrorCode::MfaFactorNotFound),
+            ("mfa_challenge_expired", AuthErrorCode::MfaChallengeExpired),
+            ("mfa_verification_failed", AuthErrorCode::MfaVerificationFailed),
+            ("mfa_verification_rejected", AuthErrorCode::MfaVerificationRejected),
+            ("mfa_ip_address_mismatch", AuthErrorCode::MfaIpAddressMismatch),
+            ("mfa_enroll_not_enabled", AuthErrorCode::MfaEnrollNotEnabled),
+            ("mfa_verify_not_enabled", AuthErrorCode::MfaVerifyNotEnabled),
+        ];
+        for (s, expected) in &codes {
+            let parsed: AuthErrorCode = (*s).into();
+            assert_eq!(parsed, *expected);
+            assert_eq!(parsed.to_string(), *s);
+        }
+    }
+
+    #[test]
+    fn sso_error_codes_roundtrip() {
+        let parsed: AuthErrorCode = "sso_provider_not_found".into();
+        assert_eq!(parsed, AuthErrorCode::SsoProviderNotFound);
+        assert_eq!(parsed.to_string(), "sso_provider_not_found");
+
+        let parsed: AuthErrorCode = "sso_domain_already_exists".into();
+        assert_eq!(parsed, AuthErrorCode::SsoDomainAlreadyExists);
+    }
+
+    #[test]
+    fn identity_error_codes_roundtrip() {
+        let codes = [
+            ("identity_already_exists", AuthErrorCode::IdentityAlreadyExists),
+            ("identity_not_found", AuthErrorCode::IdentityNotFound),
+            ("manual_linking_disabled", AuthErrorCode::ManualLinkingDisabled),
+            ("single_identity_not_deletable", AuthErrorCode::SingleIdentityNotDeletable),
+        ];
+        for (s, expected) in &codes {
+            let parsed: AuthErrorCode = (*s).into();
+            assert_eq!(parsed, *expected);
+            assert_eq!(parsed.to_string(), *s);
+        }
     }
 }

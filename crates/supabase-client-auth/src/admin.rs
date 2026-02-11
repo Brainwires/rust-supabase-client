@@ -3,7 +3,7 @@ use serde_json::json;
 use crate::client::AuthClient;
 use crate::error::AuthError;
 use crate::params::{AdminCreateUserParams, AdminUpdateUserParams, GenerateLinkParams};
-use crate::types::{AdminUserListResponse, User};
+use crate::types::{AdminUserListResponse, Factor, User};
 
 /// Admin client for Supabase GoTrue admin operations.
 ///
@@ -220,6 +220,53 @@ impl<'a> AdminClient<'a> {
 
         let value: serde_json::Value = resp.json().await?;
         Ok(value)
+    }
+
+    // ─── MFA Admin ─────────────────────────────────────────────
+
+    /// List MFA factors for a user (admin).
+    ///
+    /// Mirrors `supabase.auth.admin.mfa.listFactors()`.
+    pub async fn mfa_list_factors(&self, user_id: &str) -> Result<Vec<Factor>, AuthError> {
+        let url = self
+            .auth
+            .url(&format!("/admin/users/{}/factors", user_id));
+        let resp = self
+            .auth
+            .http()
+            .get(url)
+            .bearer_auth(self.bearer_token())
+            .send()
+            .await?;
+
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            return Err(parse_admin_error(status, resp).await);
+        }
+
+        let factors: Vec<Factor> = resp.json().await?;
+        Ok(factors)
+    }
+
+    /// Delete an MFA factor for a user (admin).
+    ///
+    /// Mirrors `supabase.auth.admin.mfa.deleteFactor()`.
+    pub async fn mfa_delete_factor(
+        &self,
+        user_id: &str,
+        factor_id: &str,
+    ) -> Result<(), AuthError> {
+        let url = self
+            .auth
+            .url(&format!("/admin/users/{}/factors/{}", user_id, factor_id));
+        let resp = self
+            .auth
+            .http()
+            .delete(url)
+            .bearer_auth(self.bearer_token())
+            .send()
+            .await?;
+        self.auth.handle_empty_response(resp).await
     }
 }
 

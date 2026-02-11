@@ -17,6 +17,8 @@ tokio.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 url.workspace = true
+base64.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
+totp-rs = { version = "5", features = ["gen_secret"] }
