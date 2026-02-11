@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Storage HTTP client for supabase-client (Phase 4)"
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Storage HTTP client for supabase-client"
+keywords = ["supabase", "storage", "object-storage", "file-upload", "s3"]
+categories = ["filesystem", "web-programming::http-client"]
 
 [dependencies]
 supabase-client-core.workspace = true

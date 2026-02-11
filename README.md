@@ -64,9 +64,9 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-supabase-client = { path = "crates/supabase-client" }
+supabase-client = "0.1.0"
 # Or with specific features:
-supabase-client = { path = "crates/supabase-client", features = ["auth", "realtime"] }
+supabase-client = { version = "0.1.0", features = ["auth", "realtime"] }
 ```
 
 ### Feature Flags

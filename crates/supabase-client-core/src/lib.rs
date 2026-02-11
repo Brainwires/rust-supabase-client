@@ -1,3 +1,19 @@
+//! # supabase-client-core
+//!
+//! Core types and client for the `supabase-client` crate family.
+//!
+//! This crate provides [`SupabaseClient`], [`SupabaseConfig`], error types, and the
+//! [`SupabaseResponse`] abstraction used by all other `supabase-client-*` crates.
+//!
+//! **Most users should depend on [`supabase-client`](https://crates.io/crates/supabase-client)
+//! instead**, which re-exports this crate and adds query building, auth, realtime,
+//! storage, and edge functions behind feature flags.
+//!
+//! ## Features
+//!
+//! - `direct-sql` — Enables a direct PostgreSQL connection pool via sqlx,
+//!   bypassing PostgREST for queries.
+
 pub mod client;
 pub mod config;
 pub mod error;

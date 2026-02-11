@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Realtime WebSocket client for supabase-client (Phase 3)"
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Realtime WebSocket client for supabase-client"
+keywords = ["supabase", "realtime", "websocket", "phoenix-channels", "pubsub"]
+categories = ["network-programming", "web-programming::websocket"]
 
 [dependencies]
 supabase-client-core.workspace = true

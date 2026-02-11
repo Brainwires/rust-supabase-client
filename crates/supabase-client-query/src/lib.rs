@@ -1,3 +1,20 @@
+//! # supabase-client-query
+//!
+//! Query builder, filters, modifiers, and SQL/PostgREST execution for
+//! the `supabase-client` crate family.
+//!
+//! Provides a fluent API for SELECT, INSERT, UPDATE, DELETE, UPSERT, and RPC
+//! queries against Supabase, with 20+ filter methods and full modifier support.
+//!
+//! **Most users should depend on [`supabase-client`](https://crates.io/crates/supabase-client)
+//! instead** and enable the `query` feature (on by default), which re-exports
+//! this crate.
+//!
+//! ## Features
+//!
+//! - `direct-sql` — Execute queries directly against PostgreSQL via sqlx
+//!   instead of going through PostgREST.
+
 pub mod sql;
 pub mod table;
 pub mod filter;

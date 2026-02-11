@@ -1,3 +1,43 @@
+//! # supabase-client
+//!
+//! A Rust client for [Supabase](https://supabase.com/) with a fluent, Supabase JS-like API.
+//! Uses the **PostgREST REST API by default** — no database connection needed. Opt into
+//! direct PostgreSQL access via [sqlx](https://github.com/launchbadge/sqlx) with the
+//! `direct-sql` feature flag.
+//!
+//! This is the main facade crate that re-exports all sub-crates behind feature flags.
+//!
+//! ## Quick Start
+//!
+//! ```rust,no_run
+//! use supabase_client::prelude::*;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let config = SupabaseConfig::new("https://your-project.supabase.co", "your-anon-key");
+//!     let client = SupabaseClient::new(config)?;
+//!
+//!     let response = client.from("cities").select("*").execute().await;
+//!     for row in response.into_result()? {
+//!         println!("{}", row.get_as::<String>("name").unwrap());
+//!     }
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Feature Flags
+//!
+//! | Feature | Default | Description |
+//! |---------|---------|-------------|
+//! | `query` | Yes | Query builder (select, insert, update, delete, upsert, rpc) |
+//! | `derive` | Yes | `#[derive(Table)]` proc macro |
+//! | `auth` | No | GoTrue authentication client |
+//! | `realtime` | No | WebSocket realtime subscriptions |
+//! | `storage` | No | Object storage client |
+//! | `functions` | No | Edge Functions client |
+//! | `direct-sql` | No | Direct PostgreSQL via sqlx (bypasses PostgREST) |
+//! | `full` | No | All features enabled |
+
 // Re-export core (always available)
 pub use supabase_client_core::*;
 

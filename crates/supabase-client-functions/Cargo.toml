@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Edge Functions client for supabase-client (Phase 5)"
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Edge Functions client for supabase-client"
+keywords = ["supabase", "edge-functions", "serverless", "deno", "functions"]
+categories = ["web-programming::http-client"]
 
 [dependencies]
 supabase-client-core.workspace = true

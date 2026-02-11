@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "Derive macros for supabase-client (#[derive(Table)])"
+keywords = ["supabase", "derive", "macro", "table", "orm"]
+categories = ["database"]
 
 [lib]
 proc-macro = true

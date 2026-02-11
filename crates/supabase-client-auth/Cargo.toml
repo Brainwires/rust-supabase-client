@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "Auth (GoTrue) client for supabase-client"
+keywords = ["supabase", "auth", "gotrue", "authentication", "oauth"]
+categories = ["authentication", "web-programming::http-client"]
 
 [dependencies]
 supabase-client-core.workspace = true
