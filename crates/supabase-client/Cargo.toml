@@ -33,3 +33,31 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+
+[[example]]
+name = "query_basics"
+required-features = ["query"]
+
+[[example]]
+name = "typed_queries"
+required-features = ["query", "derive"]
+
+[[example]]
+name = "advanced_queries"
+required-features = ["query"]
+
+[[example]]
+name = "auth"
+required-features = ["auth"]
+
+[[example]]
+name = "realtime"
+required-features = ["realtime"]
+
+[[example]]
+name = "storage"
+required-features = ["storage"]
+
+[[example]]
+name = "functions"
+required-features = ["functions"]

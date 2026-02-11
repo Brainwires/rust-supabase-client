@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 use supabase_client_core::{SupabaseClient, SupabaseConfig};
 use supabase_client_query::{
-    Filterable, IsValue, Modifiable, OrderDirection, SupabaseClientQueryExt,
+    CountOption, Filterable, IsValue, Modifiable, OrderDirection, SupabaseClientQueryExt,
 };
 
 const SUPABASE_URL: &str = "http://127.0.0.1:64321";
@@ -32,74 +32,16 @@ fn create_client() -> SupabaseClient {
     SupabaseClient::new(config).expect("Failed to create REST client")
 }
 
-/// Reset test data via PostgREST RPC.
-/// This requires a helper function in the database.
-/// As a fallback, we delete all data and re-insert via REST.
+/// Reset test data atomically via the `reset_test_data` SQL function.
+/// This runs as a single transaction, eliminating race conditions
+/// and duplicate-key errors when tests run in parallel.
 async fn reset_data(client: &SupabaseClient) {
-    // Delete all cities first (due to foreign key), then countries
-    let _ = client
-        .from("cities")
-        .delete()
-        .gte("id", 0_i32)
-        .execute()
-        .await;
-    let _ = client
-        .from("countries")
-        .delete()
-        .gte("id", 0_i32)
-        .execute()
-        .await;
-
-    // Insert countries
-    let countries = vec![
-        supabase_client_core::row![("name", "New Zealand"), ("code", "NZ")],
-        supabase_client_core::row![("name", "Australia"), ("code", "AU")],
-        supabase_client_core::row![("name", "Japan"), ("code", "JP")],
-    ];
     let resp = client
-        .from("countries")
-        .insert_many(countries)
-        .select()
+        .rpc("reset_test_data", json!({}))
+        .unwrap()
         .execute()
         .await;
-    assert!(resp.is_ok(), "Failed to insert countries: {:?}", resp.error);
-    let inserted_countries = resp.into_result().unwrap();
-    assert_eq!(inserted_countries.len(), 3);
-
-    // Get country IDs
-    let nz_id = inserted_countries.iter()
-        .find(|c| c.get_as::<String>("name").unwrap() == "New Zealand")
-        .unwrap()
-        .get_as::<i64>("id")
-        .unwrap();
-    let au_id = inserted_countries.iter()
-        .find(|c| c.get_as::<String>("name").unwrap() == "Australia")
-        .unwrap()
-        .get_as::<i64>("id")
-        .unwrap();
-    let jp_id = inserted_countries.iter()
-        .find(|c| c.get_as::<String>("name").unwrap() == "Japan")
-        .unwrap()
-        .get_as::<i64>("id")
-        .unwrap();
-
-    // Insert cities
-    let cities = vec![
-        supabase_client_core::row![("name", "Auckland"), ("country_id", nz_id), ("population", 1657000_i64), ("is_capital", false)],
-        supabase_client_core::row![("name", "Wellington"), ("country_id", nz_id), ("population", 215000_i64), ("is_capital", true)],
-        supabase_client_core::row![("name", "Sydney"), ("country_id", au_id), ("population", 5312000_i64), ("is_capital", false)],
-        supabase_client_core::row![("name", "Canberra"), ("country_id", au_id), ("population", 453000_i64), ("is_capital", true)],
-        supabase_client_core::row![("name", "Tokyo"), ("country_id", jp_id), ("population", 13960000_i64), ("is_capital", true)],
-    ];
-    let resp = client
-        .from("cities")
-        .insert_many(cities)
-        .select()
-        .execute()
-        .await;
-    assert!(resp.is_ok(), "Failed to insert cities: {:?}", resp.error);
-    let inserted_cities = resp.into_result().unwrap();
-    assert_eq!(inserted_cities.len(), 5);
+    assert!(resp.is_ok(), "reset_test_data RPC failed: {:?}", resp.error);
 }
 
 // ============================================================
@@ -610,4 +552,91 @@ async fn rest_typed_rpc() {
     assert_eq!(cities.len(), 2);
     assert!(cities.iter().any(|c| c.name == "Auckland"));
     assert!(cities.iter().any(|c| c.name == "Wellington"));
+}
+
+// ============================================================
+// CSV FORMAT TESTS
+// ============================================================
+
+#[tokio::test]
+async fn rest_csv_format() {
+    let client = create_client();
+    reset_data(&client).await;
+
+    let csv = client
+        .from("cities")
+        .select("name, population")
+        .order("name", OrderDirection::Ascending)
+        .csv()
+        .execute()
+        .await;
+    assert!(csv.is_ok(), "csv format failed: {:?}", csv.err());
+    let csv_text = csv.unwrap();
+    let lines: Vec<&str> = csv_text.trim().lines().collect();
+    // Should have header row + 5 data rows
+    assert_eq!(lines.len(), 6, "Expected 6 lines (header + 5 rows), got {}: {:?}", lines.len(), lines);
+    assert!(lines[0].contains("name"), "Header should contain 'name'");
+    assert!(lines[0].contains("population"), "Header should contain 'population'");
+    assert!(lines[1].contains("Auckland"), "First data row should be Auckland");
+}
+
+// ============================================================
+// COUNT OPTION TESTS
+// ============================================================
+
+#[tokio::test]
+async fn rest_count_planned() {
+    let client = create_client();
+    reset_data(&client).await;
+
+    let resp = client
+        .from("cities")
+        .select("*")
+        .count_option(CountOption::Planned)
+        .execute()
+        .await;
+    assert!(resp.is_ok(), "count planned failed: {:?}", resp.error);
+    // Planned count may not be perfectly accurate, but should be > 0
+    assert!(resp.count.is_some(), "Planned count should be present");
+    assert!(resp.count.unwrap() > 0, "Planned count should be > 0");
+}
+
+#[tokio::test]
+async fn rest_count_estimated() {
+    let client = create_client();
+    reset_data(&client).await;
+
+    let resp = client
+        .from("cities")
+        .select("*")
+        .count_option(CountOption::Estimated)
+        .execute()
+        .await;
+    assert!(resp.is_ok(), "count estimated failed: {:?}", resp.error);
+    // Estimated count should be present (may be 0 for small tables)
+    assert!(resp.count.is_some(), "Estimated count should be present");
+}
+
+// ============================================================
+// RPC ROLLBACK TEST
+// ============================================================
+
+#[tokio::test]
+async fn rest_rpc_rollback() {
+    let client = create_client();
+    reset_data(&client).await;
+
+    // Call add_numbers with rollback — function should still return a result
+    // but any side effects would be rolled back (add_numbers has no side effects,
+    // but the tx=rollback header should be accepted)
+    let resp = client
+        .rpc("add_numbers", json!({"a": 10, "b": 20}))
+        .unwrap()
+        .rollback()
+        .execute()
+        .await;
+    assert!(resp.is_ok(), "rpc rollback failed: {:?}", resp.error);
+    let rows = resp.into_result().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get_as::<i64>("add_numbers").unwrap(), 30);
 }

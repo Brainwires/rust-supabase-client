@@ -1,6 +1,6 @@
 # supabase-client
 
-[![Tests](https://img.shields.io/badge/tests-360%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-360%2B%20passing-brightgreen)](#testing)
 [![Rust](https://img.shields.io/badge/rust-2021%20edition-orange)](https://www.rust-lang.org/)
 
 A Rust client for [Supabase](https://supabase.com/) with a fluent, Supabase JS-like API. Uses the **PostgREST REST API by default** — no database connection needed. Opt into direct PostgreSQL access via [sqlx](https://github.com/launchbadge/sqlx) with the `direct-sql` feature flag.
@@ -88,7 +88,7 @@ supabase-client = { path = "crates/supabase-client", features = ["auth", "realti
 use supabase_client::prelude::*;
 
 #[tokio::main]
-async fn main() -> Result<(), SupabaseError> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = SupabaseConfig::new(
         "https://your-project.supabase.co",  // or "http://localhost:64321" for local
         "your-anon-key",
@@ -100,9 +100,12 @@ async fn main() -> Result<(), SupabaseError> {
     let response = client.from("cities")
         .select("*")
         .execute()
-        .await?;
+        .await;
 
-    println!("Cities: {:?}", response.data);
+    for row in response.into_result()? {
+        println!("{}", row.get_as::<String>("name").unwrap());
+    }
+
     Ok(())
 }
 ```
@@ -113,57 +116,93 @@ async fn main() -> Result<(), SupabaseError> {
 
 ```rust
 use supabase_client::prelude::*;
+use serde_json::json;
 
 // SELECT with filters and modifiers
 let response = client.from("cities")
     .select("id, name, country_id")
     .eq("country_id", 1)
-    .order("name", OrderDirection::Asc)
+    .order("name", OrderDirection::Ascending)
     .limit(10)
     .execute()
-    .await?;
+    .await;
+let rows = response.into_result()?;
 
-// INSERT
+// INSERT a single row
 let response = client.from("cities")
-    .insert(vec![
-        row! { "name" => "Tokyo", "country_id" => 1 },
-        row! { "name" => "Osaka", "country_id" => 1 },
-    ])
+    .insert(row![("name", "Tokyo"), ("country_id", 1)])
+    .select()
     .execute()
-    .await?;
+    .await;
+
+// INSERT multiple rows
+let response = client.from("cities")
+    .insert_many(vec![
+        row![("name", "Tokyo"), ("country_id", 1)],
+        row![("name", "Osaka"), ("country_id", 1)],
+    ])
+    .select()
+    .execute()
+    .await;
 
 // UPDATE
 let response = client.from("cities")
-    .update(row! { "name" => "New Tokyo" })
+    .update(row![("name", "New Tokyo")])
     .eq("id", 1)
+    .select()
     .execute()
-    .await?;
+    .await;
 
 // DELETE
 let response = client.from("cities")
     .delete()
     .eq("id", 1)
+    .select()
     .execute()
-    .await?;
+    .await;
 
 // UPSERT (insert or update on conflict)
 let response = client.from("cities")
-    .upsert(vec![
-        row! { "id" => 1, "name" => "Updated City", "country_id" => 1 },
-    ])
+    .upsert(row![("id", 1), ("name", "Updated City"), ("country_id", 1)])
+    .select()
     .execute()
-    .await?;
+    .await;
+
+// UPSERT with ignore_duplicates (ON CONFLICT DO NOTHING)
+let response = client.from("cities")
+    .upsert(row![("name", "Existing City"), ("country_id", 1)])
+    .ignore_duplicates()
+    .select()
+    .execute()
+    .await;
+
+// SELECT with count
+let response = client.from("cities")
+    .select("*")
+    .count()
+    .execute()
+    .await;
+println!("Count: {:?}", response.count);
+
+// SELECT single row
+let response = client.from("cities")
+    .select("*")
+    .eq("name", "Tokyo")
+    .single()
+    .execute()
+    .await;
+let city = response.into_single()?;
 
 // RPC (stored procedures)
-let response = client.rpc("get_cities_by_country", serde_json::json!({"cid": 1}))?
+let response = client.rpc("get_cities_by_country", json!({"cid": 1}))?
     .execute()
-    .await?;
+    .await;
 
 // RPC dry-run (rollback after execution)
-let response = client.rpc("mutating_function", serde_json::json!({"arg": 1}))?
+let response = client.rpc("mutating_function", json!({"arg": 1}))?
     .rollback()
     .execute()
-    .await?;
+    .await;
 
 // CSV response format
 let csv_string: String = client.from("cities")
@@ -184,15 +223,32 @@ let response = client.from("cities")
     .select("*")
     .count_option(CountOption::Estimated)
     .execute()
-    .await?;
+    .await;
+
+// HEAD mode (count only, no row data)
+let response = client.from("cities")
+    .select("*")
+    .count()
+    .head()
+    .execute()
+    .await;
+println!("Count: {:?}", response.count);
+
+// EXPLAIN query plan
+let response = client.from("cities")
+    .select("*")
+    .explain()
+    .execute()
+    .await;
 ```
 
 ### Derive Macros
 
 ```rust
 use supabase_client::prelude::*;
+use serde::Deserialize;
 
-#[derive(Table, serde::Deserialize, Debug)]
+#[derive(Table, Deserialize, Debug)]
 #[table(name = "cities")]
 struct City {
     #[primary_key(auto_generate)]
@@ -207,16 +263,14 @@ let response = client.from_typed::<City>()
     .select()
     .eq("name", "Tokyo")
     .execute()
-    .await?;
+    .await;
+let cities: Vec<City> = response.into_result()?;
 
-let cities: Vec<City> = response.data;
-
-// Typed INSERT
-let city = City { id: 0, name: "Berlin".into(), country_id: 2 };
-let response = client.from_typed::<City>()
-    .insert(vec![city])
+// Typed RPC
+let response = client.rpc_typed::<City>("get_cities_by_country", json!({"cid": 1}))?
     .execute()
-    .await?;
+    .await;
+let cities: Vec<City> = response.into_result()?;
 ```
 
 ### Auth (GoTrue)
@@ -251,7 +305,7 @@ tokio::spawn(async move {
 });
 
 // Auto-refresh tokens in the background
-auth.start_auto_refresh(AutoRefreshConfig::default()).await;
+auth.start_auto_refresh();
 
 // Extract JWT claims without a network call
 let claims = AuthClient::get_claims(&session.access_token)?;
@@ -466,11 +520,10 @@ let public_url = file_api.get_public_url("photo.png");
 
 // File metadata
 let info = file_api.info("photo.png").await?;
-println!("Size: {} bytes, Type: {:?}", info.size.unwrap_or(0), info.content_type);
+println!("Size: {:?} bytes, Type: {:?}", info.size, info.content_type);
 
 // Check if file exists
 let exists = file_api.exists("photo.png").await?;
-assert!(exists);
 
 // Image transforms (resize, quality, format)
 let transform = TransformOptions::new()
@@ -539,6 +592,33 @@ response.text()?;            // UTF-8 string
 response.bytes();            // &[u8]
 response.content_type();     // Option<&str>
 response.header("x-foo");   // case-insensitive lookup
+```
+
+## Examples
+
+Runnable examples are provided in `crates/supabase-client/examples/`. Each example works against a local Supabase instance (`supabase start`).
+
+```bash
+# Query basics: SELECT, INSERT, UPDATE, DELETE, UPSERT with filters
+cargo run --example query_basics -p supabase-client
+
+# Typed queries with #[derive(Table)]
+cargo run --example typed_queries -p supabase-client
+
+# Advanced: CSV output, count options, RPC rollback, EXPLAIN, HEAD
+cargo run --example advanced_queries -p supabase-client
+
+# Authentication: sign-up, sign-in, sessions, JWT claims, admin ops
+cargo run --example auth -p supabase-client --features auth
+
+# Realtime: broadcast, postgres changes, presence
+cargo run --example realtime -p supabase-client --features realtime
+
+# Storage: bucket CRUD, upload/download, signed URLs, image transforms
+cargo run --example storage -p supabase-client --features storage
+
+# Edge Functions: JSON/binary invocation, custom headers
+cargo run --example functions -p supabase-client --features functions
 ```
 
 ## Architecture
