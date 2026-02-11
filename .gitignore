@@ -1,0 +1,17 @@
+# Build
+/target/
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude / local tools
+.claude/
+.fastembed_cache/
+
+# Environment
+.env
+.env.*

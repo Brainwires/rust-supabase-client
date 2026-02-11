@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/supabase-client",
+    "crates/supabase-client-core",
+    "crates/supabase-client-query",
+    "crates/supabase-client-derive",
+    "crates/supabase-client-auth",
+    "crates/supabase-client-realtime",
+    "crates/supabase-client-storage",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Internal crates
+supabase-client-core = { path = "crates/supabase-client-core" }
+supabase-client-query = { path = "crates/supabase-client-query" }
+supabase-client-derive = { path = "crates/supabase-client-derive" }
+supabase-client-auth = { path = "crates/supabase-client-auth" }
+supabase-client-realtime = { path = "crates/supabase-client-realtime" }
+supabase-client-storage = { path = "crates/supabase-client-storage" }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "json", "chrono", "uuid"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+
+# Types
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Proc macros
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"

@@ -1,0 +1,32 @@
+[package]
+name = "supabase-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Supabase-like fluent API over sqlx for PostgreSQL"
+
+[features]
+default = ["query", "derive"]
+query = ["dep:supabase-client-query"]
+derive = ["dep:supabase-client-derive"]
+auth = ["dep:supabase-client-auth"]
+realtime = ["dep:supabase-client-realtime"]
+storage = ["dep:supabase-client-storage"]
+full = ["query", "derive", "auth", "realtime", "storage"]
+
+[dependencies]
+supabase-client-core.workspace = true
+supabase-client-query = { workspace = true, optional = true }
+supabase-client-derive = { workspace = true, optional = true }
+supabase-client-auth = { workspace = true, optional = true }
+supabase-client-realtime = { workspace = true, optional = true }
+supabase-client-storage = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
