@@ -16,6 +16,7 @@ pub struct RpcBuilder {
     schema: String,
     function: String,
     args: JsonValue,
+    rollback: bool,
     #[cfg(feature = "direct-sql")]
     params: ParamStore,
     #[cfg(feature = "direct-sql")]
@@ -70,11 +71,19 @@ impl RpcBuilder {
             schema,
             function,
             args,
+            rollback: false,
             #[cfg(feature = "direct-sql")]
             params,
             #[cfg(feature = "direct-sql")]
             named_params,
         })
+    }
+
+    /// Run the RPC call inside a transaction that is rolled back.
+    /// Useful for testing or dry-run scenarios.
+    pub fn rollback(mut self) -> Self {
+        self.rollback = true;
+        self
     }
 
     #[cfg(feature = "direct-sql")]
@@ -110,7 +119,7 @@ impl RpcBuilder {
     pub async fn execute(self) -> SupabaseResponse<Row> {
         let QueryBackend::Rest { ref http, ref base_url, ref api_key, ref schema } = self.backend;
         let (url, headers, body) = crate::postgrest::build_postgrest_rpc(
-            base_url, &self.function, &self.args,
+            base_url, &self.function, &self.args, self.rollback,
         );
         let parts = SqlParts::new(SqlOperation::Select, &self.schema, &self.function);
         crate::postgrest_execute::execute_rest(
@@ -127,7 +136,7 @@ impl RpcBuilder {
         match &self.backend {
             QueryBackend::Rest { http, base_url, api_key, schema } => {
                 let (url, headers, body) = crate::postgrest::build_postgrest_rpc(
-                    base_url, &self.function, &self.args,
+                    base_url, &self.function, &self.args, self.rollback,
                 );
                 let parts = SqlParts::new(SqlOperation::Select, &self.schema, &self.function);
                 crate::postgrest_execute::execute_rest(
@@ -194,6 +203,7 @@ pub struct TypedRpcBuilder<T> {
     schema: String,
     function: String,
     args: JsonValue,
+    rollback: bool,
     #[cfg(feature = "direct-sql")]
     params: ParamStore,
     #[cfg(feature = "direct-sql")]
@@ -252,12 +262,19 @@ where
             schema,
             function,
             args,
+            rollback: false,
             #[cfg(feature = "direct-sql")]
             params,
             #[cfg(feature = "direct-sql")]
             named_params,
             _marker: PhantomData,
         })
+    }
+
+    /// Run the RPC call inside a transaction that is rolled back.
+    pub fn rollback(mut self) -> Self {
+        self.rollback = true;
+        self
     }
 
     #[cfg(feature = "direct-sql")]
@@ -296,7 +313,7 @@ where
     pub async fn execute(self) -> SupabaseResponse<T> {
         let QueryBackend::Rest { ref http, ref base_url, ref api_key, ref schema } = self.backend;
         let (url, headers, body) = crate::postgrest::build_postgrest_rpc(
-            base_url, &self.function, &self.args,
+            base_url, &self.function, &self.args, self.rollback,
         );
         let parts = SqlParts::new(SqlOperation::Select, &self.schema, &self.function);
         crate::postgrest_execute::execute_rest(
@@ -316,7 +333,7 @@ where
         match &self.backend {
             QueryBackend::Rest { http, base_url, api_key, schema } => {
                 let (url, headers, body) = crate::postgrest::build_postgrest_rpc(
-                    base_url, &self.function, &self.args,
+                    base_url, &self.function, &self.args, self.rollback,
                 );
                 let parts = SqlParts::new(SqlOperation::Select, &self.schema, &self.function);
                 crate::postgrest_execute::execute_rest(

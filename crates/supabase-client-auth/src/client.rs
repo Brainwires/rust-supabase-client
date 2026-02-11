@@ -1222,6 +1222,150 @@ impl AuthClient {
         Ok(userinfo)
     }
 
+    // ─── JWT Claims ────────────────────────────────────────────
+
+    /// Extract claims from a JWT access token without verifying the signature.
+    ///
+    /// This is a client-side decode only — it does NOT validate the token.
+    /// Useful for reading `sub`, `exp`, `role`, `email`, custom claims, etc.
+    ///
+    /// Returns the payload as a `serde_json::Value` object.
+    pub fn get_claims(token: &str) -> Result<JsonValue, AuthError> {
+        let parts: Vec<&str> = token.split('.').collect();
+        if parts.len() != 3 {
+            return Err(AuthError::InvalidToken(
+                "JWT must have 3 parts separated by '.'".to_string(),
+            ));
+        }
+
+        let payload_b64 = parts[1];
+        let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload_b64)
+            .map_err(|e| AuthError::InvalidToken(format!("Invalid base64 in JWT payload: {}", e)))?;
+
+        serde_json::from_slice(&decoded)
+            .map_err(|e| AuthError::InvalidToken(format!("Invalid JSON in JWT payload: {}", e)))
+    }
+
+    // ─── Captcha Support ──────────────────────────────────────
+
+    /// Sign up with email, password, optional user data, and optional captcha token.
+    ///
+    /// This is the full-featured sign-up method that consolidates email sign-up
+    /// with all optional parameters. The captcha token is sent as
+    /// `gotrue_meta_security.captcha_token` in the request body.
+    pub async fn sign_up_with_email_full(
+        &self,
+        email: &str,
+        password: &str,
+        data: Option<JsonValue>,
+        captcha_token: Option<&str>,
+    ) -> Result<AuthResponse, AuthError> {
+        let mut body = json!({
+            "email": email,
+            "password": password,
+        });
+        if let Some(data) = data {
+            body["data"] = data;
+        }
+        if let Some(token) = captcha_token {
+            body["gotrue_meta_security"] = json!({ "captcha_token": token });
+        }
+
+        let url = self.url("/signup");
+        let resp = self.inner.http.post(url).json(&body).send().await?;
+        let auth_resp = self.handle_auth_response(resp).await?;
+        if let Some(session) = &auth_resp.session {
+            self.store_session(session, AuthChangeEvent::SignedIn).await;
+        }
+        Ok(auth_resp)
+    }
+
+    /// Sign in with email and password, with an optional captcha token.
+    pub async fn sign_in_with_password_email_captcha(
+        &self,
+        email: &str,
+        password: &str,
+        captcha_token: Option<&str>,
+    ) -> Result<Session, AuthError> {
+        let mut body = json!({
+            "email": email,
+            "password": password,
+        });
+        if let Some(token) = captcha_token {
+            body["gotrue_meta_security"] = json!({ "captcha_token": token });
+        }
+
+        let url = self.url("/token?grant_type=password");
+        let resp = self.inner.http.post(url).json(&body).send().await?;
+        let session = self.handle_session_response(resp).await?;
+        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        Ok(session)
+    }
+
+    /// Send a magic link / OTP to an email, with an optional captcha token.
+    pub async fn sign_in_with_otp_email_captcha(
+        &self,
+        email: &str,
+        captcha_token: Option<&str>,
+    ) -> Result<(), AuthError> {
+        let mut body = json!({
+            "email": email,
+        });
+        if let Some(token) = captcha_token {
+            body["gotrue_meta_security"] = json!({ "captcha_token": token });
+        }
+
+        let url = self.url("/otp");
+        let resp = self.inner.http.post(url).json(&body).send().await?;
+        self.handle_empty_response(resp).await
+    }
+
+    /// Send an OTP to a phone number, with an optional captcha token.
+    pub async fn sign_in_with_otp_phone_captcha(
+        &self,
+        phone: &str,
+        channel: OtpChannel,
+        captcha_token: Option<&str>,
+    ) -> Result<(), AuthError> {
+        let mut body = json!({
+            "phone": phone,
+            "channel": channel,
+        });
+        if let Some(token) = captcha_token {
+            body["gotrue_meta_security"] = json!({ "captcha_token": token });
+        }
+
+        let url = self.url("/otp");
+        let resp = self.inner.http.post(url).json(&body).send().await?;
+        self.handle_empty_response(resp).await
+    }
+
+    // ─── Web3 Auth ────────────────────────────────────────────
+
+    /// Sign in with a Web3 wallet (Ethereum or Solana).
+    ///
+    /// POST to `/token?grant_type=web3` with chain, address, message, signature, nonce.
+    /// Stores the session and emits `SignedIn`.
+    pub async fn sign_in_with_web3(
+        &self,
+        params: Web3SignInParams,
+    ) -> Result<Session, AuthError> {
+        let body = json!({
+            "chain": params.chain,
+            "address": params.address,
+            "message": params.message,
+            "signature": params.signature,
+            "nonce": params.nonce,
+        });
+
+        let url = self.url("/token?grant_type=web3");
+        let resp = self.inner.http.post(url).json(&body).send().await?;
+        let session = self.handle_session_response(resp).await?;
+        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        Ok(session)
+    }
+
     // ─── Internal Helpers ──────────────────────────────────────
 
     /// Store session and emit an auth state change event.
@@ -1706,5 +1850,86 @@ mod tests {
                 is_anonymous: None,
             },
         }
+    }
+
+    // ─── get_claims Tests ───────────────────────────────────
+
+    #[test]
+    fn test_get_claims_valid_jwt() {
+        // Create a minimal JWT: header.payload.signature
+        // payload = {"sub":"user-123","email":"test@example.com","role":"authenticated"}
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            r#"{"sub":"user-123","email":"test@example.com","role":"authenticated"}"#
+        );
+        let token = format!("eyJhbGciOiJIUzI1NiJ9.{}.fake-signature", payload);
+        let claims = AuthClient::get_claims(&token).unwrap();
+        assert_eq!(claims["sub"], "user-123");
+        assert_eq!(claims["email"], "test@example.com");
+        assert_eq!(claims["role"], "authenticated");
+    }
+
+    #[test]
+    fn test_get_claims_invalid_format() {
+        let err = AuthClient::get_claims("not-a-jwt").unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken(_)));
+    }
+
+    #[test]
+    fn test_get_claims_invalid_base64() {
+        let err = AuthClient::get_claims("a.!!!invalid!!!.c").unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken(_)));
+    }
+
+    #[test]
+    fn test_get_claims_invalid_json() {
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("not json");
+        let token = format!("a.{}.c", payload);
+        let err = AuthClient::get_claims(&token).unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken(_)));
+    }
+
+    // ─── Web3 Type Tests ────────────────────────────────────
+
+    #[test]
+    fn test_web3_chain_serialization() {
+        assert_eq!(serde_json::to_string(&Web3Chain::Ethereum).unwrap(), "\"ethereum\"");
+        assert_eq!(serde_json::to_string(&Web3Chain::Solana).unwrap(), "\"solana\"");
+    }
+
+    #[test]
+    fn test_web3_chain_display() {
+        assert_eq!(Web3Chain::Ethereum.to_string(), "ethereum");
+        assert_eq!(Web3Chain::Solana.to_string(), "solana");
+    }
+
+    #[test]
+    fn test_web3_sign_in_params() {
+        let params = Web3SignInParams::new(
+            Web3Chain::Ethereum,
+            "0x1234567890abcdef",
+            "Sign this message",
+            "0xsignature",
+            "random-nonce",
+        );
+        assert_eq!(params.chain, Web3Chain::Ethereum);
+        assert_eq!(params.address, "0x1234567890abcdef");
+        let json = serde_json::to_value(&params).unwrap();
+        assert_eq!(json["chain"], "ethereum");
+        assert_eq!(json["address"], "0x1234567890abcdef");
+    }
+
+    // ─── Captcha Body Structure Tests ───────────────────────
+
+    #[test]
+    fn test_captcha_body_structure() {
+        let mut body = json!({
+            "email": "test@example.com",
+            "password": "pass",
+        });
+        let token = "captcha-abc-123";
+        body["gotrue_meta_security"] = json!({ "captcha_token": token });
+
+        assert_eq!(body["gotrue_meta_security"]["captcha_token"], "captcha-abc-123");
+        assert_eq!(body["email"], "test@example.com");
     }
 }

@@ -69,6 +69,10 @@ pub enum AuthError {
     /// URL parsing error.
     #[error("URL parse error: {0}")]
     UrlParse(#[from] url::ParseError),
+
+    /// Invalid or malformed JWT token.
+    #[error("Invalid token: {0}")]
+    InvalidToken(String),
 }
 
 /// Known GoTrue error codes for programmatic matching.

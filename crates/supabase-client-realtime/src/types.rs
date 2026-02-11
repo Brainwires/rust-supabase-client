@@ -256,6 +256,8 @@ pub struct RealtimeConfig {
     pub subscribe_timeout: Duration,
     /// Reconnection backoff intervals.
     pub reconnect: ReconnectConfig,
+    /// Custom headers to include in the WebSocket handshake request.
+    pub headers: HashMap<String, String>,
 }
 
 impl RealtimeConfig {
@@ -266,7 +268,14 @@ impl RealtimeConfig {
             heartbeat_interval: Duration::from_secs(25),
             subscribe_timeout: Duration::from_secs(10),
             reconnect: ReconnectConfig::default(),
+            headers: HashMap::new(),
         }
+    }
+
+    /// Set custom headers for the WebSocket handshake.
+    pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
+        self.headers = headers;
+        self
     }
 }
 

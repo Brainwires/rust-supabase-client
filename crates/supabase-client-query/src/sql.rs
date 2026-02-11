@@ -403,6 +403,10 @@ pub enum CountOption {
     None,
     /// Exact count via COUNT(*).
     Exact,
+    /// Planned count from query planner (fast, approximate).
+    Planned,
+    /// Estimated count using statistics (fast, approximate).
+    Estimated,
 }
 
 // --- SQL Parts ---

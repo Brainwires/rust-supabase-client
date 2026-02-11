@@ -39,7 +39,8 @@ pub mod prelude {
     pub use supabase_client_query::{
         Filterable, Modifiable, OrderDirection, IsValue, TextSearchType,
         SupabaseClientQueryExt, Table,
-        ExplainOptions, ExplainFormat,
+        ExplainOptions, ExplainFormat, CountOption,
+        CsvSelectBuilder, GeoJsonSelectBuilder,
     };
 
     #[cfg(feature = "derive")]
@@ -74,6 +75,8 @@ pub mod prelude {
         PkceCodeVerifier, PkceCodeChallenge, PkcePair,
         OAuthTokenResponse, OpenIdConfiguration, JwksResponse, Jwk,
         OAuthAuthorizeUrlParams, OAuthTokenExchangeParams,
+        // Web3 auth
+        Web3Chain, Web3SignInParams,
     };
 
     #[cfg(feature = "realtime")]

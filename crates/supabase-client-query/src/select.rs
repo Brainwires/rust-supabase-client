@@ -5,7 +5,9 @@ use serde::de::DeserializeOwned;
 use supabase_client_core::SupabaseResponse;
 
 use crate::backend::QueryBackend;
+use crate::csv_select::CsvSelectBuilder;
 use crate::filter::Filterable;
+use crate::geojson_select::GeoJsonSelectBuilder;
 use crate::modifier::Modifiable;
 use crate::sql::{ExplainOptions, FilterCondition, ParamStore, SqlParts};
 
@@ -55,6 +57,26 @@ impl<T> SelectBuilder<T> {
     pub fn head(mut self) -> Self {
         self.parts.head = true;
         self
+    }
+
+    /// Switch to CSV output mode. Returns a `CsvSelectBuilder` that
+    /// executes the query and returns the raw CSV text.
+    pub fn csv(self) -> CsvSelectBuilder {
+        CsvSelectBuilder {
+            backend: self.backend,
+            parts: self.parts,
+            params: self.params,
+        }
+    }
+
+    /// Switch to GeoJSON output mode. Returns a `GeoJsonSelectBuilder` that
+    /// executes the query and returns a `serde_json::Value` (GeoJSON FeatureCollection).
+    pub fn geojson(self) -> GeoJsonSelectBuilder {
+        GeoJsonSelectBuilder {
+            backend: self.backend,
+            parts: self.parts,
+            params: self.params,
+        }
     }
 }
 

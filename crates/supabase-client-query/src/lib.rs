@@ -7,6 +7,8 @@ pub mod postgrest;
 pub mod postgrest_execute;
 pub mod builder;
 pub mod select;
+pub mod csv_select;
+pub mod geojson_select;
 pub mod insert;
 pub mod update;
 pub mod delete;
@@ -30,9 +32,11 @@ pub use update::UpdateBuilder;
 pub use delete::DeleteBuilder;
 pub use upsert::UpsertBuilder;
 pub use rpc::{RpcBuilder, TypedRpcBuilder};
+pub use csv_select::CsvSelectBuilder;
+pub use geojson_select::GeoJsonSelectBuilder;
 
 // Re-export Phase 10 types for convenience
-pub use sql::{ExplainOptions, ExplainFormat};
+pub use sql::{ExplainOptions, ExplainFormat, CountOption};
 
 use std::sync::Arc;
 use serde::de::DeserializeOwned;

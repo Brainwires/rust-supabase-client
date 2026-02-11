@@ -84,14 +84,21 @@ pub fn build_postgrest_select(
         );
     }
 
-    // Count
-    if parts.count == CountOption::Exact {
-        headers.insert("Prefer", HeaderValue::from_static("count=exact"));
-    }
-
-    // Head mode
-    if parts.head {
-        headers.insert("Prefer", HeaderValue::from_static("count=exact"));
+    // Prefer header (compose count + head)
+    {
+        let mut prefer_parts = Vec::new();
+        if parts.head {
+            // Head mode always implies count=exact
+            prefer_parts.push("count=exact".to_string());
+        } else if let Some(count_val) = count_option_prefer(parts.count) {
+            prefer_parts.push(count_val.to_string());
+        }
+        if !prefer_parts.is_empty() {
+            headers.insert(
+                "Prefer",
+                HeaderValue::from_str(&prefer_parts.join(",")).unwrap(),
+            );
+        }
     }
 
     // Explain
@@ -128,18 +135,21 @@ pub fn build_postgrest_insert(
 
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
 
-    // Return representation if RETURNING is requested
-    if parts.returning.is_some() {
-        headers.insert("Prefer", HeaderValue::from_static("return=representation"));
-    } else {
-        headers.insert("Prefer", HeaderValue::from_static("return=minimal"));
-    }
-
-    // Select columns for response
-    if let Some(ref ret) = parts.returning {
-        if ret != "*" {
-            // Specific columns requested in RETURNING
+    // Prefer header (compose return + count)
+    {
+        let mut prefer_parts = Vec::new();
+        if parts.returning.is_some() {
+            prefer_parts.push("return=representation");
+        } else {
+            prefer_parts.push("return=minimal");
         }
+        if let Some(count_val) = count_option_prefer(parts.count) {
+            prefer_parts.push(count_val);
+        }
+        headers.insert(
+            "Prefer",
+            HeaderValue::from_str(&prefer_parts.join(",")).unwrap(),
+        );
     }
 
     // Schema override
@@ -169,10 +179,21 @@ pub fn build_postgrest_update(
 
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
 
-    if parts.returning.is_some() {
-        headers.insert("Prefer", HeaderValue::from_static("return=representation"));
-    } else {
-        headers.insert("Prefer", HeaderValue::from_static("return=minimal"));
+    // Prefer header (compose return + count)
+    {
+        let mut prefer_parts = Vec::new();
+        if parts.returning.is_some() {
+            prefer_parts.push("return=representation");
+        } else {
+            prefer_parts.push("return=minimal");
+        }
+        if let Some(count_val) = count_option_prefer(parts.count) {
+            prefer_parts.push(count_val);
+        }
+        headers.insert(
+            "Prefer",
+            HeaderValue::from_str(&prefer_parts.join(",")).unwrap(),
+        );
     }
 
     // Schema override
@@ -208,10 +229,21 @@ pub fn build_postgrest_delete(
     let mut headers = HeaderMap::new();
     let mut query_params = Vec::new();
 
-    if parts.returning.is_some() {
-        headers.insert("Prefer", HeaderValue::from_static("return=representation"));
-    } else {
-        headers.insert("Prefer", HeaderValue::from_static("return=minimal"));
+    // Prefer header (compose return + count)
+    {
+        let mut prefer_parts = Vec::new();
+        if parts.returning.is_some() {
+            prefer_parts.push("return=representation");
+        } else {
+            prefer_parts.push("return=minimal");
+        }
+        if let Some(count_val) = count_option_prefer(parts.count) {
+            prefer_parts.push(count_val);
+        }
+        headers.insert(
+            "Prefer",
+            HeaderValue::from_str(&prefer_parts.join(",")).unwrap(),
+        );
     }
 
     // Schema override
@@ -245,8 +277,8 @@ pub fn build_postgrest_upsert(
 
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
 
-    // Upsert resolution preference
-    let mut prefer_parts = Vec::new();
+    // Upsert resolution preference (compose resolution + return + count)
+    let mut prefer_parts: Vec<&str> = Vec::new();
 
     if parts.ignore_duplicates {
         prefer_parts.push("resolution=ignore-duplicates");
@@ -258,6 +290,12 @@ pub fn build_postgrest_upsert(
         prefer_parts.push("return=representation");
     } else {
         prefer_parts.push("return=minimal");
+    }
+
+    // We need to handle count separately since count_option_prefer returns &'static str
+    let count_str = count_option_prefer(parts.count);
+    if let Some(cv) = count_str {
+        prefer_parts.push(cv);
     }
 
     headers.insert(
@@ -294,10 +332,15 @@ pub fn build_postgrest_rpc(
     base_url: &str,
     function: &str,
     args: &JsonValue,
+    rollback: bool,
 ) -> (String, HeaderMap, JsonValue) {
     let url = format!("{}/rest/v1/rpc/{}", base_url.trim_end_matches('/'), function);
     let mut headers = HeaderMap::new();
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
+
+    if rollback {
+        headers.insert("Prefer", HeaderValue::from_static("tx=rollback"));
+    }
 
     let body = if args.is_null() {
         JsonValue::Object(serde_json::Map::new())
@@ -309,6 +352,16 @@ pub fn build_postgrest_rpc(
 }
 
 // ─── Internal Helpers ──────────────────────────────────────
+
+/// Convert a CountOption to its PostgREST Prefer header value.
+fn count_option_prefer(option: CountOption) -> Option<&'static str> {
+    match option {
+        CountOption::None => None,
+        CountOption::Exact => Some("count=exact"),
+        CountOption::Planned => Some("count=planned"),
+        CountOption::Estimated => Some("count=estimated"),
+    }
+}
 
 /// Render a SqlParam value as a PostgREST string.
 pub fn render_param_value(param: &SqlParam) -> String {
@@ -985,7 +1038,7 @@ mod tests {
     #[test]
     fn test_rpc_simple() {
         let args = serde_json::json!({"name": "Auckland"});
-        let (url, headers, body) = build_postgrest_rpc("http://localhost:64321", "get_city", &args);
+        let (url, headers, body) = build_postgrest_rpc("http://localhost:64321", "get_city", &args, false);
         assert_eq!(url, "http://localhost:64321/rest/v1/rpc/get_city");
         assert_eq!(headers.get("Content-Type").unwrap(), "application/json");
         assert_eq!(body["name"], "Auckland");
@@ -994,9 +1047,23 @@ mod tests {
     #[test]
     fn test_rpc_no_args() {
         let args = serde_json::json!(null);
-        let (_, _, body) = build_postgrest_rpc("http://localhost:64321", "get_all", &args);
+        let (_, _, body) = build_postgrest_rpc("http://localhost:64321", "get_all", &args, false);
         assert!(body.is_object());
         assert!(body.as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_rpc_rollback() {
+        let args = serde_json::json!({"name": "Auckland"});
+        let (_, headers, _) = build_postgrest_rpc("http://localhost:64321", "get_city", &args, true);
+        assert_eq!(headers.get("Prefer").unwrap(), "tx=rollback");
+    }
+
+    #[test]
+    fn test_rpc_no_rollback_no_prefer() {
+        let args = serde_json::json!({"name": "Auckland"});
+        let (_, headers, _) = build_postgrest_rpc("http://localhost:64321", "get_city", &args, false);
+        assert!(headers.get("Prefer").is_none());
     }
 
     // ─── Param Value Rendering ──────────────────────────────
@@ -1031,6 +1098,91 @@ mod tests {
             render_param_value(&SqlParam::Uuid(uuid)),
             "550e8400-e29b-41d4-a716-446655440000"
         );
+    }
+
+    // ─── CountOption Tests ──────────────────────────────────
+
+    #[test]
+    fn test_select_count_planned() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.count = CountOption::Planned;
+        let params = ParamStore::new();
+        let (_, headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(headers.get("Prefer").unwrap(), "count=planned");
+    }
+
+    #[test]
+    fn test_select_count_estimated() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.count = CountOption::Estimated;
+        let params = ParamStore::new();
+        let (_, headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(headers.get("Prefer").unwrap(), "count=estimated");
+    }
+
+    #[test]
+    fn test_select_count_and_head_compose() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.count = CountOption::Exact;
+        parts.head = true;
+        let params = ParamStore::new();
+        let (_, headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        // Head mode forces count=exact
+        let prefer = headers.get("Prefer").unwrap().to_str().unwrap();
+        assert!(prefer.contains("count=exact"));
+    }
+
+    #[test]
+    fn test_insert_return_and_count_compose() {
+        let mut parts = SqlParts::new(SqlOperation::Insert, "public", "cities");
+        parts.set_clauses = vec![("name".to_string(), 1)];
+        parts.returning = Some("*".to_string());
+        parts.count = CountOption::Exact;
+        let params = make_params(vec![SqlParam::Text("Auckland".to_string())]);
+        let (_, headers, _) = build_postgrest_insert("http://localhost:64321", &parts, &params).unwrap();
+        let prefer = headers.get("Prefer").unwrap().to_str().unwrap();
+        assert!(prefer.contains("return=representation"));
+        assert!(prefer.contains("count=exact"));
+    }
+
+    #[test]
+    fn test_update_return_and_count_compose() {
+        let mut parts = SqlParts::new(SqlOperation::Update, "public", "cities");
+        parts.set_clauses = vec![("name".to_string(), 1)];
+        parts.returning = Some("*".to_string());
+        parts.count = CountOption::Planned;
+        let params = make_params(vec![SqlParam::Text("Auckland".to_string())]);
+        let (_, headers, _) = build_postgrest_update("http://localhost:64321", &parts, &params).unwrap();
+        let prefer = headers.get("Prefer").unwrap().to_str().unwrap();
+        assert!(prefer.contains("return=representation"));
+        assert!(prefer.contains("count=planned"));
+    }
+
+    #[test]
+    fn test_delete_return_and_count_compose() {
+        let mut parts = SqlParts::new(SqlOperation::Delete, "public", "cities");
+        parts.returning = Some("*".to_string());
+        parts.count = CountOption::Estimated;
+        let params = ParamStore::new();
+        let (_, headers) = build_postgrest_delete("http://localhost:64321", &parts, &params).unwrap();
+        let prefer = headers.get("Prefer").unwrap().to_str().unwrap();
+        assert!(prefer.contains("return=representation"));
+        assert!(prefer.contains("count=estimated"));
+    }
+
+    #[test]
+    fn test_upsert_with_count() {
+        let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "cities");
+        parts.set_clauses = vec![("id".to_string(), 1), ("name".to_string(), 2)];
+        parts.conflict_columns = vec!["id".to_string()];
+        parts.returning = Some("*".to_string());
+        parts.count = CountOption::Exact;
+        let params = make_params(vec![SqlParam::I32(1), SqlParam::Text("Auckland".to_string())]);
+        let (_, headers, _) = build_postgrest_upsert("http://localhost:64321", &parts, &params).unwrap();
+        let prefer = headers.get("Prefer").unwrap().to_str().unwrap();
+        assert!(prefer.contains("resolution=merge-duplicates"));
+        assert!(prefer.contains("return=representation"));
+        assert!(prefer.contains("count=exact"));
     }
 
     #[test]

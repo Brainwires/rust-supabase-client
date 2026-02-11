@@ -70,4 +70,10 @@ pub trait Modifiable: Sized {
         self.parts_mut().count = CountOption::Exact;
         self
     }
+
+    /// Request a row count with a specific counting strategy.
+    fn count_option(mut self, option: CountOption) -> Self {
+        self.parts_mut().count = option;
+        self
+    }
 }

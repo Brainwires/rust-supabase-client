@@ -195,7 +195,7 @@ fn build_response_from_operation<T>(data: Vec<T>, parts: &SqlParts) -> SupabaseR
         _ => StatusCode::Ok,
     };
 
-    let count = if parts.count == CountOption::Exact {
+    let count = if parts.count != CountOption::None {
         Some(data.len() as i64)
     } else {
         None

@@ -1,6 +1,6 @@
 # supabase-client
 
-[![Tests](https://img.shields.io/badge/tests-311%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-360%20passing-brightgreen)](#testing)
 [![Rust](https://img.shields.io/badge/rust-2021%20edition-orange)](https://www.rust-lang.org/)
 
 A Rust client for [Supabase](https://supabase.com/) with a fluent, Supabase JS-like API. Uses the **PostgREST REST API by default** — no database connection needed. Opt into direct PostgreSQL access via [sqlx](https://github.com/launchbadge/sqlx) with the `direct-sql` feature flag.
@@ -10,9 +10,11 @@ A Rust client for [Supabase](https://supabase.com/) with a fluent, Supabase JS-l
 **Query Builder** - Fluent API for SELECT, INSERT, UPDATE, DELETE, and UPSERT
 - 20+ filter methods (`eq`, `neq`, `gt`, `lt`, `like`, `ilike`, `in_`, `is`, `contains`, `overlaps`, `text_search`, `or_`, `not_`, ...)
 - Modifiers: `order`, `limit`, `range`, `single`, `count`, `head`, `explain`
+- Count options: `exact`, `planned`, `estimated` via `count_option()`
+- Response format overrides: `.csv()` (returns `String`) and `.geojson()` (returns `Value`)
 - Per-query `.schema()` override for multi-schema databases
 - Upsert with `ignore_duplicates()` for `ON CONFLICT DO NOTHING`
-- RPC/stored procedure calls with `rpc()` / `rpc_typed()`
+- RPC/stored procedure calls with `rpc()` / `rpc_typed()`, `.rollback()` for dry-run
 
 **Derive Macros** - `#[derive(Table)]` for type-safe queries
 - Automatic table/column name mapping
@@ -20,19 +22,26 @@ A Rust client for [Supabase](https://supabase.com/) with a fluent, Supabase JS-l
 - Auto-generate support for serial/identity columns
 
 **Auth (GoTrue)** - HTTP client for Supabase authentication
-- Email/password sign-up and sign-in
+- Email/password sign-up and sign-in (with optional captcha token)
 - Phone, OAuth, magic link, OTP, anonymous auth
+- Web3 wallet auth (Ethereum/Solana) via `sign_in_with_web3()`
+- SSO (SAML), ID token (external OIDC), identity linking/unlinking
 - Token refresh, password recovery, user management, `get_user_identities()`
-- Admin API (list/create/update/delete users)
+- JWT claims extraction via `get_claims()` (no network call)
+- Session state management: `get_session()`, `set_session()`, `on_auth_state_change()`
+- Auto-refresh with configurable intervals via `start_auto_refresh()`
+- Admin API (list/create/update/delete users, MFA factor management)
 - MFA: TOTP enroll/challenge/verify, phone factors, AAL detection
 - OAuth Server: consent management, grant listing/revocation, admin client CRUD
+- OAuth Client-Side Flow: PKCE, token exchange/refresh/revoke, OIDC discovery, JWKS
 
 **Realtime (WebSocket)** - Phoenix Channels v1.0.0 protocol
 - Postgres Changes: listen for INSERT, UPDATE, DELETE events with filters
 - Broadcast: send/receive ephemeral messages between clients
 - Presence: track and sync online user state
 - `set_auth()` to update token on existing connections
-- Automatic heartbeat and reconnection with exponential backoff
+- Custom headers for WebSocket handshake via `RealtimeConfig`
+- Automatic heartbeat and auto-reconnect with configurable backoff
 
 **Storage** - HTTP client for Supabase Object Storage
 - Bucket management: create, list, get, update, empty, delete
@@ -149,6 +158,33 @@ let response = client.from("cities")
 let response = client.rpc("get_cities_by_country", serde_json::json!({"cid": 1}))?
     .execute()
     .await?;
+
+// RPC dry-run (rollback after execution)
+let response = client.rpc("mutating_function", serde_json::json!({"arg": 1}))?
+    .rollback()
+    .execute()
+    .await?;
+
+// CSV response format
+let csv_string: String = client.from("cities")
+    .select("id, name")
+    .csv()
+    .execute()
+    .await?;
+
+// GeoJSON response format
+let geojson: serde_json::Value = client.from("locations")
+    .select("id, name, geom")
+    .geojson()
+    .execute()
+    .await?;
+
+// Count options (exact, planned, estimated)
+let response = client.from("cities")
+    .select("*")
+    .count_option(CountOption::Estimated)
+    .execute()
+    .await?;
 ```
 
 ### Derive Macros
@@ -201,6 +237,25 @@ println!("Access token: {}", session.access_token);
 
 // Get current user
 let user = auth.get_user(&session.access_token).await?;
+
+// Session state management
+auth.set_session(session.clone()).await;
+let current = auth.get_session().await; // Option<Session>
+
+// Listen for auth state changes
+let mut subscription = auth.on_auth_state_change();
+tokio::spawn(async move {
+    while let Some(change) = subscription.next().await {
+        println!("Auth event: {}", change.event);
+    }
+});
+
+// Auto-refresh tokens in the background
+auth.start_auto_refresh(AutoRefreshConfig::default()).await;
+
+// Extract JWT claims without a network call
+let claims = AuthClient::get_claims(&session.access_token)?;
+println!("User ID: {}", claims["sub"]);
 
 // Admin operations (requires service_role key)
 let admin = auth.admin();

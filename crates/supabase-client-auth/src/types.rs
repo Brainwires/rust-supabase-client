@@ -578,6 +578,51 @@ impl fmt::Display for OtpChannel {
     }
 }
 
+/// Blockchain type for Web3 wallet authentication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Web3Chain {
+    Ethereum,
+    Solana,
+}
+
+impl fmt::Display for Web3Chain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ethereum => write!(f, "ethereum"),
+            Self::Solana => write!(f, "solana"),
+        }
+    }
+}
+
+/// Parameters for signing in with a Web3 wallet.
+#[derive(Debug, Clone, Serialize)]
+pub struct Web3SignInParams {
+    pub chain: Web3Chain,
+    pub address: String,
+    pub message: String,
+    pub signature: String,
+    pub nonce: String,
+}
+
+impl Web3SignInParams {
+    pub fn new(
+        chain: Web3Chain,
+        address: impl Into<String>,
+        message: impl Into<String>,
+        signature: impl Into<String>,
+        nonce: impl Into<String>,
+    ) -> Self {
+        Self {
+            chain,
+            address: address.into(),
+            message: message.into(),
+            signature: signature.into(),
+            nonce: nonce.into(),
+        }
+    }
+}
+
 /// Scope for sign-out operations.
 ///
 /// Matches `SignOutScope` from Supabase JS.
