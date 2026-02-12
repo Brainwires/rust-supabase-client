@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/supabase-client",
+    "crates/supabase-client-sdk",
     "crates/supabase-client-core",
     "crates/supabase-client-query",
     "crates/supabase-client-derive",
@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 rust-version = "1.75"
@@ -23,14 +23,14 @@ authors = ["Brainwires"]
 
 [workspace.dependencies]
 # Internal crates
-supabase-client-core = { path = "crates/supabase-client-core", version = "0.2.0" }
-supabase-client-query = { path = "crates/supabase-client-query", version = "0.2.0" }
-supabase-client-derive = { path = "crates/supabase-client-derive", version = "0.2.0" }
-supabase-client-auth = { path = "crates/supabase-client-auth", version = "0.2.0" }
-supabase-client-realtime = { path = "crates/supabase-client-realtime", version = "0.2.0" }
-supabase-client-storage = { path = "crates/supabase-client-storage", version = "0.2.0" }
-supabase-client-functions = { path = "crates/supabase-client-functions", version = "0.2.0" }
-supabase-client-sdk = { path = "crates/supabase-client", version = "0.2.0" }
+supabase-client-core = { path = "crates/supabase-client-core", version = "0.2.1" }
+supabase-client-query = { path = "crates/supabase-client-query", version = "0.2.1" }
+supabase-client-derive = { path = "crates/supabase-client-derive", version = "0.2.1" }
+supabase-client-auth = { path = "crates/supabase-client-auth", version = "0.2.1" }
+supabase-client-realtime = { path = "crates/supabase-client-realtime", version = "0.2.1" }
+supabase-client-storage = { path = "crates/supabase-client-storage", version = "0.2.1" }
+supabase-client-functions = { path = "crates/supabase-client-functions", version = "0.2.1" }
+supabase-client-sdk = { path = "crates/supabase-client-sdk", version = "0.2.1" }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "json", "chrono", "uuid"] }

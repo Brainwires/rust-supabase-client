@@ -1920,7 +1920,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "supabase-client-auth"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64",
  "chrono",
@@ -1940,7 +1940,7 @@ dependencies = [
 
 [[package]]
 name = "supabase-client-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "futures-util",
@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "supabase-client-derive"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1969,7 +1969,7 @@ dependencies = [
 
 [[package]]
 name = "supabase-client-functions"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "reqwest",
  "serde",
@@ -1983,7 +1983,7 @@ dependencies = [
 
 [[package]]
 name = "supabase-client-query"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "reqwest",
@@ -2000,7 +2000,7 @@ dependencies = [
 
 [[package]]
 name = "supabase-client-realtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "futures-util",
@@ -2022,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "supabase-client-sdk"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "serde",
@@ -2041,7 +2041,7 @@ dependencies = [
 
 [[package]]
 name = "supabase-client-storage"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "reqwest",
  "serde",
@@ -2055,7 +2055,7 @@ dependencies = [
 
 [[package]]
 name = "supabase-client-wasm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "js-sys",
  "serde",

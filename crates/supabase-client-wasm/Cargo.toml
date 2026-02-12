@@ -8,6 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 description = "WASM/TypeScript bindings for supabase-client-sdk"
+readme = "README.md"
 keywords = ["supabase", "wasm", "typescript", "webassembly", "javascript"]
 categories = ["wasm", "web-programming"]
 
