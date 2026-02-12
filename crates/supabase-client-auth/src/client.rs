@@ -4,6 +4,7 @@ use base64::Engine;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Value as JsonValue};
 use sha2::{Digest, Sha256};
+use supabase_client_core::platform;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use url::Url;
 
@@ -26,7 +27,7 @@ struct AuthClientInner {
     // Session state management
     session: RwLock<Option<Session>>,
     event_tx: broadcast::Sender<AuthStateChange>,
-    auto_refresh_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    auto_refresh_handle: Mutex<Option<platform::SpawnHandle>>,
 }
 
 impl std::fmt::Debug for AuthClientInner {
@@ -158,7 +159,7 @@ impl AuthClient {
         self.stop_auto_refresh_inner();
 
         let inner = Arc::clone(&self.inner);
-        let handle = tokio::spawn(async move {
+        let handle = platform::spawn(async move {
             auto_refresh_loop(inner, config).await;
         });
 
@@ -173,9 +174,10 @@ impl AuthClient {
         self.stop_auto_refresh_inner();
     }
 
+    #[allow(unused_mut)]
     fn stop_auto_refresh_inner(&self) {
         if let Ok(mut guard) = self.inner.auto_refresh_handle.try_lock() {
-            if let Some(handle) = guard.take() {
+            if let Some(mut handle) = guard.take() {
                 handle.abort();
             }
         }
@@ -1483,7 +1485,7 @@ impl AuthClient {
 async fn auto_refresh_loop(inner: Arc<AuthClientInner>, config: AutoRefreshConfig) {
     let mut retries = 0u32;
     loop {
-        tokio::time::sleep(config.check_interval).await;
+        platform::sleep(config.check_interval).await;
 
         let session = inner.session.read().await.clone();
         if let Some(session) = session {

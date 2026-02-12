@@ -17,11 +17,21 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-tokio.workspace = true
-tokio-tungstenite.workspace = true
+tokio = { workspace = true }
 futures-util.workspace = true
 url.workspace = true
 chrono.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["rt", "time", "net", "macros"] }
+tokio-tungstenite.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { workspace = true, features = ["WebSocket", "MessageEvent", "ErrorEvent", "CloseEvent", "BinaryType"] }
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+gloo-timers.workspace = true
+js-sys.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

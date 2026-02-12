@@ -635,6 +635,7 @@ This project is a Cargo workspace with the following crates:
 | `supabase-client-realtime` | WebSocket realtime client via tokio-tungstenite |
 | `supabase-client-storage` | Object storage HTTP client via reqwest |
 | `supabase-client-functions` | Edge Functions HTTP client via reqwest |
+| `supabase-client-wasm` | WASM/JavaScript bindings via wasm-bindgen |
 
 Each sub-crate provides an extension trait on `SupabaseClient`:
 - `SupabaseClientQueryExt` - `.from()`, `.from_typed()`, `.rpc()`
@@ -642,6 +643,84 @@ Each sub-crate provides an extension trait on `SupabaseClient`:
 - `SupabaseClientRealtimeExt` - `.realtime()`
 - `SupabaseClientStorageExt` - `.storage()`
 - `SupabaseClientFunctionsExt` - `.functions()`
+
+## WASM / JavaScript / TypeScript
+
+All crates compile for `wasm32-unknown-unknown`. A dedicated `supabase-client-wasm` crate provides `#[wasm_bindgen]` bindings with auto-generated TypeScript declarations.
+
+### Building the WASM package
+
+```bash
+# Install wasm-pack if you haven't already
+cargo install wasm-pack
+
+# Build the WASM package (outputs to ./pkg)
+wasm-pack build crates/supabase-client-wasm --target web --out-dir ../../pkg
+```
+
+This generates:
+
+```
+pkg/
+  supabase_client_wasm.js         # JS glue code
+  supabase_client_wasm.d.ts       # TypeScript declarations
+  supabase_client_wasm_bg.wasm    # WASM binary
+  package.json                    # npm package metadata
+```
+
+### Usage from JavaScript/TypeScript
+
+```typescript
+import init, { WasmSupabaseClient } from './pkg/supabase_client_wasm.js';
+
+await init();
+
+const client = new WasmSupabaseClient(
+  'https://your-project.supabase.co',
+  'your-anon-key'
+);
+
+// Query
+const rows = await client.from_select('cities', '*');
+console.log(rows);
+
+// Insert
+await client.from_insert('cities', { name: 'Tokyo', country_id: 1 });
+
+// Update
+await client.from_update('cities', { name: 'New Tokyo' }, 'id', '1');
+
+// Delete
+await client.from_delete('cities', 'id', '1');
+
+// Auth
+const auth = client.auth();
+const session = await auth.sign_in_with_password('user@example.com', 'password');
+const user = await auth.get_user(session.access_token);
+
+// Realtime
+const realtime = client.realtime();
+await realtime.connect();
+
+// Storage
+const storage = client.storage();
+const buckets = await storage.list_buckets();
+
+// Edge Functions
+const functions = client.functions();
+const result = await functions.invoke('hello', { name: 'World' });
+```
+
+### Using in Rust WASM projects
+
+You can also use the SDK directly in Rust code compiled to WASM (without the JS bindings crate):
+
+```toml
+[dependencies]
+supabase-client-sdk = { version = "0.1.0", features = ["full"] }
+```
+
+The platform abstraction layer automatically uses browser-compatible APIs (`fetch` via `reqwest`, `web_sys::WebSocket`, `gloo-timers`) when targeting `wasm32-unknown-unknown`.
 
 ## Configuration
 

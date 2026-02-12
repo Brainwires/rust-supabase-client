@@ -28,6 +28,7 @@ pub mod client;
 pub mod error;
 pub(crate) mod presence;
 pub(crate) mod protocol;
+pub(crate) mod transport;
 pub mod types;
 
 // Re-exports for convenient access
