@@ -17,7 +17,7 @@ direct-sql = ["dep:sqlx"]
 
 [dependencies]
 sqlx = { workspace = true, optional = true }
-tokio.workspace = true
+tokio = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -26,3 +26,13 @@ chrono.workspace = true
 uuid.workspace = true
 reqwest.workspace = true
 url.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { workspace = true, features = ["rustls-tls"] }
+tokio = { workspace = true, features = ["rt", "time", "macros"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures.workspace = true
+gloo-timers.workspace = true
+getrandom.workspace = true
+futures-util.workspace = true

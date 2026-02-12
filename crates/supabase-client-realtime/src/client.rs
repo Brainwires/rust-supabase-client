@@ -3,11 +3,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::future::{select, Either};
 use serde_json::{json, Value};
+use supabase_client_core::platform;
 use tokio::sync::{broadcast, oneshot, Mutex, RwLock};
-use tokio_tungstenite::tungstenite::http::Request;
-use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, trace, warn};
 
 use crate::callback::Binding;
@@ -15,17 +14,11 @@ use crate::channel::{ChannelBuilder, RealtimeChannel};
 use crate::error::RealtimeError;
 use crate::presence;
 use crate::protocol::{self, RefCounter};
+use crate::transport::{self, WsMessage, WsRead, WsSink};
 use crate::types::{
     BroadcastConfig, ChannelState, JoinPayload, PhoenixMessage, PostgresChangePayload,
     PostgresChangesEvent, PresenceDiff, RealtimeConfig, SubscriptionStatus,
 };
-
-type WsSink = futures_util::stream::SplitSink<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-    Message,
->;
 
 // ── ClientSender ──────────────────────────────────────────────────────────────
 
@@ -41,7 +34,7 @@ impl ClientSender {
         &self,
         channel: RealtimeChannel,
         join_payload: JoinPayload,
-        timeout: Duration,
+        timeout_dur: Duration,
     ) -> Result<(), RealtimeError> {
         let topic = channel.topic().to_string();
 
@@ -80,7 +73,7 @@ impl ClientSender {
         self.send_message(join_msg).await?;
 
         // Wait for reply with timeout
-        let result = tokio::time::timeout(timeout, reply_rx).await;
+        let result = platform::timeout(timeout_dur, reply_rx).await;
 
         match result {
             Ok(Ok(reply)) => {
@@ -148,7 +141,7 @@ impl ClientSender {
                 if let Some(cb) = status_cb.as_ref() {
                     cb(SubscriptionStatus::TimedOut, None);
                 }
-                Err(RealtimeError::SubscribeTimeout(timeout))
+                Err(RealtimeError::SubscribeTimeout(timeout_dur))
             }
         }
     }
@@ -212,8 +205,7 @@ impl ClientSender {
             .as_mut()
             .ok_or(RealtimeError::ConnectionClosed)?;
         trace!(topic = %msg.topic, event = %msg.event, "Sending WS message");
-        sink.send(Message::Text(text.into())).await?;
-        Ok(())
+        transport::send_text(sink, text).await
     }
 }
 
@@ -287,12 +279,14 @@ impl RealtimeClient {
         let ws_url = build_ws_url(&self.inner.config.url, &self.inner.config.api_key)?;
         debug!(url = %ws_url, "Connecting to Supabase Realtime");
 
-        let read = connect_ws(&self.inner, &ws_url).await?;
+        let (write, read) = transport::connect_ws(&self.inner.config, &ws_url).await?;
+        *self.inner.ws_write.lock().await = Some(write);
+        self.inner.connected.store(true, Ordering::SeqCst);
 
         // Spawn the reconnection-aware reader loop
         let inner = Arc::clone(&self.inner);
         let ws_url_owned = ws_url;
-        tokio::spawn(async move {
+        platform::spawn(async move {
             run_reader_loop(inner, read, ws_url_owned).await;
         });
 
@@ -314,9 +308,10 @@ impl RealtimeClient {
         // Close WebSocket
         {
             let mut ws = self.inner.ws_write.lock().await;
-            if let Some(mut sink) = ws.take() {
-                let _ = sink.send(Message::Close(None)).await;
+            if let Some(sink) = ws.as_mut() {
+                let _ = transport::send_close(sink).await;
             }
+            *ws = None;
         }
 
         // Clear pending replies
@@ -467,35 +462,6 @@ pub(crate) fn build_ws_url(base_url: &str, api_key: &str) -> Result<String, Real
 
 // ── Connection Helpers ────────────────────────────────────────────────────────
 
-type WsRead = futures_util::stream::SplitStream<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
->;
-
-/// Establish a WebSocket connection and store the write half. Returns the read half.
-async fn connect_ws(
-    inner: &RealtimeClientInner,
-    ws_url: &str,
-) -> Result<WsRead, RealtimeError> {
-    // Build HTTP request with custom headers
-    let mut request = Request::builder().uri(ws_url);
-    for (key, value) in &inner.config.headers {
-        request = request.header(key.as_str(), value.as_str());
-    }
-    let request = request
-        .body(())
-        .map_err(|e| RealtimeError::InvalidConfig(format!("Failed to build WS request: {}", e)))?;
-
-    let (ws_stream, _) = tokio_tungstenite::connect_async(request).await?;
-    let (write, read) = ws_stream.split();
-
-    *inner.ws_write.lock().await = Some(write);
-    inner.connected.store(true, Ordering::SeqCst);
-
-    Ok(read)
-}
-
 /// Run the reader loop with auto-reconnect support.
 ///
 /// Reads from the WebSocket, handling messages. On disconnect (if not intentional),
@@ -544,21 +510,28 @@ async fn read_until_disconnect(
     shutdown_rx: &mut broadcast::Receiver<()>,
 ) -> bool {
     loop {
-        tokio::select! {
-            msg = read.next() => {
+        // Use futures_util::select instead of tokio::select! for WASM compatibility
+        let recv_fut = transport::recv_message(read);
+        let shutdown_fut = shutdown_rx.recv();
+
+        futures_util::pin_mut!(recv_fut);
+        futures_util::pin_mut!(shutdown_fut);
+
+        match select(recv_fut, shutdown_fut).await {
+            Either::Left((msg, _)) => {
                 match msg {
-                    Some(Ok(Message::Text(text))) => {
+                    Some(Ok(WsMessage::Text(text))) => {
                         handle_message(inner, &text).await;
                     }
-                    Some(Ok(Message::Close(_))) => {
+                    Some(Ok(WsMessage::Close)) => {
                         debug!("WebSocket closed by server");
                         inner.connected.store(false, Ordering::SeqCst);
                         return false;
                     }
-                    Some(Ok(Message::Ping(data))) => {
+                    Some(Ok(WsMessage::Ping(data))) => {
                         let mut ws = inner.ws_write.lock().await;
                         if let Some(sink) = ws.as_mut() {
-                            let _ = sink.send(Message::Pong(data)).await;
+                            let _ = transport::send_pong(sink, data).await;
                         }
                     }
                     Some(Err(e)) => {
@@ -571,10 +544,9 @@ async fn read_until_disconnect(
                         inner.connected.store(false, Ordering::SeqCst);
                         return false;
                     }
-                    _ => {} // Binary, Pong, Frame — ignore
                 }
             }
-            _ = shutdown_rx.recv() => {
+            Either::Right(_) => {
                 debug!("Reader task shutting down");
                 return true;
             }
@@ -586,12 +558,17 @@ async fn read_until_disconnect(
 fn spawn_heartbeat(inner: Arc<RealtimeClientInner>) {
     let mut shutdown_rx = inner.shutdown_tx.subscribe();
     let heartbeat_interval = inner.config.heartbeat_interval;
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(heartbeat_interval);
-        interval.tick().await; // Skip the first immediate tick
+    platform::spawn(async move {
         loop {
-            tokio::select! {
-                _ = interval.tick() => {
+            // Sleep for heartbeat interval, racing against shutdown
+            let sleep_fut = platform::sleep(heartbeat_interval);
+            let shutdown_fut = shutdown_rx.recv();
+            futures_util::pin_mut!(sleep_fut);
+            futures_util::pin_mut!(shutdown_fut);
+
+            match select(sleep_fut, shutdown_fut).await {
+                Either::Left(_) => {
+                    // Time to send heartbeat
                     if !inner.connected.load(Ordering::SeqCst) {
                         break;
                     }
@@ -602,7 +579,7 @@ fn spawn_heartbeat(inner: Arc<RealtimeClientInner>) {
                     };
                     let mut ws = inner.ws_write.lock().await;
                     if let Some(sink) = ws.as_mut() {
-                        if let Err(e) = sink.send(Message::Text(text.into())).await {
+                        if let Err(e) = transport::send_text(sink, text).await {
                             warn!(error = %e, "Heartbeat send failed");
                             inner.connected.store(false, Ordering::SeqCst);
                             break;
@@ -610,7 +587,7 @@ fn spawn_heartbeat(inner: Arc<RealtimeClientInner>) {
                         trace!("Heartbeat sent");
                     }
                 }
-                _ = shutdown_rx.recv() => {
+                Either::Right(_) => {
                     debug!("Heartbeat task shutting down");
                     break;
                 }
@@ -639,14 +616,16 @@ async fn attempt_reconnect(
         }
 
         info!(attempt = attempt + 1, delay_ms = delay.as_millis(), "Attempting reconnect");
-        tokio::time::sleep(delay).await;
+        platform::sleep(delay).await;
 
         if inner.intentional_disconnect.load(Ordering::SeqCst) {
             return None;
         }
 
-        match connect_ws(inner, ws_url).await {
-            Ok(read) => {
+        match transport::connect_ws(&config, ws_url).await {
+            Ok((write, read)) => {
+                *inner.ws_write.lock().await = Some(write);
+                inner.connected.store(true, Ordering::SeqCst);
                 info!("Reconnected successfully");
                 return Some(read);
             }
@@ -682,7 +661,7 @@ async fn rejoin_channels(inner: &RealtimeClientInner) -> Result<(), RealtimeErro
                 .map_err(|e| RealtimeError::ServerError(format!("JSON error: {}", e)))?;
             let mut ws = inner.ws_write.lock().await;
             if let Some(sink) = ws.as_mut() {
-                sink.send(Message::Text(text.into())).await?;
+                transport::send_text(sink, text).await?;
             }
             *channel.inner.state.write().await = ChannelState::Joining;
         }

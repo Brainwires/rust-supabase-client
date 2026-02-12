@@ -497,6 +497,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gloo-timers"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "h2"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1538,6 +1550,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1920,6 +1943,9 @@ name = "supabase-client-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "futures-util",
+ "getrandom 0.3.4",
+ "gloo-timers",
  "reqwest",
  "serde",
  "serde_json",
@@ -1929,6 +1955,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -1977,6 +2004,8 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "futures-util",
+ "gloo-timers",
+ "js-sys",
  "serde",
  "serde_json",
  "sqlx",
@@ -1986,6 +2015,9 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -2019,6 +2051,19 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "supabase-client-wasm"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "supabase-client-sdk",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

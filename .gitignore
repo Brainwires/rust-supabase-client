@@ -1,5 +1,6 @@
 # Build
 /target/
+/pkg/
 **/*.rs.bk
 
 # IDE

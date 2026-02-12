@@ -18,7 +18,6 @@ direct-sql = ["dep:sqlx", "supabase-client-core/direct-sql"]
 [dependencies]
 supabase-client-core.workspace = true
 sqlx = { workspace = true, optional = true }
-tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -27,3 +26,9 @@ chrono.workspace = true
 uuid.workspace = true
 reqwest.workspace = true
 url.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { workspace = true, features = ["rustls-tls"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

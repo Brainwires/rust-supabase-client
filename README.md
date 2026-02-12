@@ -1,6 +1,6 @@
 # supabase-client (Rust)
 
-[![Tests](https://img.shields.io/badge/tests-360%2B%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-390%2B%20passing-brightgreen)](#testing)
 [![Rust](https://img.shields.io/badge/rust-2021%20edition-orange)](https://www.rust-lang.org/)
 
 A Rust client for [Supabase](https://supabase.com/) with a fluent, Supabase JS-like API. Uses the **PostgREST REST API by default** — no database connection needed. Opt into direct PostgreSQL access via [sqlx](https://github.com/launchbadge/sqlx) with the `direct-sql` feature flag.
@@ -619,6 +619,12 @@ cargo run --example storage -p supabase-client-sdk --features storage
 
 # Edge Functions: JSON/binary invocation, custom headers
 cargo run --example functions -p supabase-client-sdk --features functions
+
+# Full SDK demo: all features in one example
+cargo run --example full_client -p supabase-client-sdk --features full
+
+# WASM usage from JavaScript (see example HTML file)
+wasm-pack build crates/supabase-client-wasm --target web --out-dir ../../pkg
 ```
 
 ## Architecture
@@ -635,6 +641,7 @@ This project is a Cargo workspace with the following crates:
 | `supabase-client-realtime` | WebSocket realtime client via tokio-tungstenite |
 | `supabase-client-storage` | Object storage HTTP client via reqwest |
 | `supabase-client-functions` | Edge Functions HTTP client via reqwest |
+| `supabase-client-wasm` | WASM/JavaScript bindings via wasm-bindgen |
 
 Each sub-crate provides an extension trait on `SupabaseClient`:
 - `SupabaseClientQueryExt` - `.from()`, `.from_typed()`, `.rpc()`
@@ -642,6 +649,162 @@ Each sub-crate provides an extension trait on `SupabaseClient`:
 - `SupabaseClientRealtimeExt` - `.realtime()`
 - `SupabaseClientStorageExt` - `.storage()`
 - `SupabaseClientFunctionsExt` - `.functions()`
+
+## WASM / JavaScript / TypeScript
+
+All crates compile for `wasm32-unknown-unknown`. A dedicated `supabase-client-wasm` crate provides `#[wasm_bindgen]` bindings with auto-generated TypeScript declarations.
+
+### Building the WASM package
+
+```bash
+# Install wasm-pack if you haven't already
+cargo install wasm-pack
+
+# Build for browser <script type="module"> usage
+wasm-pack build crates/supabase-client-wasm --target web --out-dir ../../pkg
+
+# Or build for bundlers (webpack, vite, etc.)
+wasm-pack build crates/supabase-client-wasm --target bundler --out-dir ../../pkg
+```
+
+This generates:
+
+```
+pkg/
+  supabase_client_wasm.js         # JS glue code
+  supabase_client_wasm.d.ts       # TypeScript declarations
+  supabase_client_wasm_bg.wasm    # WASM binary
+  package.json                    # npm package metadata
+```
+
+### WASM API Reference
+
+The WASM bindings expose a thin, JS-friendly wrapper around the full Rust SDK. Each class maps to a sub-client:
+
+**`WasmSupabaseClient`** — main entry point
+
+| Method | Description |
+|--------|-------------|
+| `new(url, key)` | Create a new client |
+| `from_select(table, columns)` | SELECT query — returns JSON rows |
+| `from_insert(table, data)` | INSERT a single row (JSON object) |
+| `from_update(table, data, column, value)` | UPDATE rows matching `column = value` |
+| `from_delete(table, column, value)` | DELETE rows matching `column = value` |
+| `auth()` | Get a `WasmAuthClient` |
+| `realtime()` | Get a `WasmRealtimeClient` |
+| `storage()` | Get a `WasmStorageClient` |
+| `functions()` | Get a `WasmFunctionsClient` |
+
+**`WasmAuthClient`** — authentication
+
+| Method | Description |
+|--------|-------------|
+| `sign_up(email, password)` | Email/password sign-up |
+| `sign_in_with_password(email, password)` | Email/password sign-in — returns session JSON |
+| `sign_in_anonymous()` | Anonymous sign-in — returns session JSON |
+| `sign_in_with_otp(email)` | Send a magic link / OTP email |
+| `get_session()` | Current session (JSON or `null`) |
+| `refresh_session()` | Refresh the current session |
+| `sign_out()` | Sign out the current user |
+| `get_user(access_token)` | Fetch user for a given token |
+| `reset_password_for_email(email)` | Send a password reset email |
+| `get_oauth_url(provider)` | OAuth sign-in URL (`"github"`, `"google"`, etc.) |
+
+**`WasmRealtimeClient`** — WebSocket realtime
+
+| Method | Description |
+|--------|-------------|
+| `connect()` | Connect to the Realtime server |
+| `disconnect()` | Disconnect from the Realtime server |
+| `is_connected()` | Check connection status |
+
+**`WasmStorageClient`** — object storage
+
+| Method | Description |
+|--------|-------------|
+| `list_buckets()` | List all buckets — returns JSON array |
+| `get_bucket(id)` | Get a bucket by ID — returns JSON object |
+
+**`WasmFunctionsClient`** — edge functions
+
+| Method | Description |
+|--------|-------------|
+| `invoke(function_name, body)` | Invoke a function with JSON body — returns JSON response |
+
+### Usage from JavaScript/TypeScript
+
+```typescript
+import init, { WasmSupabaseClient } from './pkg/supabase_client_wasm.js';
+
+await init();
+
+const client = new WasmSupabaseClient(
+  'https://your-project.supabase.co',
+  'your-anon-key'
+);
+
+// ── Query (CRUD) ───────────────────────────────────────────
+const rows = await client.from_select('cities', '*');
+console.log('Cities:', rows);
+
+await client.from_insert('cities', { name: 'Tokyo', country_id: 1 });
+await client.from_update('cities', { name: 'New Tokyo' }, 'id', '1');
+await client.from_delete('cities', 'id', '1');
+
+// ── Auth ───────────────────────────────────────────────────
+const auth = client.auth();
+
+// Sign in (email/password or anonymous)
+const session = await auth.sign_in_with_password('user@example.com', 'password');
+console.log('Access token:', session.access_token);
+
+const anonSession = await auth.sign_in_anonymous();
+
+// Session management
+const current = await auth.get_session();   // JSON or null
+await auth.refresh_session();
+
+// User info
+const user = await auth.get_user(session.access_token);
+console.log('User ID:', user.id);
+
+// OAuth
+const githubUrl = auth.get_oauth_url('github');
+// → redirect the user to githubUrl
+
+// Password reset & sign-out
+await auth.reset_password_for_email('user@example.com');
+await auth.sign_out();
+
+// ── Realtime ───────────────────────────────────────────────
+const realtime = client.realtime();
+await realtime.connect();
+console.log('Connected:', realtime.is_connected());
+await realtime.disconnect();
+
+// ── Storage ────────────────────────────────────────────────
+const storage = client.storage();
+const buckets = await storage.list_buckets();
+const bucket = await storage.get_bucket('photos');
+
+// ── Edge Functions ─────────────────────────────────────────
+const functions = client.functions();
+const result = await functions.invoke('hello', { name: 'World' });
+console.log('Function result:', result);
+```
+
+> **Note:** The WASM bindings (`supabase-client-wasm`) are a thin JS-friendly wrapper that exposes a subset of the full Rust SDK through `wasm_bindgen`. If you're building a Rust application targeting WASM, you can use the full SDK directly (see below) and get access to all features, filters, modifiers, and typed queries — not just the simplified JS API.
+
+### Using in Rust WASM projects
+
+You can also use the SDK directly in Rust code compiled to WASM (without the JS bindings crate):
+
+```toml
+[dependencies]
+supabase-client-sdk = { version = "0.1.0", features = ["full"] }
+```
+
+The platform abstraction layer automatically uses browser-compatible APIs (`fetch` via `reqwest`, `web_sys::WebSocket`, `gloo-timers`) when targeting `wasm32-unknown-unknown`.
 
 ## Configuration
 
@@ -683,17 +846,17 @@ supabase start
 cargo test --workspace -- --test-threads=1
 
 # REST integration tests (PostgREST backend, default)
-cargo test -p supabase-client-sdk-query --test rest_integration -- --test-threads=1
+cargo test -p supabase-client-query --test rest_integration -- --test-threads=1
 
 # Direct-SQL integration tests (requires direct-sql feature)
 cargo test -p supabase-client-sdk --features direct-sql -- --test-threads=1
 
 # Run tests for a specific crate
-cargo test -p supabase-client-sdk-query
-cargo test -p supabase-client-sdk-auth
-cargo test -p supabase-client-sdk-realtime
-cargo test -p supabase-client-sdk-storage --test integration -- --test-threads=1
-cargo test -p supabase-client-sdk-functions --test integration -- --test-threads=1
+cargo test -p supabase-client-query
+cargo test -p supabase-client-auth
+cargo test -p supabase-client-realtime
+cargo test -p supabase-client-storage --test integration -- --test-threads=1
+cargo test -p supabase-client-functions --test integration -- --test-threads=1
 ```
 
 The local Supabase instance runs on custom ports (API: 64321, DB: 64322). Integration tests default to these ports and use hardcoded local development keys.

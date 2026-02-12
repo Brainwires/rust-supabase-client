@@ -9,6 +9,7 @@ members = [
     "crates/supabase-client-realtime",
     "crates/supabase-client-storage",
     "crates/supabase-client-functions",
+    "crates/supabase-client-wasm",
 ]
 
 [workspace.package]
@@ -29,12 +30,13 @@ supabase-client-auth = { path = "crates/supabase-client-auth", version = "0.1.0"
 supabase-client-realtime = { path = "crates/supabase-client-realtime", version = "0.1.0" }
 supabase-client-storage = { path = "crates/supabase-client-storage", version = "0.1.0" }
 supabase-client-functions = { path = "crates/supabase-client-functions", version = "0.1.0" }
+supabase-client-sdk = { path = "crates/supabase-client", version = "0.1.0" }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "json", "chrono", "uuid"] }
 
 # Async
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["sync"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -47,16 +49,25 @@ thiserror = "2"
 tracing = "0.1"
 
 # Types
-chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde", "wasmbind"] }
+uuid = { version = "1", features = ["v4", "serde", "js"] }
 
 # HTTP client (for auth/storage)
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", features = ["json"] }
 url = "2"
 
-# WebSocket (for realtime)
+# WebSocket (for realtime — native only, per-crate conditional)
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
+
+# WASM dependencies
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = "0.3"
+gloo-timers = { version = "0.3", features = ["futures"] }
+serde-wasm-bindgen = "0.6"
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 # Base64 (for JWT parsing)
 base64 = "0.22"

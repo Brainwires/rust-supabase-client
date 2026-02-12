@@ -8,8 +8,13 @@ pub enum RealtimeError {
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[error("WebSocket error: {0}")]
     WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
+
+    #[cfg(target_arch = "wasm32")]
+    #[error("WebSocket error: {0}")]
+    WebSocket(String),
 
     #[error("URL parse error: {0}")]
     UrlParse(#[from] url::ParseError),
