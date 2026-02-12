@@ -66,3 +66,7 @@ required-features = ["storage"]
 [[example]]
 name = "functions"
 required-features = ["functions"]
+
+[[example]]
+name = "full_client"
+required-features = ["full"]

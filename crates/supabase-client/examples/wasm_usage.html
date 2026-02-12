@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supabase Client SDK — WASM Usage Example</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+        pre { background: #f4f4f4; padding: 1rem; border-radius: 4px; overflow-x: auto; }
+        button { margin: 0.25rem; padding: 0.5rem 1rem; cursor: pointer; }
+        #output { white-space: pre-wrap; font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 4px; min-height: 200px; }
+        .section { margin-bottom: 1rem; }
+        h3 { margin-bottom: 0.5rem; }
+    </style>
+</head>
+<body>
+    <h1>Supabase Client SDK — WASM Example</h1>
+    <p>
+        Build the WASM package first:
+        <code>wasm-pack build crates/supabase-client-wasm --target web --out-dir ../../pkg</code>
+    </p>
+
+    <div class="section">
+        <h3>Configuration</h3>
+        <label>URL: <input id="url" value="http://127.0.0.1:64321" size="40"></label><br>
+        <label>Key: <input id="key" value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0" size="40"></label>
+        <br><button onclick="initClient()">Initialize Client</button>
+    </div>
+
+    <div class="section">
+        <h3>Query (CRUD)</h3>
+        <button onclick="doSelect()">SELECT cities</button>
+        <button onclick="doInsert()">INSERT city</button>
+        <button onclick="doUpdate()">UPDATE city</button>
+        <button onclick="doDelete()">DELETE city</button>
+    </div>
+
+    <div class="section">
+        <h3>Auth</h3>
+        <button onclick="doSignUp()">Sign Up</button>
+        <button onclick="doSignIn()">Sign In (password)</button>
+        <button onclick="doSignInAnon()">Sign In (anonymous)</button>
+        <button onclick="doGetSession()">Get Session</button>
+        <button onclick="doGetOAuthUrl()">OAuth URL (GitHub)</button>
+        <button onclick="doSignOut()">Sign Out</button>
+    </div>
+
+    <div class="section">
+        <h3>Storage</h3>
+        <button onclick="doListBuckets()">List Buckets</button>
+        <button onclick="doGetBucket()">Get Bucket</button>
+    </div>
+
+    <div class="section">
+        <h3>Functions</h3>
+        <button onclick="doInvoke()">Invoke 'hello'</button>
+    </div>
+
+    <div class="section">
+        <h3>Realtime</h3>
+        <button onclick="doRealtimeConnect()">Connect</button>
+        <button onclick="doRealtimeStatus()">Is Connected?</button>
+        <button onclick="doRealtimeDisconnect()">Disconnect</button>
+    </div>
+
+    <h3>Output</h3>
+    <div id="output"></div>
+
+    <script type="module">
+        import init, { WasmSupabaseClient } from '../../pkg/supabase_client_wasm.js';
+
+        let client = null;
+
+        // Make functions available to onclick handlers
+        window.initClient = async function () {
+            try {
+                await init();
+                const url = document.getElementById('url').value;
+                const key = document.getElementById('key').value;
+                client = new WasmSupabaseClient(url, key);
+                log('Client initialized.');
+            } catch (e) {
+                log('ERROR: ' + e);
+            }
+        };
+
+        // ── Query (CRUD) ───────────────────────────────────────────
+
+        window.doSelect = async function () {
+            try {
+                const rows = await client.from_select('cities', '*');
+                log('SELECT cities:\n' + JSON.stringify(rows, null, 2));
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        window.doInsert = async function () {
+            try {
+                const result = await client.from_insert('cities', {
+                    name: 'Christchurch',
+                    country_id: 1,
+                    population: 380000,
+                    is_capital: false,
+                });
+                log('INSERT result:\n' + JSON.stringify(result, null, 2));
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        window.doUpdate = async function () {
+            try {
+                const result = await client.from_update('cities', { name: 'New Christchurch' }, 'name', 'Christchurch');
+                log('UPDATE result:\n' + JSON.stringify(result, null, 2));
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        window.doDelete = async function () {
+            try {
+                const result = await client.from_delete('cities', 'name', 'New Christchurch');
+                log('DELETE result:\n' + JSON.stringify(result, null, 2));
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        // ── Auth ───────────────────────────────────────────────────
+
+        window.doSignUp = async function () {
+            try {
+                const auth = client.auth();
+                const resp = await auth.sign_up('test@example.com', 'password123');
+                log('Sign Up:\n' + JSON.stringify(resp, null, 2));
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        window.doSignIn = async function () {
+            try {
+                const auth = client.auth();
+                const session = await auth.sign_in_with_password('test@example.com', 'password123');
+                log('Sign In (password):\n' + JSON.stringify(session, null, 2));
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        window.doSignInAnon = async function () {
+            try {
+                const auth = client.auth();
+                const session = await auth.sign_in_anonymous();
+                log('Sign In (anonymous):\n' + JSON.stringify(session, null, 2));
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        window.doGetSession = async function () {
+            try {
+                const auth = client.auth();
+                const session = await auth.get_session();
+                log('Session:\n' + JSON.stringify(session, null, 2));
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        window.doGetOAuthUrl = function () {
+            try {
+                const auth = client.auth();
+                const url = auth.get_oauth_url('github');
+                log('GitHub OAuth URL:\n' + url);
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        window.doSignOut = async function () {
+            try {
+                const auth = client.auth();
+                await auth.sign_out();
+                log('Signed out.');
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        // ── Storage ────────────────────────────────────────────────
+
+        window.doListBuckets = async function () {
+            try {
+                const storage = client.storage();
+                const buckets = await storage.list_buckets();
+                log('Buckets:\n' + JSON.stringify(buckets, null, 2));
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        window.doGetBucket = async function () {
+            try {
+                const storage = client.storage();
+                const bucket = await storage.get_bucket('test-bucket');
+                log('Bucket:\n' + JSON.stringify(bucket, null, 2));
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        // ── Functions ──────────────────────────────────────────────
+
+        window.doInvoke = async function () {
+            try {
+                const functions = client.functions();
+                const result = await functions.invoke('hello', { name: 'WASM' });
+                log('Function result:\n' + JSON.stringify(result, null, 2));
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        // ── Realtime ───────────────────────────────────────────────
+
+        window.doRealtimeConnect = async function () {
+            try {
+                const rt = client.realtime();
+                await rt.connect();
+                log('Realtime connected.');
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        window.doRealtimeStatus = function () {
+            try {
+                const rt = client.realtime();
+                log('Is connected: ' + rt.is_connected());
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        window.doRealtimeDisconnect = async function () {
+            try {
+                const rt = client.realtime();
+                await rt.disconnect();
+                log('Realtime disconnected.');
+            } catch (e) { log('ERROR: ' + e); }
+        };
+
+        // ── Helpers ────────────────────────────────────────────────
+
+        function log(msg) {
+            const el = document.getElementById('output');
+            el.textContent += msg + '\n\n';
+            el.scrollTop = el.scrollHeight;
+        }
+    </script>
+</body>
+</html>
