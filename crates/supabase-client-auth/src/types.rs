@@ -721,7 +721,7 @@ pub struct AuthStateChange {
 
 /// Subscription handle for auth state change events.
 ///
-/// Created by [`AuthClient::on_auth_state_change()`]. Use [`next()`](AuthSubscription::next)
+/// Created by [`AuthClient::on_auth_state_change()`](crate::AuthClient::on_auth_state_change). Use [`next()`](AuthSubscription::next)
 /// to await the next event.
 pub struct AuthSubscription {
     pub(crate) rx: broadcast::Receiver<AuthStateChange>,

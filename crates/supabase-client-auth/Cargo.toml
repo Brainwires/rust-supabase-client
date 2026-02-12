@@ -8,6 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 description = "Auth (GoTrue) client for supabase-client"
+readme = "README.md"
 keywords = ["supabase", "auth", "gotrue", "authentication", "oauth"]
 categories = ["authentication", "web-programming::http-client"]
 

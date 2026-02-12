@@ -64,9 +64,9 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-supabase-client-sdk = "0.1.0"
+supabase-client-sdk = "0.2.1"
 # Or with specific features:
-supabase-client-sdk = { version = "0.1.0", features = ["auth", "realtime"] }
+supabase-client-sdk = { version = "0.2.1", features = ["auth", "realtime"] }
 ```
 
 ### Feature Flags
@@ -596,7 +596,7 @@ response.header("x-foo");   // case-insensitive lookup
 
 ## Examples
 
-Runnable examples are provided in `crates/supabase-client/examples/`. Each example works against a local Supabase instance (`supabase start`).
+Runnable examples are provided in `crates/supabase-client-sdk/examples/`. Each example works against a local Supabase instance (`supabase start`).
 
 ```bash
 # Query basics: SELECT, INSERT, UPDATE, DELETE, UPSERT with filters
@@ -801,7 +801,7 @@ You can also use the SDK directly in Rust code compiled to WASM (without the JS 
 
 ```toml
 [dependencies]
-supabase-client-sdk = { version = "0.1.0", features = ["full"] }
+supabase-client-sdk = { version = "0.2.1", features = ["full"] }
 ```
 
 The platform abstraction layer automatically uses browser-compatible APIs (`fetch` via `reqwest`, `web_sys::WebSocket`, `gloo-timers`) when targeting `wasm32-unknown-unknown`.

@@ -8,6 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 description = "Query builder, filters, modifiers, and SQL/PostgREST execution for supabase-client"
+readme = "README.md"
 keywords = ["supabase", "query-builder", "postgrest", "rest", "sql"]
 categories = ["database", "web-programming::http-client"]
 

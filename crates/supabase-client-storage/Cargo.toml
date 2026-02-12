@@ -8,6 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 description = "Storage HTTP client for supabase-client"
+readme = "README.md"
 keywords = ["supabase", "storage", "object-storage", "file-upload", "s3"]
 categories = ["filesystem", "web-programming::http-client"]
 
