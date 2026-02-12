@@ -215,6 +215,52 @@ mod integration {
         std::env::var("SKIP_REALTIME_TESTS").is_err()
     }
 
+    /// Warm up the Supabase Realtime WAL listener for the realtime_test table.
+    /// The first postgres_changes subscription requires server-side WAL listener
+    /// initialization that can take several seconds on cold start.
+    async fn warm_up_postgres_listener() {
+        let client = RealtimeClient::new(get_url(), get_key()).unwrap();
+        client.connect().await.unwrap();
+
+        let (tx, mut rx) = mpsc::channel(10);
+        let channel = client
+            .channel("warmup")
+            .on_postgres_changes(
+                PostgresChangesEvent::Insert,
+                PostgresChangesFilter::new("public", "realtime_test"),
+                move |_| {
+                    let _ = tx.try_send(());
+                },
+            )
+            .subscribe(|_, _| {})
+            .await
+            .unwrap();
+
+        let db_url = "postgres://postgres:postgres@127.0.0.1:64322/postgres";
+        let pool = sqlx::PgPool::connect(db_url).await.unwrap();
+
+        for _ in 0..15 {
+            sqlx::query("INSERT INTO realtime_test (name, value) VALUES ('_warmup', 'probe')")
+                .execute(&pool)
+                .await
+                .unwrap();
+            if tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .is_ok()
+            {
+                break;
+            }
+        }
+
+        sqlx::query("DELETE FROM realtime_test WHERE name = '_warmup'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+        client.remove_channel(&channel).await.unwrap();
+        client.disconnect().await.unwrap();
+    }
+
     #[tokio::test]
     async fn connect_and_disconnect() {
         if !should_run() { return; }
@@ -620,6 +666,9 @@ mod integration {
     async fn postgres_changes_all_events() {
         if !should_run() { return; }
 
+        // Ensure the Realtime server's WAL listener is active before subscribing
+        warm_up_postgres_listener().await;
+
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
 
@@ -638,10 +687,16 @@ mod integration {
             .await
             .unwrap();
 
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
         let db_url = "postgres://postgres:postgres@127.0.0.1:64322/postgres";
         let pool = sqlx::PgPool::connect(db_url).await.unwrap();
+
+        // Clean up any leftover rows from previous failed runs
+        sqlx::query("DELETE FROM realtime_test WHERE name = 'test-all'")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         // INSERT
         sqlx::query("INSERT INTO realtime_test (name, value) VALUES ('test-all', 'v1')")
