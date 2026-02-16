@@ -6,8 +6,9 @@
 //! The tests use the `cities` and `countries` tables in the local Supabase instance.
 //! See supabase/migrations/ for table setup.
 //!
-//! Run with: cargo test -p supabase-client-query --test rest_integration -- --test-threads=1
+//! Run with: cargo test -p supabase-client-query --test rest_integration
 
+use serial_test::serial;
 use serde::Deserialize;
 use serde_json::json;
 use supabase_client_core::{SupabaseClient, SupabaseConfig};
@@ -49,6 +50,7 @@ async fn reset_data(client: &SupabaseClient) {
 // ============================================================
 
 #[tokio::test]
+#[serial]
 async fn rest_select_all() {
     let client = create_client();
     reset_data(&client).await;
@@ -60,6 +62,7 @@ async fn rest_select_all() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_specific_columns() {
     let client = create_client();
     reset_data(&client).await;
@@ -78,6 +81,7 @@ async fn rest_select_specific_columns() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_eq_filter() {
     let client = create_client();
     reset_data(&client).await;
@@ -95,6 +99,7 @@ async fn rest_select_with_eq_filter() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_neq_filter() {
     let client = create_client();
     reset_data(&client).await;
@@ -111,6 +116,7 @@ async fn rest_select_with_neq_filter() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_gt_filter() {
     let client = create_client();
     reset_data(&client).await;
@@ -128,6 +134,7 @@ async fn rest_select_with_gt_filter() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_gte_lte_filter() {
     let client = create_client();
     reset_data(&client).await;
@@ -146,6 +153,7 @@ async fn rest_select_with_gte_lte_filter() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_like_filter() {
     let client = create_client();
     reset_data(&client).await;
@@ -164,6 +172,7 @@ async fn rest_select_with_like_filter() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_ilike_filter() {
     let client = create_client();
     reset_data(&client).await;
@@ -180,6 +189,7 @@ async fn rest_select_with_ilike_filter() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_in_filter() {
     let client = create_client();
     reset_data(&client).await;
@@ -196,6 +206,7 @@ async fn rest_select_with_in_filter() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_is_filter() {
     let client = create_client();
     reset_data(&client).await;
@@ -213,6 +224,7 @@ async fn rest_select_with_is_filter() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_order() {
     let client = create_client();
     reset_data(&client).await;
@@ -236,6 +248,7 @@ async fn rest_select_with_order() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_order_desc() {
     let client = create_client();
     reset_data(&client).await;
@@ -259,6 +272,7 @@ async fn rest_select_with_order_desc() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_limit() {
     let client = create_client();
     reset_data(&client).await;
@@ -278,6 +292,7 @@ async fn rest_select_with_limit() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_range() {
     let client = create_client();
     reset_data(&client).await;
@@ -298,6 +313,7 @@ async fn rest_select_with_range() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_single() {
     let client = create_client();
     reset_data(&client).await;
@@ -315,6 +331,7 @@ async fn rest_select_single() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_select_with_count() {
     let client = create_client();
     reset_data(&client).await;
@@ -334,6 +351,7 @@ async fn rest_select_with_count() {
 // ============================================================
 
 #[tokio::test]
+#[serial]
 async fn rest_insert_single_row() {
     let client = create_client();
     reset_data(&client).await;
@@ -365,6 +383,7 @@ async fn rest_insert_single_row() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_insert_many_rows() {
     let client = create_client();
     reset_data(&client).await;
@@ -393,6 +412,7 @@ async fn rest_insert_many_rows() {
 // ============================================================
 
 #[tokio::test]
+#[serial]
 async fn rest_update_with_filter() {
     let client = create_client();
     reset_data(&client).await;
@@ -415,6 +435,7 @@ async fn rest_update_with_filter() {
 // ============================================================
 
 #[tokio::test]
+#[serial]
 async fn rest_delete_with_filter() {
     let client = create_client();
     reset_data(&client).await;
@@ -441,6 +462,7 @@ async fn rest_delete_with_filter() {
 // ============================================================
 
 #[tokio::test]
+#[serial]
 async fn rest_upsert_insert_new() {
     let client = create_client();
     reset_data(&client).await;
@@ -477,6 +499,7 @@ async fn rest_upsert_insert_new() {
 // ============================================================
 
 #[tokio::test]
+#[serial]
 async fn rest_rpc_call() {
     let client = create_client();
     reset_data(&client).await;
@@ -501,6 +524,7 @@ async fn rest_rpc_call() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_rpc_scalar() {
     let client = create_client();
 
@@ -529,6 +553,7 @@ struct CityRest {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_typed_rpc() {
     let client = create_client();
     reset_data(&client).await;
@@ -559,6 +584,7 @@ async fn rest_typed_rpc() {
 // ============================================================
 
 #[tokio::test]
+#[serial]
 async fn rest_csv_format() {
     let client = create_client();
     reset_data(&client).await;
@@ -585,6 +611,7 @@ async fn rest_csv_format() {
 // ============================================================
 
 #[tokio::test]
+#[serial]
 async fn rest_count_planned() {
     let client = create_client();
     reset_data(&client).await;
@@ -602,6 +629,7 @@ async fn rest_count_planned() {
 }
 
 #[tokio::test]
+#[serial]
 async fn rest_count_estimated() {
     let client = create_client();
     reset_data(&client).await;
@@ -622,6 +650,7 @@ async fn rest_count_estimated() {
 // ============================================================
 
 #[tokio::test]
+#[serial]
 async fn rest_rpc_rollback() {
     let client = create_client();
     reset_data(&client).await;
