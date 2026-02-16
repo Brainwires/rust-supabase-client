@@ -55,8 +55,7 @@ DECLARE
     au_id INTEGER;
     jp_id INTEGER;
 BEGIN
-    DELETE FROM cities WHERE true;
-    DELETE FROM countries WHERE true;
+    TRUNCATE cities, countries CASCADE;
 
     INSERT INTO countries (name, code) VALUES ('New Zealand', 'NZ') RETURNING id INTO nz_id;
     INSERT INTO countries (name, code) VALUES ('Australia', 'AU') RETURNING id INTO au_id;
