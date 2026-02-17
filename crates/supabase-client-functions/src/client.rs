@@ -282,4 +282,263 @@ mod tests {
             Some("shared-token")
         );
     }
+
+    // ─── Wiremock Tests ──────────────────────────────────────
+
+    use wiremock::matchers::{body_string_contains, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Helper: create a FunctionsClient pointing at the given mock server.
+    fn mock_client(server: &MockServer) -> FunctionsClient {
+        FunctionsClient::new(&server.uri(), "test-anon-key").unwrap()
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_json_body_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/functions/v1/hello"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message": "ok"})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let opts = InvokeOptions::new().body(serde_json::json!({"name": "World"}));
+        let resp = client.invoke("hello", opts).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let val: serde_json::Value = resp.json().unwrap();
+        assert_eq!(val["message"], "ok");
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_relay_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/functions/v1/broken"))
+            .respond_with(
+                ResponseTemplate::new(500)
+                    .insert_header("x-relay-error", "true")
+                    .set_body_json(serde_json::json!({"message": "Function not found"})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let err = client
+            .invoke("broken", InvokeOptions::new())
+            .await
+            .unwrap_err();
+        match err {
+            FunctionsError::RelayError { status, message } => {
+                assert_eq!(status, 500);
+                assert_eq!(message, "Function not found");
+            }
+            other => panic!("Expected RelayError, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_http_4xx_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/functions/v1/missing"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_json(serde_json::json!({"message": "Not Found"})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let err = client
+            .invoke("missing", InvokeOptions::new())
+            .await
+            .unwrap_err();
+        match err {
+            FunctionsError::HttpError { status, message } => {
+                assert_eq!(status, 404);
+                assert_eq!(message, "Not Found");
+            }
+            other => panic!("Expected HttpError, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_auth_override_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/functions/v1/secure"))
+            .and(header("authorization", "Bearer user-jwt-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let opts = InvokeOptions::new().authorization("Bearer user-jwt-token");
+        let resp = client.invoke("secure", opts).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_region_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/functions/v1/regional"))
+            .and(header("x-region", "us-east-1"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let opts = InvokeOptions::new().region(FunctionRegion::UsEast1);
+        let resp = client.invoke("regional", opts).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_custom_headers() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/functions/v1/custom"))
+            .and(header("x-custom-one", "alpha"))
+            .and(header("x-custom-two", "beta"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let opts = InvokeOptions::new()
+            .header("x-custom-one", "alpha")
+            .header("x-custom-two", "beta");
+        let resp = client.invoke("custom", opts).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_body_json() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/functions/v1/echo"))
+            .and(header("content-type", "application/json"))
+            .and(body_string_contains("\"key\""))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let opts = InvokeOptions::new().body(serde_json::json!({"key": "value"}));
+        let resp = client.invoke("echo", opts).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_body_bytes() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/functions/v1/upload"))
+            .and(header("content-type", "application/octet-stream"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let opts = InvokeOptions::new().body_bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        let resp = client.invoke("upload", opts).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_body_text() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/functions/v1/text"))
+            .and(header("content-type", "text/plain"))
+            .and(body_string_contains("hello world"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let opts = InvokeOptions::new().body_text("hello world");
+        let resp = client.invoke("text", opts).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_body_none() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/functions/v1/empty"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let opts = InvokeOptions::new(); // body is None by default
+        let resp = client.invoke("empty", opts).await.unwrap();
+        assert_eq!(resp.status(), 204);
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_method_get() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/functions/v1/data"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"items": []})))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let opts = InvokeOptions::new().method(HttpMethod::Get);
+        let resp = client.invoke("data", opts).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_method_put() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/functions/v1/update"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let opts = InvokeOptions::new().method(HttpMethod::Put);
+        let resp = client.invoke("update", opts).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_method_delete() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/functions/v1/remove"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let opts = InvokeOptions::new().method(HttpMethod::Delete);
+        let resp = client.invoke("remove", opts).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn wiremock_invoke_method_patch() {
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/functions/v1/patch"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let opts = InvokeOptions::new().method(HttpMethod::Patch);
+        let resp = client.invoke("patch", opts).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
 }

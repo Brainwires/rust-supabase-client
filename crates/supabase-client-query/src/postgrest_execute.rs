@@ -250,3 +250,511 @@ fn parse_error_response<T>(status_code: u16, body: &str) -> SupabaseResponse<T> 
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::{HeaderMap, HeaderValue};
+    use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // ---- parse_count_from_headers ----
+
+    #[test]
+    fn test_parse_count_range_format() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-range", HeaderValue::from_static("0-9/100"));
+        assert_eq!(parse_count_from_headers(&headers), Some(100));
+    }
+
+    #[test]
+    fn test_parse_count_star_range_format() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-range", HeaderValue::from_static("*/42"));
+        assert_eq!(parse_count_from_headers(&headers), Some(42));
+    }
+
+    #[test]
+    fn test_parse_count_star_count() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-range", HeaderValue::from_static("0-9/*"));
+        assert_eq!(parse_count_from_headers(&headers), None);
+    }
+
+    #[test]
+    fn test_parse_count_no_header() {
+        let headers = HeaderMap::new();
+        assert_eq!(parse_count_from_headers(&headers), None);
+    }
+
+    #[test]
+    fn test_parse_count_no_slash() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-range", HeaderValue::from_static("0-9"));
+        assert_eq!(parse_count_from_headers(&headers), None);
+    }
+
+    #[test]
+    fn test_parse_count_invalid_number() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-range", HeaderValue::from_static("0-9/abc"));
+        assert_eq!(parse_count_from_headers(&headers), None);
+    }
+
+    #[test]
+    fn test_parse_count_large_number() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-range", HeaderValue::from_static("0-99/1000000"));
+        assert_eq!(parse_count_from_headers(&headers), Some(1_000_000));
+    }
+
+    // ---- parse_error_response ----
+
+    #[test]
+    fn test_parse_error_response_valid_json() {
+        let body = r#"{"message":"Row not found","code":"PGRST116","details":null,"hint":null}"#;
+        let resp: SupabaseResponse<JsonValue> = parse_error_response(404, body);
+        assert!(resp.is_err());
+        match resp.error.as_ref().unwrap() {
+            SupabaseError::PostgRest { status, message, code } => {
+                assert_eq!(*status, 404);
+                assert_eq!(message, "Row not found");
+                assert_eq!(code.as_deref(), Some("PGRST116"));
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_error_response_valid_json_no_code() {
+        let body = r#"{"message":"Something went wrong"}"#;
+        let resp: SupabaseResponse<JsonValue> = parse_error_response(500, body);
+        assert!(resp.is_err());
+        match resp.error.as_ref().unwrap() {
+            SupabaseError::PostgRest { status, message, code } => {
+                assert_eq!(*status, 500);
+                assert_eq!(message, "Something went wrong");
+                assert!(code.is_none());
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_error_response_no_message_field() {
+        let body = r#"{"error":"some error"}"#;
+        let resp: SupabaseResponse<JsonValue> = parse_error_response(400, body);
+        assert!(resp.is_err());
+        match resp.error.as_ref().unwrap() {
+            SupabaseError::PostgRest { message, .. } => {
+                assert_eq!(message, "Unknown error");
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_error_response_invalid_json() {
+        let body = "this is not json";
+        let resp: SupabaseResponse<JsonValue> = parse_error_response(500, body);
+        assert!(resp.is_err());
+        match resp.error.as_ref().unwrap() {
+            SupabaseError::PostgRest { status, message, code } => {
+                assert_eq!(*status, 500);
+                assert_eq!(message, "this is not json");
+                assert!(code.is_none());
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+
+    // ---- execute_rest via wiremock ----
+
+    fn make_select_parts(table: &str) -> SqlParts {
+        SqlParts::new(SqlOperation::Select, "public", table)
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_select_json_array() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}])),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let parts = make_select_parts("users");
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "test-key", "public", &parts).await;
+
+        assert!(resp.is_ok());
+        assert_eq!(resp.data.len(), 2);
+        assert_eq!(resp.data[0]["id"], 1);
+        assert_eq!(resp.data[0]["name"], "Alice");
+        assert_eq!(resp.data[1]["id"], 2);
+        assert_eq!(resp.data[1]["name"], "Bob");
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_select_single_object() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"id": 1, "name": "Alice"})),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let mut parts = make_select_parts("users");
+        parts.single = true;
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "test-key", "public", &parts).await;
+
+        assert!(resp.is_ok());
+        assert_eq!(resp.data.len(), 1);
+        assert_eq!(resp.data[0]["id"], 1);
+        assert_eq!(resp.data[0]["name"], "Alice");
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_head_with_count() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-range", "0-9/42"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let mut parts = make_select_parts("users");
+        parts.head = true;
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::HEAD, &url, headers, None, "test-key", "public", &parts).await;
+
+        assert!(resp.is_ok());
+        assert!(resp.data.is_empty());
+        assert_eq!(resp.count, Some(42));
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_head_error_status() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/rest/v1/users"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let mut parts = make_select_parts("users");
+        parts.head = true;
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::HEAD, &url, headers, None, "test-key", "public", &parts).await;
+
+        assert!(resp.is_err());
+        match resp.error.as_ref().unwrap() {
+            SupabaseError::PostgRest { status, .. } => {
+                assert_eq!(*status, 401);
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_4xx_error_json_body() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_json(json!({"message": "Bad request", "code": "42703"})),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let parts = make_select_parts("users");
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "test-key", "public", &parts).await;
+
+        assert!(resp.is_err());
+        match resp.error.as_ref().unwrap() {
+            SupabaseError::PostgRest { status, message, code } => {
+                assert_eq!(*status, 400);
+                assert_eq!(message, "Bad request");
+                assert_eq!(code.as_deref(), Some("42703"));
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_204_no_content() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/rest/v1/users"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let mut parts = SqlParts::new(SqlOperation::Delete, "public", "users");
+        // No returning - expect 204
+        parts.returning = None;
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::DELETE, &url, headers, None, "test-key", "public", &parts).await;
+
+        assert!(resp.is_ok());
+        assert!(resp.data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_empty_body_response() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/rest/v1/users"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(""))
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let parts = SqlParts::new(SqlOperation::Insert, "public", "users");
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::POST, &url, headers, None, "test-key", "public", &parts).await;
+
+        assert!(resp.is_ok());
+        assert!(resp.data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_insert_returns_created_status() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_json(json!([{"id": 1, "name": "Alice"}])),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let parts = SqlParts::new(SqlOperation::Insert, "public", "users");
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::POST, &url, headers, None, "test-key", "public", &parts).await;
+
+        assert!(resp.is_ok());
+        assert_eq!(resp.data.len(), 1);
+        assert_eq!(resp.status, supabase_client_core::StatusCode::Created);
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_with_count_header() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([{"id": 1}]))
+                    .insert_header("content-range", "0-0/25"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let parts = make_select_parts("users");
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "test-key", "public", &parts).await;
+
+        assert!(resp.is_ok());
+        assert_eq!(resp.count, Some(25));
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_sets_auth_headers() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/users"))
+            .and(wiremock::matchers::header("apikey", "my-secret-key"))
+            .and(wiremock::matchers::header("Authorization", "Bearer my-secret-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let parts = make_select_parts("users");
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "my-secret-key", "public", &parts).await;
+
+        assert!(resp.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_non_public_schema_sets_profile() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/users"))
+            .and(wiremock::matchers::header("Accept-Profile", "custom_schema"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let parts = make_select_parts("users");
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "key", "custom_schema", &parts).await;
+
+        assert!(resp.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_with_body() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/rest/v1/users"))
+            .and(wiremock::matchers::body_json(json!({"name": "Alice"})))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_json(json!([{"id": 1, "name": "Alice"}])),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let parts = SqlParts::new(SqlOperation::Insert, "public", "users");
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(
+                &http, reqwest::Method::POST, &url, headers,
+                Some(json!({"name": "Alice"})), "key", "public", &parts,
+            ).await;
+
+        assert!(resp.is_ok());
+        assert_eq!(resp.data.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_maybe_single_with_one_row() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([{"id": 1}])),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let mut parts = make_select_parts("users");
+        parts.maybe_single = true;
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "key", "public", &parts).await;
+
+        assert!(resp.is_ok());
+        assert_eq!(resp.data.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_maybe_single_with_multiple_rows_errors() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([{"id": 1}, {"id": 2}, {"id": 3}])),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/users", mock_server.uri());
+        let headers = HeaderMap::new();
+        let mut parts = make_select_parts("users");
+        parts.maybe_single = true;
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "key", "public", &parts).await;
+
+        assert!(resp.is_err());
+        assert!(matches!(resp.error.as_ref().unwrap(), SupabaseError::MultipleRows(3)));
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_scalar_response() {
+        // When PostgREST returns a bare scalar (e.g., from an RPC function),
+        // the parser falls through to the single-object parse path since
+        // serde_json::Value can parse any valid JSON. The result is a Vec
+        // containing the scalar value directly.
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/my_func"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("42"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/rest/v1/my_func", mock_server.uri());
+        let headers = HeaderMap::new();
+        let parts = make_select_parts("my_func");
+
+        let resp: SupabaseResponse<JsonValue> =
+            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "key", "public", &parts).await;
+
+        assert!(resp.is_ok());
+        assert_eq!(resp.data.len(), 1);
+        // serde_json::Value parses "42" as Number(42) in the single-object fallback
+        assert_eq!(resp.data[0], serde_json::json!(42));
+    }
+}

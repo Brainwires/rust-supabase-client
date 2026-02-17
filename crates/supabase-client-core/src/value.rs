@@ -189,4 +189,119 @@ mod tests {
         assert_eq!(row.get_as::<i64>("count"), Some(42));
         assert_eq!(row.get_as::<String>("count"), None);
     }
+
+    #[test]
+    fn test_get_as_wrong_type_returns_none() {
+        let row = row![("flag", true)];
+        assert_eq!(row.get_as::<i64>("flag"), None);
+        assert_eq!(row.get_as::<Vec<String>>("flag"), None);
+    }
+
+    #[test]
+    fn test_columns_returns_all_column_names() {
+        let row = row![("a", 1), ("b", 2), ("c", 3)];
+        let mut cols = row.columns();
+        cols.sort();
+        assert_eq!(cols, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_is_empty_on_empty_row() {
+        let row = Row::new();
+        assert!(row.is_empty());
+    }
+
+    #[test]
+    fn test_is_empty_on_non_empty_row() {
+        let row = row![("key", "value")];
+        assert!(!row.is_empty());
+    }
+
+    #[test]
+    fn test_len_counts_columns() {
+        let row = row![("x", 1), ("y", 2)];
+        assert_eq!(row.len(), 2);
+    }
+
+    #[test]
+    fn test_len_empty_row() {
+        let row = Row::new();
+        assert_eq!(row.len(), 0);
+    }
+
+    #[test]
+    fn test_get_value_missing_key() {
+        let row = Row::new();
+        assert_eq!(row.get_value("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_with_capacity_creates_row() {
+        let mut row = Row::with_capacity(10);
+        assert!(row.is_empty());
+        row.set("key", "val");
+        assert_eq!(row.len(), 1);
+    }
+
+    #[test]
+    fn test_into_inner_returns_hashmap() {
+        let row = row![("name", "Alice"), ("age", 30)];
+        let map = row.into_inner();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("name"), Some(&serde_json::json!("Alice")));
+        assert_eq!(map.get("age"), Some(&serde_json::json!(30)));
+    }
+
+    #[test]
+    fn test_deref_access() {
+        let row = row![("city", "Auckland")];
+        // Using Deref to access HashMap methods directly
+        assert!(row.contains_key("city"));
+        assert!(!row.contains_key("country"));
+        assert_eq!(row.get("city"), Some(&serde_json::json!("Auckland")));
+    }
+
+    #[test]
+    fn test_from_array_conversion() {
+        let row = Row::from([
+            ("name".to_string(), JsonValue::String("Bob".to_string())),
+            ("score".to_string(), JsonValue::from(100)),
+        ]);
+        assert_eq!(row.len(), 2);
+        assert_eq!(
+            row.get_value("name"),
+            Some(&JsonValue::String("Bob".to_string()))
+        );
+        assert_eq!(row.get_value("score"), Some(&JsonValue::from(100)));
+    }
+
+    #[test]
+    fn test_from_iterator_conversion() {
+        let pairs = vec![
+            ("alpha".to_string(), JsonValue::from(1)),
+            ("beta".to_string(), JsonValue::from(2)),
+            ("gamma".to_string(), JsonValue::from(3)),
+        ];
+        let row: Row = pairs.into_iter().collect();
+        assert_eq!(row.len(), 3);
+        assert_eq!(row.get_as::<i64>("alpha"), Some(1));
+        assert_eq!(row.get_as::<i64>("beta"), Some(2));
+        assert_eq!(row.get_as::<i64>("gamma"), Some(3));
+    }
+
+    #[test]
+    fn test_deref_mut_access() {
+        let mut row = Row::new();
+        // Using DerefMut to insert via HashMap method directly
+        row.insert("direct".to_string(), JsonValue::Bool(true));
+        assert_eq!(row.get_value("direct"), Some(&JsonValue::Bool(true)));
+    }
+
+    #[test]
+    fn test_row_serialize_deserialize() {
+        let row = row![("key", "value"), ("num", 42)];
+        let json = serde_json::to_string(&row).unwrap();
+        let deserialized: Row = serde_json::from_str(&json).unwrap();
+        assert_eq!(row, deserialized);
+    }
 }

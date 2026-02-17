@@ -71,6 +71,174 @@ impl<T> DeleteBuilder<T> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::QueryBackend;
+    use crate::sql::{ParamStore, SqlOperation, SqlParts};
+    use serde_json::Value as JsonValue;
+    use std::marker::PhantomData;
+    use std::sync::Arc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn make_delete_builder() -> DeleteBuilder<JsonValue> {
+        DeleteBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from("http://localhost"),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Delete, "public", "users"),
+            params: ParamStore::new(),
+            _marker: PhantomData,
+        }
+    }
+
+    // ---- Builder method tests ----
+
+    #[test]
+    fn test_schema_sets_override() {
+        let builder = make_delete_builder().schema("custom");
+        assert_eq!(builder.parts.schema_override.as_deref(), Some("custom"));
+    }
+
+    #[test]
+    fn test_select_sets_returning_star() {
+        let builder = make_delete_builder().select();
+        assert_eq!(builder.parts.returning.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_select_columns_star() {
+        let builder = make_delete_builder().select_columns("*");
+        assert_eq!(builder.parts.returning.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_select_columns_empty() {
+        let builder = make_delete_builder().select_columns("");
+        assert_eq!(builder.parts.returning.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_select_columns_specific() {
+        let builder = make_delete_builder().select_columns("id, name");
+        assert_eq!(builder.parts.returning.as_deref(), Some("\"id\", \"name\""));
+    }
+
+    #[test]
+    fn test_select_columns_complex_expression() {
+        let builder = make_delete_builder().select_columns("count(*)");
+        assert_eq!(builder.parts.returning.as_deref(), Some("count(*)"));
+    }
+
+    // ---- execute() via wiremock ----
+
+    #[tokio::test]
+    async fn test_execute_delete_success_with_returning() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!([{"id": 1, "name": "Alice"}])),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let mut parts = SqlParts::new(SqlOperation::Delete, "public", "users");
+        parts.returning = Some("*".to_string());
+
+        let builder: DeleteBuilder<JsonValue> = DeleteBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params: ParamStore::new(),
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_ok());
+        assert_eq!(resp.data.len(), 1);
+        assert_eq!(resp.data[0]["id"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_execute_delete_success_no_returning() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/rest/v1/users"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let parts = SqlParts::new(SqlOperation::Delete, "public", "users");
+
+        let builder: DeleteBuilder<JsonValue> = DeleteBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params: ParamStore::new(),
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_ok());
+        assert!(resp.data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_execute_delete_error() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_json(serde_json::json!({
+                        "message": "Permission denied",
+                        "code": "42501"
+                    })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let parts = SqlParts::new(SqlOperation::Delete, "public", "users");
+
+        let builder: DeleteBuilder<JsonValue> = DeleteBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params: ParamStore::new(),
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_err());
+        match resp.error.as_ref().unwrap() {
+            supabase_client_core::SupabaseError::PostgRest { status, message, code } => {
+                assert_eq!(*status, 403);
+                assert_eq!(message, "Permission denied");
+                assert_eq!(code.as_deref(), Some("42501"));
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+}
+
 // REST-only mode: only DeserializeOwned + Send needed
 #[cfg(not(feature = "direct-sql"))]
 impl<T> DeleteBuilder<T>

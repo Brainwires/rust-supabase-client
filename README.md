@@ -661,22 +661,34 @@ All crates compile for `wasm32-unknown-unknown`. A dedicated `supabase-client-wa
 # Install wasm-pack if you haven't already
 cargo install wasm-pack
 
-# Build for browser <script type="module"> usage
-wasm-pack build crates/supabase-client-wasm --target web --out-dir ../../pkg
+# Build both browser and Node.js targets
+make wasm
 
-# Or build for bundlers (webpack, vite, etc.)
-wasm-pack build crates/supabase-client-wasm --target bundler --out-dir ../../pkg
+# Or build individually:
+make wasm-web   # Browser (ES modules)  → pkg/web/
+make wasm-node  # Node.js (CommonJS)    → pkg/node/
+
+# Clean WASM output
+make clean-wasm
 ```
 
 This generates:
 
 ```
 pkg/
-  supabase_client_wasm.js         # JS glue code
-  supabase_client_wasm.d.ts       # TypeScript declarations
-  supabase_client_wasm_bg.wasm    # WASM binary
-  package.json                    # npm package metadata
+  web/
+    supabase_client_wasm.js         # ES module glue code
+    supabase_client_wasm.d.ts       # TypeScript declarations
+    supabase_client_wasm_bg.wasm    # WASM binary
+    package.json                    # npm package metadata (type: "module")
+  node/
+    supabase_client_wasm.js         # CommonJS glue code
+    supabase_client_wasm.d.ts       # TypeScript declarations
+    supabase_client_wasm_bg.wasm    # WASM binary
+    package.json                    # npm package metadata (CommonJS)
 ```
+
+> **Node.js note:** The `--target nodejs` build generates CommonJS wrappers that load the WASM binary via Node.js `fs` APIs. The WASM module itself uses Web APIs internally (`fetch`, `WebSocket`). Node.js 18+ provides native `fetch` support; for older versions you may need a polyfill such as `undici`.
 
 ### WASM API Reference
 

@@ -360,4 +360,145 @@ mod tests {
             "https://example.supabase.co/storage/v1/object/public/docs/report.pdf"
         );
     }
+
+    // ─── Wiremock Tests ──────────────────────────────────────
+
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Helper: create a StorageClient pointing at the given mock server.
+    fn mock_client(server: &MockServer) -> StorageClient {
+        StorageClient::new(&server.uri(), "test-anon-key").unwrap()
+    }
+
+    #[tokio::test]
+    async fn wiremock_exists_returns_false_on_404() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/storage/v1/object/avatars/missing.png"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let api = client.from("avatars");
+        let exists = api.exists("missing.png").await.unwrap();
+        assert!(!exists);
+    }
+
+    #[tokio::test]
+    async fn wiremock_exists_returns_false_on_400() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/storage/v1/object/avatars/bad-path"))
+            .respond_with(ResponseTemplate::new(400))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let api = client.from("avatars");
+        let exists = api.exists("bad-path").await.unwrap();
+        assert!(!exists);
+    }
+
+    #[tokio::test]
+    async fn wiremock_exists_returns_true_on_200() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/storage/v1/object/avatars/photo.png"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let api = client.from("avatars");
+        let exists = api.exists("photo.png").await.unwrap();
+        assert!(exists);
+    }
+
+    #[tokio::test]
+    async fn wiremock_exists_returns_error_on_500() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/storage/v1/object/avatars/error.png"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let api = client.from("avatars");
+        let err = api.exists("error.png").await.unwrap_err();
+        match err {
+            StorageError::Api { status, .. } => assert_eq!(status, 500),
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn wiremock_list_buckets_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/storage/v1/bucket"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_json(serde_json::json!({"message": "Forbidden"})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let err = client.list_buckets().await.unwrap_err();
+        match err {
+            StorageError::Api { status, message } => {
+                assert_eq!(status, 403);
+                assert_eq!(message, "Forbidden");
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn wiremock_download_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/storage/v1/object/docs/secret.pdf"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .set_body_json(serde_json::json!({"message": "Unauthorized"})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let api = client.from("docs");
+        let err = api.download("secret.pdf").await.unwrap_err();
+        match err {
+            StorageError::Api { status, message } => {
+                assert_eq!(status, 401);
+                assert_eq!(message, "Unauthorized");
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn wiremock_delete_bucket_error_non_json() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/storage/v1/bucket/locked"))
+            .respond_with(ResponseTemplate::new(409).set_body_string("conflict"))
+            .mount(&server)
+            .await;
+
+        let client = mock_client(&server);
+        let err = client.delete_bucket("locked").await.unwrap_err();
+        match err {
+            StorageError::Api { status, message } => {
+                assert_eq!(status, 409);
+                // Falls back to "HTTP 409" when JSON parsing fails
+                assert_eq!(message, "HTTP 409");
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
 }

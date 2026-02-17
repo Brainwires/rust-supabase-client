@@ -484,3 +484,441 @@ impl<'a> FilterCollector<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::QueryBackend;
+    use crate::select::SelectBuilder;
+    use crate::sql::*;
+    use std::marker::PhantomData;
+    use std::sync::Arc;
+
+    fn make_select() -> SelectBuilder<supabase_client_core::Row> {
+        SelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from("http://localhost"),
+                api_key: Arc::from("key"),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "test"),
+            params: ParamStore::new(),
+            _marker: PhantomData,
+        }
+    }
+
+    #[test]
+    fn test_eq_adds_comparison_filter() {
+        let builder = make_select().eq("name", "Alice");
+        assert_eq!(builder.parts.filters.len(), 1);
+        match &builder.parts.filters[0] {
+            FilterCondition::Comparison { column, operator, param_index } => {
+                assert_eq!(column, "name");
+                assert_eq!(*operator, FilterOperator::Eq);
+                assert_eq!(*param_index, 1);
+            }
+            _ => panic!("expected Comparison filter"),
+        }
+    }
+
+    #[test]
+    fn test_neq_adds_comparison_filter() {
+        let builder = make_select().neq("status", "inactive");
+        assert_eq!(builder.parts.filters.len(), 1);
+        match &builder.parts.filters[0] {
+            FilterCondition::Comparison { column, operator, .. } => {
+                assert_eq!(column, "status");
+                assert_eq!(*operator, FilterOperator::Neq);
+            }
+            _ => panic!("expected Comparison filter"),
+        }
+    }
+
+    #[test]
+    fn test_gt_adds_comparison_filter() {
+        let builder = make_select().gt("age", 18i32);
+        match &builder.parts.filters[0] {
+            FilterCondition::Comparison { column, operator, .. } => {
+                assert_eq!(column, "age");
+                assert_eq!(*operator, FilterOperator::Gt);
+            }
+            _ => panic!("expected Comparison filter"),
+        }
+    }
+
+    #[test]
+    fn test_gte_adds_comparison_filter() {
+        let builder = make_select().gte("score", 90i32);
+        match &builder.parts.filters[0] {
+            FilterCondition::Comparison { column, operator, .. } => {
+                assert_eq!(column, "score");
+                assert_eq!(*operator, FilterOperator::Gte);
+            }
+            _ => panic!("expected Comparison filter"),
+        }
+    }
+
+    #[test]
+    fn test_lt_adds_comparison_filter() {
+        let builder = make_select().lt("price", 100i32);
+        match &builder.parts.filters[0] {
+            FilterCondition::Comparison { column, operator, .. } => {
+                assert_eq!(column, "price");
+                assert_eq!(*operator, FilterOperator::Lt);
+            }
+            _ => panic!("expected Comparison filter"),
+        }
+    }
+
+    #[test]
+    fn test_lte_adds_comparison_filter() {
+        let builder = make_select().lte("count", 50i32);
+        match &builder.parts.filters[0] {
+            FilterCondition::Comparison { column, operator, .. } => {
+                assert_eq!(column, "count");
+                assert_eq!(*operator, FilterOperator::Lte);
+            }
+            _ => panic!("expected Comparison filter"),
+        }
+    }
+
+    #[test]
+    fn test_like_adds_pattern_filter() {
+        let builder = make_select().like("name", "%test%");
+        assert_eq!(builder.parts.filters.len(), 1);
+        match &builder.parts.filters[0] {
+            FilterCondition::Pattern { column, operator, .. } => {
+                assert_eq!(column, "name");
+                assert_eq!(*operator, PatternOperator::Like);
+            }
+            _ => panic!("expected Pattern filter"),
+        }
+    }
+
+    #[test]
+    fn test_ilike_adds_pattern_filter() {
+        let builder = make_select().ilike("name", "%TEST%");
+        match &builder.parts.filters[0] {
+            FilterCondition::Pattern { column, operator, .. } => {
+                assert_eq!(column, "name");
+                assert_eq!(*operator, PatternOperator::ILike);
+            }
+            _ => panic!("expected Pattern filter"),
+        }
+    }
+
+    #[test]
+    fn test_is_null() {
+        let builder = make_select().is("deleted_at", IsValue::Null);
+        match &builder.parts.filters[0] {
+            FilterCondition::Is { column, value } => {
+                assert_eq!(column, "deleted_at");
+                assert_eq!(*value, IsValue::Null);
+            }
+            _ => panic!("expected Is filter"),
+        }
+    }
+
+    #[test]
+    fn test_is_not_null() {
+        let builder = make_select().is("name", IsValue::NotNull);
+        match &builder.parts.filters[0] {
+            FilterCondition::Is { value, .. } => assert_eq!(*value, IsValue::NotNull),
+            _ => panic!("expected Is filter"),
+        }
+    }
+
+    #[test]
+    fn test_is_true() {
+        let builder = make_select().is("active", IsValue::True);
+        match &builder.parts.filters[0] {
+            FilterCondition::Is { value, .. } => assert_eq!(*value, IsValue::True),
+            _ => panic!("expected Is filter"),
+        }
+    }
+
+    #[test]
+    fn test_is_false() {
+        let builder = make_select().is("active", IsValue::False);
+        match &builder.parts.filters[0] {
+            FilterCondition::Is { value, .. } => assert_eq!(*value, IsValue::False),
+            _ => panic!("expected Is filter"),
+        }
+    }
+
+    #[test]
+    fn test_in_with_values() {
+        let builder = make_select().in_("id", vec![1i32, 2, 3]);
+        assert_eq!(builder.parts.filters.len(), 1);
+        match &builder.parts.filters[0] {
+            FilterCondition::In { column, param_indices } => {
+                assert_eq!(column, "id");
+                assert_eq!(param_indices.len(), 3);
+                assert_eq!(param_indices[0], 1);
+                assert_eq!(param_indices[1], 2);
+                assert_eq!(param_indices[2], 3);
+            }
+            _ => panic!("expected In filter"),
+        }
+    }
+
+    #[test]
+    fn test_contains_adds_array_range_filter() {
+        let builder = make_select().contains("tags", "rust");
+        match &builder.parts.filters[0] {
+            FilterCondition::ArrayRange { column, operator, .. } => {
+                assert_eq!(column, "tags");
+                assert_eq!(*operator, ArrayRangeOperator::Contains);
+            }
+            _ => panic!("expected ArrayRange filter"),
+        }
+    }
+
+    #[test]
+    fn test_contained_by_adds_array_range_filter() {
+        let builder = make_select().contained_by("tags", "all_tags");
+        match &builder.parts.filters[0] {
+            FilterCondition::ArrayRange { column, operator, .. } => {
+                assert_eq!(column, "tags");
+                assert_eq!(*operator, ArrayRangeOperator::ContainedBy);
+            }
+            _ => panic!("expected ArrayRange filter"),
+        }
+    }
+
+    #[test]
+    fn test_overlaps_adds_array_range_filter() {
+        let builder = make_select().overlaps("tags", "some_tags");
+        match &builder.parts.filters[0] {
+            FilterCondition::ArrayRange { column, operator, .. } => {
+                assert_eq!(column, "tags");
+                assert_eq!(*operator, ArrayRangeOperator::Overlaps);
+            }
+            _ => panic!("expected ArrayRange filter"),
+        }
+    }
+
+    #[test]
+    fn test_range_gt() {
+        let builder = make_select().range_gt("period", "[2024-01-01,2024-12-31]");
+        match &builder.parts.filters[0] {
+            FilterCondition::ArrayRange { operator, .. } => {
+                assert_eq!(*operator, ArrayRangeOperator::RangeGt);
+            }
+            _ => panic!("expected ArrayRange filter"),
+        }
+    }
+
+    #[test]
+    fn test_range_gte() {
+        let builder = make_select().range_gte("period", "[2024-01-01,2024-12-31]");
+        match &builder.parts.filters[0] {
+            FilterCondition::ArrayRange { operator, .. } => {
+                assert_eq!(*operator, ArrayRangeOperator::RangeGte);
+            }
+            _ => panic!("expected ArrayRange filter"),
+        }
+    }
+
+    #[test]
+    fn test_range_lt() {
+        let builder = make_select().range_lt("period", "[2024-01-01,2024-12-31]");
+        match &builder.parts.filters[0] {
+            FilterCondition::ArrayRange { operator, .. } => {
+                assert_eq!(*operator, ArrayRangeOperator::RangeLt);
+            }
+            _ => panic!("expected ArrayRange filter"),
+        }
+    }
+
+    #[test]
+    fn test_range_lte() {
+        let builder = make_select().range_lte("period", "[2024-01-01,2024-12-31]");
+        match &builder.parts.filters[0] {
+            FilterCondition::ArrayRange { operator, .. } => {
+                assert_eq!(*operator, ArrayRangeOperator::RangeLte);
+            }
+            _ => panic!("expected ArrayRange filter"),
+        }
+    }
+
+    #[test]
+    fn test_range_adjacent() {
+        let builder = make_select().range_adjacent("period", "[2024-01-01,2024-12-31]");
+        match &builder.parts.filters[0] {
+            FilterCondition::ArrayRange { operator, .. } => {
+                assert_eq!(*operator, ArrayRangeOperator::RangeAdjacent);
+            }
+            _ => panic!("expected ArrayRange filter"),
+        }
+    }
+
+    #[test]
+    fn test_text_search_without_config() {
+        let builder = make_select().text_search("body", "hello world", TextSearchType::Plain, None);
+        match &builder.parts.filters[0] {
+            FilterCondition::TextSearch { column, config, search_type, .. } => {
+                assert_eq!(column, "body");
+                assert!(config.is_none());
+                assert_eq!(*search_type, TextSearchType::Plain);
+            }
+            _ => panic!("expected TextSearch filter"),
+        }
+    }
+
+    #[test]
+    fn test_text_search_with_config() {
+        let builder = make_select().text_search(
+            "body",
+            "hello world",
+            TextSearchType::Websearch,
+            Some("english"),
+        );
+        match &builder.parts.filters[0] {
+            FilterCondition::TextSearch { config, search_type, .. } => {
+                assert_eq!(config.as_deref(), Some("english"));
+                assert_eq!(*search_type, TextSearchType::Websearch);
+            }
+            _ => panic!("expected TextSearch filter"),
+        }
+    }
+
+    #[test]
+    fn test_not_wraps_in_not() {
+        let builder = make_select().not(|f| f.eq("active", true));
+        assert_eq!(builder.parts.filters.len(), 1);
+        match &builder.parts.filters[0] {
+            FilterCondition::Not(inner) => {
+                assert!(matches!(inner.as_ref(), FilterCondition::Comparison { .. }));
+            }
+            _ => panic!("expected Not filter"),
+        }
+    }
+
+    #[test]
+    fn test_or_filter_wraps_in_or() {
+        let builder = make_select().or_filter(|f| f.eq("a", 1i32).eq("b", 2i32));
+        assert_eq!(builder.parts.filters.len(), 1);
+        match &builder.parts.filters[0] {
+            FilterCondition::Or(conditions) => {
+                assert_eq!(conditions.len(), 2);
+            }
+            _ => panic!("expected Or filter"),
+        }
+    }
+
+    #[test]
+    fn test_match_filter_creates_match_conditions() {
+        let builder = make_select().match_filter(vec![("name", "Alice"), ("age", "30")]);
+        assert_eq!(builder.parts.filters.len(), 1);
+        match &builder.parts.filters[0] {
+            FilterCondition::Match { conditions } => {
+                assert_eq!(conditions.len(), 2);
+                assert_eq!(conditions[0].0, "name");
+                assert_eq!(conditions[1].0, "age");
+            }
+            _ => panic!("expected Match filter"),
+        }
+    }
+
+    #[test]
+    fn test_filter_raw_sql() {
+        let builder = make_select().filter("age > 18 AND status = 'active'");
+        match &builder.parts.filters[0] {
+            FilterCondition::Raw(sql) => {
+                assert_eq!(sql, "age > 18 AND status = 'active'");
+            }
+            _ => panic!("expected Raw filter"),
+        }
+    }
+
+    #[test]
+    fn test_invalid_column_name_silently_ignored() {
+        let builder = make_select().eq("bad;col", "value");
+        assert!(builder.parts.filters.is_empty());
+    }
+
+    #[test]
+    fn test_invalid_column_name_in_neq_silently_ignored() {
+        let builder = make_select().neq("bad\"col", "value");
+        assert!(builder.parts.filters.is_empty());
+    }
+
+    #[test]
+    fn test_invalid_column_name_in_like_silently_ignored() {
+        let builder = make_select().like("bad--col", "%test%");
+        assert!(builder.parts.filters.is_empty());
+    }
+
+    #[test]
+    fn test_invalid_column_name_in_is_silently_ignored() {
+        let builder = make_select().is("", IsValue::Null);
+        assert!(builder.parts.filters.is_empty());
+    }
+
+    // ---- FilterCollector ----
+
+    #[test]
+    fn test_filter_collector_into_conditions() {
+        let mut params = ParamStore::new();
+        let collector = FilterCollector::new(&mut params)
+            .eq("a", 1i32)
+            .eq("b", 2i32);
+        let conditions = collector.into_conditions();
+        assert_eq!(conditions.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_collector_into_single_condition_single() {
+        let mut params = ParamStore::new();
+        let collector = FilterCollector::new(&mut params).eq("a", 1i32);
+        let condition = collector.into_single_condition();
+        assert!(condition.is_some());
+        assert!(matches!(condition.unwrap(), FilterCondition::Comparison { .. }));
+    }
+
+    #[test]
+    fn test_filter_collector_into_single_condition_empty() {
+        let mut params = ParamStore::new();
+        let collector = FilterCollector::new(&mut params);
+        let condition = collector.into_single_condition();
+        assert!(condition.is_none());
+    }
+
+    #[test]
+    fn test_filter_collector_into_single_condition_multiple() {
+        let mut params = ParamStore::new();
+        let collector = FilterCollector::new(&mut params)
+            .eq("a", 1i32)
+            .neq("b", 2i32);
+        let condition = collector.into_single_condition();
+        assert!(condition.is_some());
+        assert!(matches!(condition.unwrap(), FilterCondition::And(_)));
+    }
+
+    #[test]
+    fn test_filter_collector_all_methods() {
+        let mut params = ParamStore::new();
+        let collector = FilterCollector::new(&mut params)
+            .gt("a", 1i32)
+            .gte("b", 2i32)
+            .lt("c", 3i32)
+            .lte("d", 4i32)
+            .like("e", "%test%")
+            .ilike("f", "%TEST%")
+            .is("g", IsValue::Null);
+        let conditions = collector.into_conditions();
+        assert_eq!(conditions.len(), 7);
+    }
+
+    #[test]
+    fn test_filter_collector_invalid_column_skipped() {
+        let mut params = ParamStore::new();
+        let collector = FilterCollector::new(&mut params)
+            .eq("good_col", 1i32)
+            .eq("bad;col", 2i32);
+        let conditions = collector.into_conditions();
+        assert_eq!(conditions.len(), 1);
+    }
+}

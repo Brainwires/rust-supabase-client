@@ -359,7 +359,7 @@ impl<T: Table> TypedQueryBuilder<T> {
     }
 }
 
-/// Convert a serde_json::Value into an SqlParam.
+/// Convert a serde_json::Value into an SqlParam (visible for testing).
 fn json_to_sql_param(value: JsonValue) -> crate::sql::SqlParam {
     match value {
         JsonValue::Null => crate::sql::SqlParam::Null,
@@ -386,5 +386,357 @@ fn json_to_sql_param(value: JsonValue) -> crate::sql::SqlParam {
             }
         }
         other => crate::sql::SqlParam::Json(other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::QueryBackend;
+    use crate::sql::*;
+    use serde_json::json;
+    use std::sync::Arc;
+    use supabase_client_core::Row;
+
+    fn make_backend() -> QueryBackend {
+        QueryBackend::Rest {
+            http: reqwest::Client::new(),
+            base_url: Arc::from("http://localhost"),
+            api_key: Arc::from("key"),
+            schema: "public".to_string(),
+        }
+    }
+
+    fn make_query_builder() -> QueryBuilder {
+        QueryBuilder::new(make_backend(), "public".to_string(), "test".to_string())
+    }
+
+    // ---- select() ----
+
+    #[test]
+    fn test_select_star() {
+        let builder = make_query_builder().select("*");
+        assert!(builder.parts.select_columns.is_none());
+    }
+
+    #[test]
+    fn test_select_empty() {
+        let builder = make_query_builder().select("");
+        assert!(builder.parts.select_columns.is_none());
+    }
+
+    #[test]
+    fn test_select_named_columns() {
+        let builder = make_query_builder().select("name, age");
+        let cols = builder.parts.select_columns.unwrap();
+        assert_eq!(cols, "\"name\", \"age\"");
+    }
+
+    #[test]
+    fn test_select_count_expression_passes_through() {
+        let builder = make_query_builder().select("count(*)");
+        let cols = builder.parts.select_columns.unwrap();
+        assert_eq!(cols, "count(*)");
+    }
+
+    #[test]
+    fn test_select_quoted_column_passes_through() {
+        let builder = make_query_builder().select("\"my_col\"");
+        let cols = builder.parts.select_columns.unwrap();
+        // Contains quote, passed through unchanged
+        assert_eq!(cols, "\"my_col\"");
+    }
+
+    // ---- insert() ----
+
+    #[test]
+    fn test_insert_sets_up_clauses() {
+        let mut row = Row::new();
+        row.set("name", json!("Alice"));
+        row.set("age", json!(30));
+
+        let builder = make_query_builder().insert(row);
+        assert_eq!(builder.parts.operation, SqlOperation::Insert);
+        assert_eq!(builder.parts.set_clauses.len(), 2);
+        // Sorted by column name: "age" before "name"
+        assert_eq!(builder.parts.set_clauses[0].0, "age");
+        assert_eq!(builder.parts.set_clauses[1].0, "name");
+    }
+
+    // ---- insert_many() ----
+
+    #[test]
+    fn test_insert_many_sets_up_many_rows() {
+        let mut row1 = Row::new();
+        row1.set("name", json!("Alice"));
+        row1.set("age", json!(30));
+
+        let mut row2 = Row::new();
+        row2.set("name", json!("Bob"));
+        row2.set("age", json!(25));
+
+        let builder = make_query_builder().insert_many(vec![row1, row2]);
+        assert_eq!(builder.parts.operation, SqlOperation::Insert);
+        assert_eq!(builder.parts.many_rows.len(), 2);
+        // Each row should have 2 column entries
+        assert_eq!(builder.parts.many_rows[0].len(), 2);
+        assert_eq!(builder.parts.many_rows[1].len(), 2);
+    }
+
+    #[test]
+    fn test_insert_many_empty() {
+        let builder = make_query_builder().insert_many(vec![]);
+        assert!(builder.parts.many_rows.is_empty());
+    }
+
+    // ---- delete() ----
+
+    #[test]
+    fn test_delete_creates_builder() {
+        let builder = make_query_builder().delete();
+        assert_eq!(builder.parts.operation, SqlOperation::Delete);
+        assert!(builder.params.is_empty());
+        assert!(builder.parts.filters.is_empty());
+    }
+
+    // ---- update() ----
+
+    #[test]
+    fn test_update_sets_up_clauses() {
+        let mut row = Row::new();
+        row.set("name", json!("Updated"));
+
+        let builder = make_query_builder().update(row);
+        assert_eq!(builder.parts.operation, SqlOperation::Update);
+        assert_eq!(builder.parts.set_clauses.len(), 1);
+        assert_eq!(builder.parts.set_clauses[0].0, "name");
+    }
+
+    // ---- upsert() ----
+
+    #[test]
+    fn test_upsert_sets_up_clauses() {
+        let mut row = Row::new();
+        row.set("id", json!(1));
+        row.set("name", json!("Alice"));
+
+        let builder = make_query_builder().upsert(row);
+        assert_eq!(builder.parts.operation, SqlOperation::Upsert);
+        assert_eq!(builder.parts.set_clauses.len(), 2);
+    }
+
+    // ---- upsert_many() ----
+
+    #[test]
+    fn test_upsert_many_sets_up_many_rows() {
+        let mut row1 = Row::new();
+        row1.set("id", json!(1));
+        row1.set("name", json!("Alice"));
+
+        let mut row2 = Row::new();
+        row2.set("id", json!(2));
+        row2.set("name", json!("Bob"));
+
+        let builder = make_query_builder().upsert_many(vec![row1, row2]);
+        assert_eq!(builder.parts.operation, SqlOperation::Upsert);
+        assert_eq!(builder.parts.many_rows.len(), 2);
+    }
+
+    // ---- json_to_sql_param (tested through insert) ----
+
+    #[test]
+    fn test_json_to_sql_param_null() {
+        let param = json_to_sql_param(json!(null));
+        assert!(matches!(param, SqlParam::Null));
+    }
+
+    #[test]
+    fn test_json_to_sql_param_bool() {
+        let param = json_to_sql_param(json!(true));
+        assert!(matches!(param, SqlParam::Bool(true)));
+        let param = json_to_sql_param(json!(false));
+        assert!(matches!(param, SqlParam::Bool(false)));
+    }
+
+    #[test]
+    fn test_json_to_sql_param_int_small() {
+        // Small integer fits in i32
+        let param = json_to_sql_param(json!(42));
+        assert!(matches!(param, SqlParam::I32(42)));
+    }
+
+    #[test]
+    fn test_json_to_sql_param_int_large() {
+        // Large integer that exceeds i32 range
+        let big = i64::MAX;
+        let param = json_to_sql_param(json!(big));
+        assert!(matches!(param, SqlParam::I64(_)));
+    }
+
+    #[test]
+    fn test_json_to_sql_param_float() {
+        let param = json_to_sql_param(json!(3.14));
+        match param {
+            SqlParam::F64(v) => assert!((v - 3.14).abs() < 0.001),
+            _ => panic!("expected F64"),
+        }
+    }
+
+    #[test]
+    fn test_json_to_sql_param_string() {
+        let param = json_to_sql_param(json!("hello world"));
+        match param {
+            SqlParam::Text(s) => assert_eq!(s, "hello world"),
+            _ => panic!("expected Text"),
+        }
+    }
+
+    #[test]
+    fn test_json_to_sql_param_uuid_string() {
+        let param = json_to_sql_param(json!("550e8400-e29b-41d4-a716-446655440000"));
+        match param {
+            SqlParam::Uuid(u) => assert_eq!(u.to_string(), "550e8400-e29b-41d4-a716-446655440000"),
+            _ => panic!("expected Uuid, got {:?}", param),
+        }
+    }
+
+    #[test]
+    fn test_json_to_sql_param_json_object() {
+        let param = json_to_sql_param(json!({"key": "value"}));
+        assert!(matches!(param, SqlParam::Json(_)));
+    }
+
+    #[test]
+    fn test_json_to_sql_param_json_array() {
+        let param = json_to_sql_param(json!([1, 2, 3]));
+        assert!(matches!(param, SqlParam::Json(_)));
+    }
+
+    // ---- TypedQueryBuilder ----
+
+    // Minimal Table implementation for testing
+    #[derive(Debug, Clone, serde::Deserialize)]
+    struct TestTable {
+        id: i32,
+        name: String,
+    }
+
+    impl crate::table::Table for TestTable {
+        fn table_name() -> &'static str {
+            "test_table"
+        }
+
+        fn primary_key_columns() -> &'static [&'static str] {
+            &["id"]
+        }
+
+        fn column_names() -> &'static [&'static str] {
+            &["id", "name"]
+        }
+
+        fn insertable_columns() -> &'static [&'static str] {
+            &["name"]
+        }
+
+        fn field_to_column(field: &str) -> Option<&'static str> {
+            match field {
+                "id" => Some("id"),
+                "name" => Some("name"),
+                _ => None,
+            }
+        }
+
+        fn column_to_field(column: &str) -> Option<&'static str> {
+            match column {
+                "id" => Some("id"),
+                "name" => Some("name"),
+                _ => None,
+            }
+        }
+
+        fn bind_insert(&self) -> Vec<SqlParam> {
+            vec![SqlParam::Text(self.name.clone())]
+        }
+
+        fn bind_update(&self) -> Vec<SqlParam> {
+            vec![SqlParam::Text(self.name.clone())]
+        }
+
+        fn bind_primary_key(&self) -> Vec<SqlParam> {
+            vec![SqlParam::I32(self.id)]
+        }
+    }
+
+    #[test]
+    fn test_typed_query_builder_select() {
+        let typed_builder: TypedQueryBuilder<TestTable> =
+            TypedQueryBuilder::new(make_backend(), "public".to_string());
+        let select_builder = typed_builder.select();
+        assert_eq!(select_builder.parts.table, "test_table");
+        assert!(select_builder.parts.select_columns.is_none());
+    }
+
+    #[test]
+    fn test_typed_query_builder_select_columns() {
+        let typed_builder: TypedQueryBuilder<TestTable> =
+            TypedQueryBuilder::new(make_backend(), "public".to_string());
+        let select_builder = typed_builder.select_columns("id, name");
+        let cols = select_builder.parts.select_columns.unwrap();
+        assert_eq!(cols, "\"id\", \"name\"");
+    }
+
+    #[test]
+    fn test_typed_query_builder_delete() {
+        let typed_builder: TypedQueryBuilder<TestTable> =
+            TypedQueryBuilder::new(make_backend(), "public".to_string());
+        let delete_builder = typed_builder.delete();
+        assert_eq!(delete_builder.parts.operation, SqlOperation::Delete);
+        assert_eq!(delete_builder.parts.table, "test_table");
+    }
+
+    #[test]
+    fn test_typed_query_builder_insert() {
+        let typed_builder: TypedQueryBuilder<TestTable> =
+            TypedQueryBuilder::new(make_backend(), "public".to_string());
+        let value = TestTable {
+            id: 1,
+            name: "Alice".to_string(),
+        };
+        let insert_builder = typed_builder.insert(&value);
+        assert_eq!(insert_builder.parts.operation, SqlOperation::Insert);
+        assert_eq!(insert_builder.parts.set_clauses.len(), 1);
+        assert_eq!(insert_builder.parts.set_clauses[0].0, "name");
+    }
+
+    #[test]
+    fn test_typed_query_builder_update() {
+        let typed_builder: TypedQueryBuilder<TestTable> =
+            TypedQueryBuilder::new(make_backend(), "public".to_string());
+        let value = TestTable {
+            id: 1,
+            name: "Updated".to_string(),
+        };
+        let update_builder = typed_builder.update(&value);
+        assert_eq!(update_builder.parts.operation, SqlOperation::Update);
+        // Should have 1 set clause (name, excluding PK)
+        assert_eq!(update_builder.parts.set_clauses.len(), 1);
+        // Should have 1 filter for PK
+        assert_eq!(update_builder.parts.filters.len(), 1);
+    }
+
+    #[test]
+    fn test_typed_query_builder_upsert() {
+        let typed_builder: TypedQueryBuilder<TestTable> =
+            TypedQueryBuilder::new(make_backend(), "public".to_string());
+        let value = TestTable {
+            id: 1,
+            name: "Alice".to_string(),
+        };
+        let upsert_builder = typed_builder.upsert(&value);
+        assert_eq!(upsert_builder.parts.operation, SqlOperation::Upsert);
+        // Should have PK + insertable columns in set_clauses
+        assert_eq!(upsert_builder.parts.set_clauses.len(), 2);
+        // Conflict columns should be set to PK
+        assert_eq!(upsert_builder.parts.conflict_columns, vec!["id"]);
     }
 }

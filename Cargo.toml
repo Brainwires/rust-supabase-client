@@ -82,3 +82,6 @@ rand = "0.9"
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
+
+# Testing
+wiremock = "0.6"

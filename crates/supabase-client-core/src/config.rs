@@ -95,3 +95,60 @@ impl SupabaseConfig {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_sets_url_and_key() {
+        let config = SupabaseConfig::new("http://localhost:54321", "my-anon-key");
+        assert_eq!(config.supabase_url, "http://localhost:54321");
+        assert_eq!(config.supabase_key, "my-anon-key");
+    }
+
+    #[test]
+    fn test_new_defaults_schema_to_public() {
+        let config = SupabaseConfig::new("http://localhost:54321", "key");
+        assert_eq!(config.schema, "public");
+    }
+
+    #[test]
+    fn test_schema_builder_changes_schema() {
+        let config = SupabaseConfig::new("http://localhost:54321", "key").schema("private");
+        assert_eq!(config.schema, "private");
+    }
+
+    #[test]
+    fn test_schema_builder_with_custom_schema() {
+        let config = SupabaseConfig::new("http://localhost:54321", "key").schema("my_schema");
+        assert_eq!(config.schema, "my_schema");
+    }
+
+    #[test]
+    fn test_accessor_fields() {
+        let config =
+            SupabaseConfig::new("https://project.supabase.co", "service-role-key").schema("api");
+        assert_eq!(config.supabase_url, "https://project.supabase.co");
+        assert_eq!(config.supabase_key, "service-role-key");
+        assert_eq!(config.schema, "api");
+    }
+
+    #[test]
+    fn test_new_with_string_owned() {
+        let url = String::from("http://example.com");
+        let key = String::from("secret");
+        let config = SupabaseConfig::new(url, key);
+        assert_eq!(config.supabase_url, "http://example.com");
+        assert_eq!(config.supabase_key, "secret");
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let config = SupabaseConfig::new("http://localhost:54321", "key").schema("custom");
+        let cloned = config.clone();
+        assert_eq!(cloned.supabase_url, config.supabase_url);
+        assert_eq!(cloned.supabase_key, config.supabase_key);
+        assert_eq!(cloned.schema, config.schema);
+    }
+}

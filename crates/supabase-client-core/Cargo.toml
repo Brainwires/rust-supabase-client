@@ -37,3 +37,7 @@ wasm-bindgen-futures.workspace = true
 gloo-timers.workspace = true
 getrandom.workspace = true
 futures-util.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+serde_json.workspace = true

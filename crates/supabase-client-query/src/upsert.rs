@@ -81,6 +81,226 @@ impl<T> UpsertBuilder<T> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::QueryBackend;
+    use crate::sql::{ParamStore, SqlOperation, SqlParam, SqlParts};
+    use serde_json::Value as JsonValue;
+    use std::marker::PhantomData;
+    use std::sync::Arc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn make_upsert_builder() -> UpsertBuilder<JsonValue> {
+        let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "users");
+        let mut params = ParamStore::new();
+        let idx1 = params.push(SqlParam::I32(1));
+        parts.set_clauses.push(("id".to_string(), idx1));
+        let idx2 = params.push(SqlParam::Text("Alice".to_string()));
+        parts.set_clauses.push(("name".to_string(), idx2));
+        UpsertBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from("http://localhost"),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params,
+            _marker: PhantomData,
+        }
+    }
+
+    // ---- Builder method tests ----
+
+    #[test]
+    fn test_on_conflict_sets_columns() {
+        let builder = make_upsert_builder().on_conflict(&["id"]);
+        assert_eq!(builder.parts.conflict_columns, vec!["id".to_string()]);
+    }
+
+    #[test]
+    fn test_on_conflict_multiple_columns() {
+        let builder = make_upsert_builder().on_conflict(&["id", "email"]);
+        assert_eq!(
+            builder.parts.conflict_columns,
+            vec!["id".to_string(), "email".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_on_conflict_constraint_sets_name() {
+        let builder = make_upsert_builder().on_conflict_constraint("users_pkey");
+        assert_eq!(builder.parts.conflict_constraint.as_deref(), Some("users_pkey"));
+    }
+
+    #[test]
+    fn test_ignore_duplicates_sets_flag() {
+        let builder = make_upsert_builder().ignore_duplicates();
+        assert!(builder.parts.ignore_duplicates);
+    }
+
+    #[test]
+    fn test_schema_sets_override() {
+        let builder = make_upsert_builder().schema("custom");
+        assert_eq!(builder.parts.schema_override.as_deref(), Some("custom"));
+    }
+
+    #[test]
+    fn test_select_sets_returning_star() {
+        let builder = make_upsert_builder().select();
+        assert_eq!(builder.parts.returning.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_select_columns_star() {
+        let builder = make_upsert_builder().select_columns("*");
+        assert_eq!(builder.parts.returning.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_select_columns_empty() {
+        let builder = make_upsert_builder().select_columns("");
+        assert_eq!(builder.parts.returning.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_select_columns_specific() {
+        let builder = make_upsert_builder().select_columns("id, name");
+        assert_eq!(builder.parts.returning.as_deref(), Some("\"id\", \"name\""));
+    }
+
+    #[test]
+    fn test_select_columns_complex() {
+        let builder = make_upsert_builder().select_columns("count(*)");
+        assert_eq!(builder.parts.returning.as_deref(), Some("count(*)"));
+    }
+
+    // ---- execute() via wiremock ----
+
+    #[tokio::test]
+    async fn test_execute_upsert_success() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_json(serde_json::json!([{"id": 1, "name": "Alice"}])),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "users");
+        let mut params = ParamStore::new();
+        let idx1 = params.push(SqlParam::I32(1));
+        parts.set_clauses.push(("id".to_string(), idx1));
+        let idx2 = params.push(SqlParam::Text("Alice".to_string()));
+        parts.set_clauses.push(("name".to_string(), idx2));
+        parts.conflict_columns = vec!["id".to_string()];
+        parts.returning = Some("*".to_string());
+
+        let builder: UpsertBuilder<JsonValue> = UpsertBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params,
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_ok());
+        assert_eq!(resp.data.len(), 1);
+        assert_eq!(resp.data[0]["name"], "Alice");
+        assert_eq!(resp.status, supabase_client_core::StatusCode::Created);
+    }
+
+    #[tokio::test]
+    async fn test_execute_upsert_error() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_json(serde_json::json!({
+                        "message": "Constraint violation",
+                        "code": "23514"
+                    })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "users");
+        let mut params = ParamStore::new();
+        let idx1 = params.push(SqlParam::I32(1));
+        parts.set_clauses.push(("id".to_string(), idx1));
+        let idx2 = params.push(SqlParam::Text("Alice".to_string()));
+        parts.set_clauses.push(("name".to_string(), idx2));
+        parts.conflict_columns = vec!["id".to_string()];
+
+        let builder: UpsertBuilder<JsonValue> = UpsertBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params,
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_err());
+        match resp.error.as_ref().unwrap() {
+            supabase_client_core::SupabaseError::PostgRest { status, message, code } => {
+                assert_eq!(*status, 400);
+                assert_eq!(message, "Constraint violation");
+                assert_eq!(code.as_deref(), Some("23514"));
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_upsert_no_returning() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/rest/v1/users"))
+            .respond_with(ResponseTemplate::new(201).set_body_string(""))
+            .mount(&mock_server)
+            .await;
+
+        let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "users");
+        let mut params = ParamStore::new();
+        let idx1 = params.push(SqlParam::I32(1));
+        parts.set_clauses.push(("id".to_string(), idx1));
+        let idx2 = params.push(SqlParam::Text("Alice".to_string()));
+        parts.set_clauses.push(("name".to_string(), idx2));
+        parts.conflict_columns = vec!["id".to_string()];
+
+        let builder: UpsertBuilder<JsonValue> = UpsertBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params,
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_ok());
+        assert!(resp.data.is_empty());
+    }
+}
+
 // REST-only mode: only DeserializeOwned + Send needed
 #[cfg(not(feature = "direct-sql"))]
 impl<T> UpsertBuilder<T>

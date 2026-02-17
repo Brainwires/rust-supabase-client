@@ -1,6 +1,8 @@
 //! WASM/TypeScript bindings for the Supabase client SDK.
 //!
-//! Build with `wasm-pack build crates/supabase-client-wasm --target web --out-dir ../../pkg`.
+//! Build with `make wasm` (both targets) or individually:
+//! - `make wasm-web`  → `pkg/web/`  (ES modules for browsers)
+//! - `make wasm-node` → `pkg/node/` (CommonJS for Node.js)
 
 use wasm_bindgen::prelude::*;
 use serde_json::Value as JsonValue;

@@ -108,6 +108,221 @@ where
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::QueryBackend;
+    use crate::sql::{ExplainFormat, ParamStore, SqlOperation, SqlParts};
+    use serde_json::Value as JsonValue;
+    use std::marker::PhantomData;
+    use std::sync::Arc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn make_select_builder() -> SelectBuilder<JsonValue> {
+        SelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from("http://localhost"),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "users"),
+            params: ParamStore::new(),
+            _marker: PhantomData,
+        }
+    }
+
+    // ---- Builder method tests ----
+
+    #[test]
+    fn test_schema_sets_override() {
+        let builder = make_select_builder().schema("custom_schema");
+        assert_eq!(builder.parts.schema_override.as_deref(), Some("custom_schema"));
+    }
+
+    #[test]
+    fn test_explain_sets_default_options() {
+        let builder = make_select_builder().explain();
+        let opts = builder.parts.explain.as_ref().unwrap();
+        assert!(opts.analyze);
+        assert!(!opts.verbose);
+        assert_eq!(opts.format, ExplainFormat::Json);
+    }
+
+    #[test]
+    fn test_explain_with_custom_options() {
+        let opts = crate::sql::ExplainOptions {
+            analyze: false,
+            verbose: true,
+            format: ExplainFormat::Text,
+        };
+        let builder = make_select_builder().explain_with(opts);
+        let actual = builder.parts.explain.as_ref().unwrap();
+        assert!(!actual.analyze);
+        assert!(actual.verbose);
+        assert_eq!(actual.format, ExplainFormat::Text);
+    }
+
+    #[test]
+    fn test_head_sets_head_mode() {
+        let builder = make_select_builder().head();
+        assert!(builder.parts.head);
+    }
+
+    #[test]
+    fn test_csv_returns_csv_builder() {
+        let builder = make_select_builder();
+        let csv = builder.csv();
+        assert_eq!(csv.parts.table, "users");
+    }
+
+    #[test]
+    fn test_geojson_returns_geojson_builder() {
+        let builder = make_select_builder();
+        let geo = builder.geojson();
+        assert_eq!(geo.parts.table, "users");
+    }
+
+    // ---- execute() via wiremock ----
+
+    #[tokio::test]
+    async fn test_execute_success_json_array() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!([
+                        {"id": 1, "name": "Alice"},
+                        {"id": 2, "name": "Bob"}
+                    ])),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let builder: SelectBuilder<JsonValue> = SelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "users"),
+            params: ParamStore::new(),
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_ok());
+        assert_eq!(resp.data.len(), 2);
+        assert_eq!(resp.data[0]["name"], "Alice");
+        assert_eq!(resp.data[1]["name"], "Bob");
+    }
+
+    #[tokio::test]
+    async fn test_execute_empty_result() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!([])),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let builder: SelectBuilder<JsonValue> = SelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "users"),
+            params: ParamStore::new(),
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_ok());
+        assert!(resp.data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_execute_error_4xx() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/nonexistent"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_json(serde_json::json!({
+                        "message": "Relation not found",
+                        "code": "42P01"
+                    })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let builder: SelectBuilder<JsonValue> = SelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "nonexistent"),
+            params: ParamStore::new(),
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_err());
+        match resp.error.as_ref().unwrap() {
+            supabase_client_core::SupabaseError::PostgRest { status, message, code } => {
+                assert_eq!(*status, 404);
+                assert_eq!(message, "Relation not found");
+                assert_eq!(code.as_deref(), Some("42P01"));
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_head_mode() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-range", "0-9/55"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let builder: SelectBuilder<JsonValue> = SelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts: {
+                let mut p = SqlParts::new(SqlOperation::Select, "public", "users");
+                p.head = true;
+                p
+            },
+            params: ParamStore::new(),
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_ok());
+        assert!(resp.data.is_empty());
+        assert_eq!(resp.count, Some(55));
+    }
+}
+
 // Direct-SQL mode: additional FromRow + Unpin bounds
 #[cfg(feature = "direct-sql")]
 impl<T> SelectBuilder<T>

@@ -63,3 +63,19 @@ impl SupabaseClientAuthExt for SupabaseClient {
         AuthClient::new(self.supabase_url(), self.api_key())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use supabase_client_core::config::SupabaseConfig;
+
+    #[test]
+    fn test_auth_extension_trait() {
+        let config = SupabaseConfig::new("http://localhost:54321", "test-key");
+        let client = SupabaseClient::new(config).unwrap();
+        let auth = client.auth();
+        assert!(auth.is_ok());
+        let auth = auth.unwrap();
+        assert_eq!(auth.base_url().path(), "/auth/v1");
+    }
+}

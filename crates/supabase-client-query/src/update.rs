@@ -71,6 +71,186 @@ impl<T> UpdateBuilder<T> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::QueryBackend;
+    use crate::sql::{ParamStore, SqlOperation, SqlParam, SqlParts};
+    use serde_json::Value as JsonValue;
+    use std::marker::PhantomData;
+    use std::sync::Arc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn make_update_builder() -> UpdateBuilder<JsonValue> {
+        let mut parts = SqlParts::new(SqlOperation::Update, "public", "users");
+        let mut params = ParamStore::new();
+        let idx = params.push(SqlParam::Text("Bob".to_string()));
+        parts.set_clauses.push(("name".to_string(), idx));
+        UpdateBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from("http://localhost"),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params,
+            _marker: PhantomData,
+        }
+    }
+
+    // ---- Builder method tests ----
+
+    #[test]
+    fn test_schema_sets_override() {
+        let builder = make_update_builder().schema("custom");
+        assert_eq!(builder.parts.schema_override.as_deref(), Some("custom"));
+    }
+
+    #[test]
+    fn test_select_sets_returning_star() {
+        let builder = make_update_builder().select();
+        assert_eq!(builder.parts.returning.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_select_columns_star() {
+        let builder = make_update_builder().select_columns("*");
+        assert_eq!(builder.parts.returning.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_select_columns_empty() {
+        let builder = make_update_builder().select_columns("");
+        assert_eq!(builder.parts.returning.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_select_columns_specific() {
+        let builder = make_update_builder().select_columns("id, name");
+        assert_eq!(builder.parts.returning.as_deref(), Some("\"id\", \"name\""));
+    }
+
+    #[test]
+    fn test_select_columns_complex_expression() {
+        let builder = make_update_builder().select_columns("count(*)");
+        assert_eq!(builder.parts.returning.as_deref(), Some("count(*)"));
+    }
+
+    // ---- execute() via wiremock ----
+
+    #[tokio::test]
+    async fn test_execute_update_success() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!([{"id": 1, "name": "Bob"}])),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let mut parts = SqlParts::new(SqlOperation::Update, "public", "users");
+        let mut params = ParamStore::new();
+        let idx = params.push(SqlParam::Text("Bob".to_string()));
+        parts.set_clauses.push(("name".to_string(), idx));
+        parts.returning = Some("*".to_string());
+
+        let builder: UpdateBuilder<JsonValue> = UpdateBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params,
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_ok());
+        assert_eq!(resp.data.len(), 1);
+        assert_eq!(resp.data[0]["name"], "Bob");
+    }
+
+    #[tokio::test]
+    async fn test_execute_update_error() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_json(serde_json::json!({
+                        "message": "Column not found",
+                        "code": "42703"
+                    })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let mut parts = SqlParts::new(SqlOperation::Update, "public", "users");
+        let mut params = ParamStore::new();
+        let idx = params.push(SqlParam::Text("Bob".to_string()));
+        parts.set_clauses.push(("nonexistent".to_string(), idx));
+
+        let builder: UpdateBuilder<JsonValue> = UpdateBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params,
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_err());
+        match resp.error.as_ref().unwrap() {
+            supabase_client_core::SupabaseError::PostgRest { status, message, .. } => {
+                assert_eq!(*status, 400);
+                assert_eq!(message, "Column not found");
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_update_no_returning() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/rest/v1/users"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let mut parts = SqlParts::new(SqlOperation::Update, "public", "users");
+        let mut params = ParamStore::new();
+        let idx = params.push(SqlParam::Text("Bob".to_string()));
+        parts.set_clauses.push(("name".to_string(), idx));
+
+        let builder: UpdateBuilder<JsonValue> = UpdateBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params,
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_ok());
+        assert!(resp.data.is_empty());
+    }
+}
+
 // REST-only mode: only DeserializeOwned + Send needed
 #[cfg(not(feature = "direct-sql"))]
 impl<T> UpdateBuilder<T>

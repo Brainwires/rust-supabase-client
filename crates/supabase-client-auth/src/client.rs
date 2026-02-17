@@ -1934,4 +1934,443 @@ mod tests {
         assert_eq!(body["gotrue_meta_security"]["captcha_token"], "captcha-abc-123");
         assert_eq!(body["email"], "test@example.com");
     }
+
+    // ─── Wiremock Tests ──────────────────────────────────────
+
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Helper: create an AuthClient pointing at the given mock server.
+    fn mock_auth(server: &MockServer) -> AuthClient {
+        AuthClient::new(&server.uri(), "test-anon-key").unwrap()
+    }
+
+    /// Helper: build a valid session JSON response body.
+    fn session_json() -> serde_json::Value {
+        json!({
+            "access_token": "mock-access-token",
+            "refresh_token": "mock-refresh-token",
+            "expires_in": 3600,
+            "expires_at": 9999999999i64,
+            "token_type": "bearer",
+            "user": {
+                "id": "user-123",
+                "aud": "authenticated",
+                "role": "authenticated",
+                "email": "test@example.com"
+            }
+        })
+    }
+
+    // ─── Sign-Up Error ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn wiremock_sign_up_422_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/auth/v1/signup"))
+            .respond_with(
+                ResponseTemplate::new(422)
+                    .set_body_json(json!({
+                        "msg": "Password should be at least 6 characters",
+                        "error_code": "weak_password"
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let err = auth.sign_up_with_email("user@test.com", "short").await.unwrap_err();
+        match err {
+            AuthError::Api { status, message, error_code } => {
+                assert_eq!(status, 422);
+                assert_eq!(message, "Password should be at least 6 characters");
+                assert_eq!(error_code, Some(crate::error::AuthErrorCode::WeakPassword));
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    // ─── Sign-In Error ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn wiremock_sign_in_invalid_credentials() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/auth/v1/token"))
+            .and(query_param("grant_type", "password"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_json(json!({
+                        "msg": "Invalid login credentials",
+                        "error_code": "invalid_credentials"
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let err = auth
+            .sign_in_with_password_email("wrong@test.com", "badpass")
+            .await
+            .unwrap_err();
+        match err {
+            AuthError::Api { status, message, error_code } => {
+                assert_eq!(status, 400);
+                assert_eq!(message, "Invalid login credentials");
+                assert_eq!(
+                    error_code,
+                    Some(crate::error::AuthErrorCode::InvalidCredentials)
+                );
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    // ─── Token Refresh Error ────────────────────────────────
+
+    #[tokio::test]
+    async fn wiremock_token_refresh_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/auth/v1/token"))
+            .and(query_param("grant_type", "refresh_token"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_json(json!({
+                        "msg": "Invalid Refresh Token: Already Used",
+                        "error_code": "refresh_token_not_found"
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let err = auth.refresh_session("expired-token").await.unwrap_err();
+        match err {
+            AuthError::Api { status, message, error_code } => {
+                assert_eq!(status, 400);
+                assert!(message.contains("Already Used"));
+                assert_eq!(
+                    error_code,
+                    Some(crate::error::AuthErrorCode::RefreshTokenNotFound)
+                );
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    // ─── Password Reset Error ───────────────────────────────
+
+    #[tokio::test]
+    async fn wiremock_password_reset_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/auth/v1/recover"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .set_body_json(json!({
+                        "msg": "Rate limit exceeded",
+                        "error_code": "over_request_rate_limit"
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let err = auth
+            .reset_password_for_email("user@test.com", None)
+            .await
+            .unwrap_err();
+        match err {
+            AuthError::Api { status, message, error_code } => {
+                assert_eq!(status, 429);
+                assert_eq!(message, "Rate limit exceeded");
+                assert_eq!(
+                    error_code,
+                    Some(crate::error::AuthErrorCode::OverRequestRateLimit)
+                );
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    // ─── Verify OTP Error ───────────────────────────────────
+
+    #[tokio::test]
+    async fn wiremock_verify_otp_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/auth/v1/verify"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_json(json!({
+                        "msg": "Token has expired or is invalid",
+                        "error_code": "otp_expired"
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let params = crate::params::VerifyOtpParams {
+            token: "999999".to_string(),
+            otp_type: OtpType::Email,
+            email: Some("user@test.com".to_string()),
+            phone: None,
+            token_hash: None,
+        };
+        let err = auth.verify_otp(params).await.unwrap_err();
+        match err {
+            AuthError::Api { status, message, error_code } => {
+                assert_eq!(status, 403);
+                assert!(message.contains("expired"));
+                assert_eq!(
+                    error_code,
+                    Some(crate::error::AuthErrorCode::OtpExpired)
+                );
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    // ─── Admin API Error ────────────────────────────────────
+
+    #[tokio::test]
+    async fn wiremock_admin_list_users_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/auth/v1/admin/users"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .set_body_json(json!({
+                        "msg": "Invalid API key"
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let admin = auth.admin();
+        let err = admin.list_users(None, None).await.unwrap_err();
+        match err {
+            AuthError::Api { status, message, .. } => {
+                assert_eq!(status, 401);
+                assert_eq!(message, "Invalid API key");
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn wiremock_admin_delete_user_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/auth/v1/admin/users/nonexistent-id"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_json(json!({
+                        "msg": "User not found",
+                        "error_code": "user_not_found"
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let admin = auth.admin();
+        let err = admin.delete_user("nonexistent-id").await.unwrap_err();
+        match err {
+            AuthError::Api { status, message, .. } => {
+                assert_eq!(status, 404);
+                assert_eq!(message, "User not found");
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    // ─── SSO Error ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn wiremock_sso_sign_in_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/auth/v1/sso"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_json(json!({
+                        "msg": "No SSO provider found for domain",
+                        "error_code": "sso_provider_not_found"
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let params = crate::params::SsoSignInParams::domain("unknown.com");
+        let err = auth.sign_in_with_sso(params).await.unwrap_err();
+        match err {
+            AuthError::Api { status, message, error_code } => {
+                assert_eq!(status, 404);
+                assert!(message.contains("SSO provider"));
+                assert_eq!(
+                    error_code,
+                    Some(crate::error::AuthErrorCode::SsoProviderNotFound)
+                );
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    // ─── Identity Link Error ────────────────────────────────
+
+    #[tokio::test]
+    async fn wiremock_link_identity_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/auth/v1/user/identities/authorize"))
+            .respond_with(
+                ResponseTemplate::new(422)
+                    .set_body_json(json!({
+                        "msg": "Identity already exists",
+                        "error_code": "identity_already_exists"
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let err = auth
+            .link_identity("access-token", OAuthProvider::Google)
+            .await
+            .unwrap_err();
+        match err {
+            AuthError::Api { status, message, error_code } => {
+                assert_eq!(status, 422);
+                assert!(message.contains("Identity already exists"));
+                assert_eq!(
+                    error_code,
+                    Some(crate::error::AuthErrorCode::IdentityAlreadyExists)
+                );
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    // ─── Identity Unlink Error ──────────────────────────────
+
+    #[tokio::test]
+    async fn wiremock_unlink_identity_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/auth/v1/user/identities/identity-123"))
+            .respond_with(
+                ResponseTemplate::new(422)
+                    .set_body_json(json!({
+                        "msg": "Unlinking this identity is not allowed",
+                        "error_code": "single_identity_not_deletable"
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let err = auth
+            .unlink_identity("access-token", "identity-123")
+            .await
+            .unwrap_err();
+        match err {
+            AuthError::Api { status, message, error_code } => {
+                assert_eq!(status, 422);
+                assert!(message.contains("not allowed"));
+                assert_eq!(
+                    error_code,
+                    Some(crate::error::AuthErrorCode::SingleIdentityNotDeletable)
+                );
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    // ─── Sign-In Success ────────────────────────────────────
+
+    #[tokio::test]
+    async fn wiremock_sign_in_success_stores_session() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/auth/v1/token"))
+            .and(query_param("grant_type", "password"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(session_json()),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let session = auth
+            .sign_in_with_password_email("test@example.com", "password123")
+            .await
+            .unwrap();
+        assert_eq!(session.access_token, "mock-access-token");
+        assert_eq!(session.user.id, "user-123");
+
+        // Verify session is stored
+        let stored = auth.get_session().await.unwrap();
+        assert_eq!(stored.access_token, "mock-access-token");
+    }
+
+    // ─── Sign-Out Error ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn wiremock_sign_out_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/auth/v1/logout"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .set_body_json(json!({
+                        "msg": "Invalid token"
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let err = auth.sign_out("bad-token").await.unwrap_err();
+        match err {
+            AuthError::Api { status, .. } => {
+                assert_eq!(status, 401);
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
+
+    // ─── Non-JSON error response fallback ───────────────────
+
+    #[tokio::test]
+    async fn wiremock_sign_in_non_json_error_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/auth/v1/token"))
+            .and(query_param("grant_type", "password"))
+            .respond_with(
+                ResponseTemplate::new(500).set_body_string("Internal Server Error"),
+            )
+            .mount(&server)
+            .await;
+
+        let auth = mock_auth(&server);
+        let err = auth
+            .sign_in_with_password_email("user@test.com", "pass")
+            .await
+            .unwrap_err();
+        match err {
+            AuthError::Api { status, message, error_code } => {
+                assert_eq!(status, 500);
+                assert_eq!(message, "HTTP 500");
+                assert!(error_code.is_none());
+            }
+            other => panic!("Expected Api error, got: {:?}", other),
+        }
+    }
 }

@@ -57,3 +57,19 @@ impl SupabaseClientStorageExt for SupabaseClient {
         StorageClient::new(self.supabase_url(), self.api_key())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use supabase_client_core::config::SupabaseConfig;
+
+    #[test]
+    fn test_storage_extension_trait() {
+        let config = SupabaseConfig::new("http://localhost:54321", "test-key");
+        let client = SupabaseClient::new(config).unwrap();
+        let storage = client.storage();
+        assert!(storage.is_ok());
+        let storage = storage.unwrap();
+        assert_eq!(storage.base_url().path(), "/storage/v1");
+    }
+}

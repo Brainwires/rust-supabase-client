@@ -57,3 +57,19 @@ impl SupabaseClientRealtimeExt for SupabaseClient {
         RealtimeClient::new(self.supabase_url(), self.api_key())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use supabase_client_core::config::SupabaseConfig;
+
+    #[test]
+    fn test_realtime_extension_trait() {
+        let config = SupabaseConfig::new("http://localhost:54321", "test-key");
+        let client = SupabaseClient::new(config).unwrap();
+        let realtime = client.realtime();
+        assert!(realtime.is_ok());
+        let realtime = realtime.unwrap();
+        assert!(realtime.is_connected() == false);
+    }
+}

@@ -126,3 +126,104 @@ fn make_backend(client: &SupabaseClient) -> QueryBackend {
         schema: client.schema().to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use supabase_client_core::SupabaseConfig;
+
+    fn make_client() -> SupabaseClient {
+        let config = SupabaseConfig {
+            supabase_url: "http://localhost:54321".to_string(),
+            supabase_key: "test-key".to_string(),
+            schema: "public".to_string(),
+            #[cfg(feature = "direct-sql")]
+            database_url: None,
+            #[cfg(feature = "direct-sql")]
+            pool: Default::default(),
+        };
+        SupabaseClient::new(config).unwrap()
+    }
+
+    #[test]
+    fn test_from_returns_query_builder() {
+        let client = make_client();
+        // client.from() should return a QueryBuilder which we can call select on
+        let select_builder = client.from("users").select("*");
+        assert_eq!(select_builder.parts.table, "users");
+        assert_eq!(select_builder.parts.schema, "public");
+        assert!(select_builder.parts.select_columns.is_none());
+    }
+
+    #[test]
+    fn test_from_typed_returns_typed_query_builder() {
+        // Minimal Table implementation for testing
+        #[derive(Debug, Clone, serde::Deserialize)]
+        struct MyTable {
+            id: i32,
+        }
+
+        impl crate::table::Table for MyTable {
+            fn table_name() -> &'static str {
+                "my_table"
+            }
+
+            fn primary_key_columns() -> &'static [&'static str] {
+                &["id"]
+            }
+
+            fn column_names() -> &'static [&'static str] {
+                &["id"]
+            }
+
+            fn insertable_columns() -> &'static [&'static str] {
+                &[]
+            }
+
+            fn field_to_column(field: &str) -> Option<&'static str> {
+                match field {
+                    "id" => Some("id"),
+                    _ => None,
+                }
+            }
+
+            fn column_to_field(column: &str) -> Option<&'static str> {
+                match column {
+                    "id" => Some("id"),
+                    _ => None,
+                }
+            }
+
+            fn bind_insert(&self) -> Vec<SqlParam> {
+                vec![]
+            }
+
+            fn bind_update(&self) -> Vec<SqlParam> {
+                vec![]
+            }
+
+            fn bind_primary_key(&self) -> Vec<SqlParam> {
+                vec![SqlParam::I32(self.id)]
+            }
+        }
+
+        let client = make_client();
+        let select_builder = client.from_typed::<MyTable>().select();
+        assert_eq!(select_builder.parts.table, "my_table");
+        assert_eq!(select_builder.parts.schema, "public");
+    }
+
+    #[test]
+    fn test_make_backend_creates_rest() {
+        let client = make_client();
+        let backend = make_backend(&client);
+        match &backend {
+            QueryBackend::Rest { base_url, schema, .. } => {
+                assert_eq!(base_url.as_ref(), "http://localhost:54321");
+                assert_eq!(schema, "public");
+            }
+            #[cfg(feature = "direct-sql")]
+            _ => panic!("expected Rest backend"),
+        }
+    }
+}

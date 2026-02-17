@@ -146,4 +146,125 @@ mod tests {
         headers.insert("Accept", HeaderValue::from_static("text/csv"));
         assert_eq!(headers.get("Accept").unwrap(), "text/csv");
     }
+
+    #[test]
+    fn test_csv_schema_sets_override() {
+        let builder = CsvSelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: "http://localhost".into(),
+                api_key: "key".into(),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "cities"),
+            params: ParamStore::new(),
+        };
+        let builder = builder.schema("custom");
+        assert_eq!(builder.parts.schema_override.as_deref(), Some("custom"));
+    }
+
+    // ---- execute() via wiremock ----
+
+    #[tokio::test]
+    async fn test_csv_execute_success() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let csv_body = "id,name\n1,Alice\n2,Bob\n";
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(csv_body),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let builder = CsvSelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: mock_server.uri().into(),
+                api_key: "test-key".into(),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "users"),
+            params: ParamStore::new(),
+        };
+
+        let result = builder.execute().await;
+        assert!(result.is_ok());
+        let csv = result.unwrap();
+        assert!(csv.contains("id,name"));
+        assert!(csv.contains("1,Alice"));
+        assert!(csv.contains("2,Bob"));
+    }
+
+    #[tokio::test]
+    async fn test_csv_execute_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/nonexistent"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_string("Relation not found"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let builder = CsvSelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: mock_server.uri().into(),
+                api_key: "test-key".into(),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "nonexistent"),
+            params: ParamStore::new(),
+        };
+
+        let result = builder.execute().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SupabaseError::PostgRest { status, .. } => {
+                assert_eq!(status, 404);
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_csv_execute_empty_result() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("id,name\n"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let builder = CsvSelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: mock_server.uri().into(),
+                api_key: "test-key".into(),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "users"),
+            params: ParamStore::new(),
+        };
+
+        let result = builder.execute().await;
+        assert!(result.is_ok());
+        let csv = result.unwrap();
+        assert!(csv.contains("id,name"));
+    }
 }

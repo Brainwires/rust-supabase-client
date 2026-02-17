@@ -131,3 +131,69 @@ impl SupabaseClient {
         self.pool.as_ref().map_or(true, |p| p.is_closed())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::SupabaseConfig;
+
+    fn test_config() -> SupabaseConfig {
+        SupabaseConfig::new("http://localhost:54321", "test-anon-key")
+    }
+
+    #[test]
+    fn test_new_succeeds_with_valid_config() {
+        let client = SupabaseClient::new(test_config());
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_supabase_url_returns_correct_url() {
+        let client = SupabaseClient::new(test_config()).unwrap();
+        assert_eq!(client.supabase_url(), "http://localhost:54321");
+    }
+
+    #[test]
+    fn test_api_key_returns_correct_key() {
+        let client = SupabaseClient::new(test_config()).unwrap();
+        assert_eq!(client.api_key(), "test-anon-key");
+    }
+
+    #[test]
+    fn test_schema_returns_public_by_default() {
+        let client = SupabaseClient::new(test_config()).unwrap();
+        assert_eq!(client.schema(), "public");
+    }
+
+    #[test]
+    fn test_schema_returns_custom_schema() {
+        let config = SupabaseConfig::new("http://localhost:54321", "key").schema("custom");
+        let client = SupabaseClient::new(config).unwrap();
+        assert_eq!(client.schema(), "custom");
+    }
+
+    #[test]
+    fn test_http_returns_client_reference() {
+        let client = SupabaseClient::new(test_config()).unwrap();
+        // Verify we can get a reference to the HTTP client (non-null check)
+        let _http: &reqwest::Client = client.http();
+    }
+
+    #[test]
+    fn test_config_returns_config_reference() {
+        let client = SupabaseClient::new(test_config()).unwrap();
+        let config = client.config();
+        assert_eq!(config.supabase_url, "http://localhost:54321");
+        assert_eq!(config.supabase_key, "test-anon-key");
+        assert_eq!(config.schema, "public");
+    }
+
+    #[test]
+    fn test_client_is_clone() {
+        let client = SupabaseClient::new(test_config()).unwrap();
+        let cloned = client.clone();
+        assert_eq!(cloned.supabase_url(), client.supabase_url());
+        assert_eq!(cloned.api_key(), client.api_key());
+        assert_eq!(cloned.schema(), client.schema());
+    }
+}

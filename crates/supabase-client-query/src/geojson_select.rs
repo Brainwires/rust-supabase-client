@@ -155,4 +155,142 @@ mod tests {
         headers.insert("Accept", HeaderValue::from_static("application/geo+json"));
         assert_eq!(headers.get("Accept").unwrap(), "application/geo+json");
     }
+
+    #[test]
+    fn test_geojson_schema_sets_override() {
+        let builder = GeoJsonSelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: "http://localhost".into(),
+                api_key: "key".into(),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "cities"),
+            params: ParamStore::new(),
+        };
+        let builder = builder.schema("geo_schema");
+        assert_eq!(builder.parts.schema_override.as_deref(), Some("geo_schema"));
+    }
+
+    // ---- execute() via wiremock ----
+
+    #[tokio::test]
+    async fn test_geojson_execute_success() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let geojson = serde_json::json!({
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [174.7633, -36.8485]
+                    },
+                    "properties": {
+                        "name": "Auckland"
+                    }
+                }
+            ]
+        });
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/cities"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(geojson.clone()),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let builder = GeoJsonSelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: mock_server.uri().into(),
+                api_key: "test-key".into(),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "cities"),
+            params: ParamStore::new(),
+        };
+
+        let result = builder.execute().await;
+        assert!(result.is_ok());
+        let value = result.unwrap();
+        assert_eq!(value["type"], "FeatureCollection");
+        assert_eq!(value["features"][0]["properties"]["name"], "Auckland");
+    }
+
+    #[tokio::test]
+    async fn test_geojson_execute_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/nonexistent"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_string("Relation not found"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let builder = GeoJsonSelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: mock_server.uri().into(),
+                api_key: "test-key".into(),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "nonexistent"),
+            params: ParamStore::new(),
+        };
+
+        let result = builder.execute().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SupabaseError::PostgRest { status, .. } => {
+                assert_eq!(status, 404);
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_geojson_execute_invalid_json_body() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/rest/v1/cities"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("this is not json"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let builder = GeoJsonSelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: mock_server.uri().into(),
+                api_key: "test-key".into(),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "cities"),
+            params: ParamStore::new(),
+        };
+
+        let result = builder.execute().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SupabaseError::Serialization(msg) => {
+                assert!(msg.contains("Failed to parse GeoJSON"));
+            }
+            other => panic!("Expected Serialization error, got {:?}", other),
+        }
+    }
 }

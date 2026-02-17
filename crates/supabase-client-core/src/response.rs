@@ -137,3 +137,185 @@ where
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ok_response() {
+        let resp = SupabaseResponse::ok(vec![1, 2, 3]);
+        assert_eq!(resp.data, vec![1, 2, 3]);
+        assert!(resp.error.is_none());
+        assert_eq!(resp.status, StatusCode::Ok);
+        assert_eq!(resp.count, None);
+    }
+
+    #[test]
+    fn test_ok_with_count() {
+        let resp = SupabaseResponse::ok_with_count(vec!["a", "b"], 10);
+        assert_eq!(resp.data, vec!["a", "b"]);
+        assert_eq!(resp.count, Some(10));
+        assert_eq!(resp.status, StatusCode::Ok);
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn test_created_response() {
+        let resp = SupabaseResponse::created(vec![42]);
+        assert_eq!(resp.data, vec![42]);
+        assert_eq!(resp.status, StatusCode::Created);
+        assert!(resp.error.is_none());
+        assert_eq!(resp.count, None);
+    }
+
+    #[test]
+    fn test_error_response_no_rows() {
+        let resp = SupabaseResponse::<i32>::error(SupabaseError::NoRows);
+        assert!(resp.data.is_empty());
+        assert_eq!(resp.status, StatusCode::NotFound);
+        assert!(resp.error.is_some());
+    }
+
+    #[test]
+    fn test_error_response_generic() {
+        let resp =
+            SupabaseResponse::<i32>::error(SupabaseError::Http("connection failed".to_string()));
+        assert!(resp.data.is_empty());
+        assert_eq!(resp.status, StatusCode::InternalError);
+        assert!(resp.error.is_some());
+    }
+
+    #[test]
+    fn test_no_content_response() {
+        let resp = SupabaseResponse::<String>::no_content();
+        assert!(resp.data.is_empty());
+        assert_eq!(resp.status, StatusCode::NoContent);
+        assert!(resp.error.is_none());
+        assert_eq!(resp.count, None);
+    }
+
+    #[test]
+    fn test_is_ok_for_ok_response() {
+        let resp = SupabaseResponse::ok(vec![1]);
+        assert!(resp.is_ok());
+        assert!(!resp.is_err());
+    }
+
+    #[test]
+    fn test_is_err_for_error_response() {
+        let resp = SupabaseResponse::<i32>::error(SupabaseError::NoRows);
+        assert!(resp.is_err());
+        assert!(!resp.is_ok());
+    }
+
+    #[test]
+    fn test_into_result_ok_path() {
+        let resp = SupabaseResponse::ok(vec![10, 20, 30]);
+        let result = resp.into_result();
+        assert_eq!(result.unwrap(), vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn test_into_result_error_path() {
+        let resp = SupabaseResponse::<i32>::error(SupabaseError::NoRows);
+        let result = resp.into_result();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_first_non_empty() {
+        let resp = SupabaseResponse::ok(vec![100, 200]);
+        assert_eq!(resp.first(), Some(&100));
+    }
+
+    #[test]
+    fn test_first_empty() {
+        let resp = SupabaseResponse::<i32>::ok(vec![]);
+        assert_eq!(resp.first(), None);
+    }
+
+    #[test]
+    fn test_into_single_with_one_row() {
+        let resp = SupabaseResponse::ok(vec![42]);
+        let result = resp.into_single();
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_into_single_with_zero_rows() {
+        let resp = SupabaseResponse::<i32>::ok(vec![]);
+        let result = resp.into_single();
+        match result {
+            Err(SupabaseError::NoRows) => {} // expected
+            other => panic!("Expected NoRows, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_into_single_with_multiple_rows() {
+        let resp = SupabaseResponse::ok(vec![1, 2, 3]);
+        let result = resp.into_single();
+        match result {
+            Err(SupabaseError::MultipleRows(n)) => assert_eq!(n, 3),
+            other => panic!("Expected MultipleRows(3), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_into_single_with_error_set() {
+        let resp = SupabaseResponse::<i32>::error(SupabaseError::Config("bad".to_string()));
+        let result = resp.into_single();
+        match result {
+            Err(SupabaseError::Config(msg)) => assert_eq!(msg, "bad"),
+            other => panic!("Expected Config error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_into_maybe_single_with_zero_rows() {
+        let resp = SupabaseResponse::<i32>::ok(vec![]);
+        let result = resp.into_maybe_single();
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn test_into_maybe_single_with_one_row() {
+        let resp = SupabaseResponse::ok(vec![99]);
+        let result = resp.into_maybe_single();
+        assert_eq!(result.unwrap(), Some(99));
+    }
+
+    #[test]
+    fn test_into_maybe_single_with_multiple_rows() {
+        let resp = SupabaseResponse::ok(vec![1, 2, 3]);
+        let result = resp.into_maybe_single();
+        match result {
+            Err(SupabaseError::MultipleRows(n)) => assert_eq!(n, 3),
+            other => panic!("Expected MultipleRows(3), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_into_maybe_single_with_error_set() {
+        let resp =
+            SupabaseResponse::<i32>::error(SupabaseError::Storage("no bucket".to_string()));
+        let result = resp.into_maybe_single();
+        match result {
+            Err(SupabaseError::Storage(msg)) => assert_eq!(msg, "no bucket"),
+            other => panic!("Expected Storage error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_with_status_changes_status() {
+        let resp = SupabaseResponse::ok(vec![1i32]).with_status(StatusCode::Created);
+        assert_eq!(resp.status, StatusCode::Created);
+    }
+
+    #[test]
+    fn test_with_count_sets_count() {
+        let resp = SupabaseResponse::ok(vec![1i32]).with_count(42);
+        assert_eq!(resp.count, Some(42));
+    }
+}

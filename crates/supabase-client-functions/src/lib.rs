@@ -52,3 +52,20 @@ impl SupabaseClientFunctionsExt for SupabaseClient {
         FunctionsClient::new(self.supabase_url(), self.api_key())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use supabase_client_core::config::SupabaseConfig;
+
+    #[test]
+    fn test_functions_extension_trait() {
+        let config = SupabaseConfig::new("http://localhost:54321", "test-key");
+        let client = SupabaseClient::new(config).unwrap();
+        let functions = client.functions();
+        assert!(functions.is_ok());
+        let functions = functions.unwrap();
+        assert_eq!(functions.base_url().path(), "/functions/v1");
+        assert_eq!(functions.api_key(), "test-key");
+    }
+}

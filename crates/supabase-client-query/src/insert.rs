@@ -61,6 +61,189 @@ impl<T> InsertBuilder<T> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::QueryBackend;
+    use crate::sql::{ParamStore, SqlOperation, SqlParam, SqlParts};
+    use serde_json::Value as JsonValue;
+    use std::marker::PhantomData;
+    use std::sync::Arc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn make_insert_builder() -> InsertBuilder<JsonValue> {
+        let mut parts = SqlParts::new(SqlOperation::Insert, "public", "users");
+        let mut params = ParamStore::new();
+        let idx = params.push(SqlParam::Text("Alice".to_string()));
+        parts.set_clauses.push(("name".to_string(), idx));
+        InsertBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from("http://localhost"),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params,
+            _marker: PhantomData,
+        }
+    }
+
+    // ---- Builder method tests ----
+
+    #[test]
+    fn test_schema_sets_override() {
+        let builder = make_insert_builder().schema("custom");
+        assert_eq!(builder.parts.schema_override.as_deref(), Some("custom"));
+    }
+
+    #[test]
+    fn test_select_sets_returning_star() {
+        let builder = make_insert_builder().select();
+        assert_eq!(builder.parts.returning.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_select_columns_star() {
+        let builder = make_insert_builder().select_columns("*");
+        assert_eq!(builder.parts.returning.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_select_columns_empty() {
+        let builder = make_insert_builder().select_columns("");
+        assert_eq!(builder.parts.returning.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_select_columns_specific() {
+        let builder = make_insert_builder().select_columns("id, name");
+        assert_eq!(builder.parts.returning.as_deref(), Some("\"id\", \"name\""));
+    }
+
+    #[test]
+    fn test_select_columns_complex_passthrough() {
+        let builder = make_insert_builder().select_columns("count(*)");
+        assert_eq!(builder.parts.returning.as_deref(), Some("count(*)"));
+    }
+
+    // ---- execute() via wiremock ----
+
+    #[tokio::test]
+    async fn test_execute_insert_success() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_json(serde_json::json!([{"id": 1, "name": "Alice"}])),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let mut parts = SqlParts::new(SqlOperation::Insert, "public", "users");
+        let mut params = ParamStore::new();
+        let idx = params.push(SqlParam::Text("Alice".to_string()));
+        parts.set_clauses.push(("name".to_string(), idx));
+        parts.returning = Some("*".to_string());
+
+        let builder: InsertBuilder<JsonValue> = InsertBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params,
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_ok());
+        assert_eq!(resp.data.len(), 1);
+        assert_eq!(resp.data[0]["name"], "Alice");
+        assert_eq!(resp.status, supabase_client_core::StatusCode::Created);
+    }
+
+    #[tokio::test]
+    async fn test_execute_insert_error() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/rest/v1/users"))
+            .respond_with(
+                ResponseTemplate::new(409)
+                    .set_body_json(serde_json::json!({
+                        "message": "Duplicate key",
+                        "code": "23505"
+                    })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let mut parts = SqlParts::new(SqlOperation::Insert, "public", "users");
+        let mut params = ParamStore::new();
+        let idx = params.push(SqlParam::Text("Alice".to_string()));
+        parts.set_clauses.push(("name".to_string(), idx));
+
+        let builder: InsertBuilder<JsonValue> = InsertBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params,
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_err());
+        match resp.error.as_ref().unwrap() {
+            supabase_client_core::SupabaseError::PostgRest { status, message, code } => {
+                assert_eq!(*status, 409);
+                assert_eq!(message, "Duplicate key");
+                assert_eq!(code.as_deref(), Some("23505"));
+            }
+            other => panic!("Expected PostgRest error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_insert_no_returning() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/rest/v1/users"))
+            .respond_with(ResponseTemplate::new(201).set_body_string(""))
+            .mount(&mock_server)
+            .await;
+
+        let mut parts = SqlParts::new(SqlOperation::Insert, "public", "users");
+        let mut params = ParamStore::new();
+        let idx = params.push(SqlParam::Text("Alice".to_string()));
+        parts.set_clauses.push(("name".to_string(), idx));
+        // No returning set
+
+        let builder: InsertBuilder<JsonValue> = InsertBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: Arc::from(mock_server.uri().as_str()),
+                api_key: Arc::from("test-key"),
+                schema: "public".to_string(),
+            },
+            parts,
+            params,
+            _marker: PhantomData,
+        };
+
+        let resp = builder.execute().await;
+        assert!(resp.is_ok());
+        assert!(resp.data.is_empty());
+    }
+}
+
 // REST-only mode: only DeserializeOwned + Send needed
 #[cfg(not(feature = "direct-sql"))]
 impl<T> InsertBuilder<T>
