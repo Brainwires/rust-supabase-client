@@ -2023,6 +2023,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "supabase-client-graphql"
+version = "0.2.1"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "supabase-client-core",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "supabase-client-query"
 version = "0.2.1"
 dependencies = [
@@ -2074,6 +2088,7 @@ dependencies = [
  "supabase-client-core",
  "supabase-client-derive",
  "supabase-client-functions",
+ "supabase-client-graphql",
  "supabase-client-query",
  "supabase-client-realtime",
  "supabase-client-storage",

@@ -43,6 +43,9 @@ pub enum SupabaseError {
 
     #[error("Functions error: {0}")]
     Functions(String),
+
+    #[error("GraphQL error: {0}")]
+    GraphQL(String),
 }
 
 impl SupabaseError {

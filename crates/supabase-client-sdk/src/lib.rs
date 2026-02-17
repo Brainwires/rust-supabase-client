@@ -35,6 +35,7 @@
 //! | `realtime` | No | WebSocket realtime subscriptions |
 //! | `storage` | No | Object storage client |
 //! | `functions` | No | Edge Functions client |
+//! | `graphql` | No | GraphQL client (pg_graphql) |
 //! | `direct-sql` | No | Direct PostgreSQL via sqlx (bypasses PostgREST) |
 //! | `full` | No | All features enabled |
 
@@ -61,6 +62,9 @@ pub use supabase_client_storage;
 
 #[cfg(feature = "functions")]
 pub use supabase_client_functions;
+
+#[cfg(feature = "graphql")]
+pub use supabase_client_graphql;
 
 /// Prelude module for convenient imports.
 ///
@@ -142,5 +146,14 @@ pub mod prelude {
         FunctionsClient, FunctionsError, FunctionResponse,
         InvokeOptions, InvokeBody, HttpMethod, FunctionRegion,
         SupabaseClientFunctionsExt,
+    };
+
+    #[cfg(feature = "graphql")]
+    pub use supabase_client_graphql::{
+        GraphqlClient, GraphqlError, GraphqlResponse,
+        QueryBuilder as GqlQueryBuilder, MutationBuilder, MutationKind as GqlMutationKind,
+        Connection, Edge, PageInfo, MutationResult,
+        GqlFilter, FilterOp, IsValue as GqlIsValue, OrderByDirection,
+        SupabaseClientGraphqlExt,
     };
 }

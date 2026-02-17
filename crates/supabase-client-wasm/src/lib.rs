@@ -142,6 +142,15 @@ impl WasmSupabaseClient {
         ).map_err(to_js_err)?;
         Ok(WasmFunctionsClient { inner: functions })
     }
+
+    /// Create a GraphQL client.
+    pub fn graphql(&self) -> Result<WasmGraphqlClient, JsValue> {
+        let graphql = supabase_client_sdk::supabase_client_graphql::GraphqlClient::new(
+            &self.url,
+            &self.key,
+        ).map_err(to_js_err)?;
+        Ok(WasmGraphqlClient { inner: graphql })
+    }
 }
 
 // ── WasmAuthClient ───────────────────────────────────────────────────────────
@@ -291,5 +300,44 @@ impl WasmFunctionsClient {
             .map_err(to_js_err)?;
         let result: JsonValue = response.json().map_err(to_js_err)?;
         to_js_value(&result)
+    }
+}
+
+// ── WasmGraphqlClient ────────────────────────────────────────────────────────
+
+/// GraphQL client for WASM/JavaScript usage.
+#[wasm_bindgen]
+pub struct WasmGraphqlClient {
+    inner: supabase_client_sdk::supabase_client_graphql::GraphqlClient,
+}
+
+#[wasm_bindgen]
+impl WasmGraphqlClient {
+    /// Execute a raw GraphQL query. Returns the response data as JSON.
+    ///
+    /// @param query - The GraphQL query string
+    /// @param variables - Optional JSON variables object
+    pub async fn execute(
+        &self,
+        query: &str,
+        variables: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let vars: Option<JsonValue> = if variables.is_null() || variables.is_undefined() {
+            None
+        } else {
+            Some(serde_wasm_bindgen::from_value(variables)?)
+        };
+
+        let response = self.inner
+            .execute_raw(query, vars, None)
+            .await
+            .map_err(to_js_err)?;
+
+        to_js_value(&response.data)
+    }
+
+    /// Set a custom auth token for subsequent requests.
+    pub fn set_auth(&self, token: &str) {
+        self.inner.set_auth(token);
     }
 }

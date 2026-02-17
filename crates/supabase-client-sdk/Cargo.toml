@@ -20,8 +20,9 @@ auth = ["dep:supabase-client-auth"]
 realtime = ["dep:supabase-client-realtime"]
 storage = ["dep:supabase-client-storage"]
 functions = ["dep:supabase-client-functions"]
+graphql = ["dep:supabase-client-graphql"]
 direct-sql = ["supabase-client-core/direct-sql", "supabase-client-query?/direct-sql"]
-full = ["query", "derive", "auth", "realtime", "storage", "functions"]
+full = ["query", "derive", "auth", "realtime", "storage", "functions", "graphql"]
 
 [dependencies]
 supabase-client-core.workspace = true
@@ -31,6 +32,7 @@ supabase-client-auth = { workspace = true, optional = true }
 supabase-client-realtime = { workspace = true, optional = true }
 supabase-client-storage = { workspace = true, optional = true }
 supabase-client-functions = { workspace = true, optional = true }
+supabase-client-graphql = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

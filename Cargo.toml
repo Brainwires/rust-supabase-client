@@ -9,6 +9,7 @@ members = [
     "crates/supabase-client-realtime",
     "crates/supabase-client-storage",
     "crates/supabase-client-functions",
+    "crates/supabase-client-graphql",
     "crates/supabase-client-wasm",
 ]
 
@@ -30,6 +31,7 @@ supabase-client-auth = { path = "crates/supabase-client-auth", version = "0.2.1"
 supabase-client-realtime = { path = "crates/supabase-client-realtime", version = "0.2.1" }
 supabase-client-storage = { path = "crates/supabase-client-storage", version = "0.2.1" }
 supabase-client-functions = { path = "crates/supabase-client-functions", version = "0.2.1" }
+supabase-client-graphql = { path = "crates/supabase-client-graphql", version = "0.2.1" }
 supabase-client-sdk = { path = "crates/supabase-client-sdk", version = "0.2.1" }
 
 # Database
