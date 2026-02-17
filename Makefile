@@ -1,5 +1,5 @@
 .PHONY: test coverage coverage-html coverage-lcov coverage-summary clean-coverage \
-       wasm wasm-web wasm-node clean-wasm
+       wasm wasm-web wasm-node clean-wasm wasm-test wasm-test-only
 
 # Common coverage flags: exclude WASM + derive crates, ignore platform.rs WASM branches
 COV_FLAGS = --workspace \
@@ -45,6 +45,14 @@ wasm-node:
 
 # Build both WASM targets
 wasm: wasm-web wasm-node
+
+# Build WASM for Node.js and run integration tests
+wasm-test: wasm-node
+	node --test tests/wasm-node/*.test.js
+
+# Run WASM integration tests only (assumes pkg/node/ already built)
+wasm-test-only:
+	node --test tests/wasm-node/*.test.js
 
 # Clean WASM output
 clean-wasm:
