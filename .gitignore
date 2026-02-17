@@ -13,6 +13,9 @@
 .claude/
 .fastembed_cache/
 
+# Coverage
+/coverage/
+
 # Environment
 .env
 .env.*

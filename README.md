@@ -1,6 +1,7 @@
 # supabase-client-sdk (Rust)
 
 [![Tests](https://img.shields.io/badge/tests-390%2B%20passing-brightgreen)](#testing)
+[![Coverage](https://img.shields.io/badge/coverage-75%25-yellow)](#coverage)
 [![Rust](https://img.shields.io/badge/rust-2021%20edition-orange)](https://www.rust-lang.org/)
 
 A Rust client for [Supabase](https://supabase.com/) with a fluent, Supabase JS-like API. Uses the **PostgREST REST API by default** — no database connection needed. Opt into direct PostgreSQL access via [sqlx](https://github.com/launchbadge/sqlx) with the `direct-sql` feature flag.
@@ -862,6 +863,21 @@ cargo test -p supabase-client-functions --test integration -- --test-threads=1
 The local Supabase instance runs on custom ports (API: 64321, DB: 64322). Integration tests default to these ports and use hardcoded local development keys.
 
 Set `SKIP_REALTIME_TESTS=1` to skip realtime integration tests if the local instance isn't running.
+
+## Coverage
+
+Code coverage is powered by [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov).
+
+```bash
+# Print per-file coverage table to stdout
+make coverage
+
+# Generate an HTML report in coverage/html/
+make coverage-html
+
+# Generate lcov.info for CI (Codecov / Coveralls)
+make coverage-lcov
+```
 
 ## Requirements
 
