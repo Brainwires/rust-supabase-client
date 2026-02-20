@@ -1,7 +1,8 @@
+use serde::de::DeserializeOwned;
 use sqlx::postgres::PgArguments;
 use sqlx::{Arguments, PgPool};
 
-use supabase_client_core::{StatusCode, SupabaseError, SupabaseResponse};
+use supabase_client_core::{Row, StatusCode, SupabaseError, SupabaseResponse};
 
 use crate::sql::{CountOption, ParamStore, SqlParam, SqlParts};
 
@@ -35,13 +36,17 @@ pub fn bind_params(params: &ParamStore) -> Result<PgArguments, SupabaseError> {
 }
 
 /// Execute a typed query and return `SupabaseResponse<T>`.
+///
+/// Queries rows as `Row` (which implements `sqlx::FromRow`) and then
+/// deserializes each row to `T` via serde, so callers don't need
+/// `FromRow + Unpin` bounds.
 pub async fn execute_typed<T>(
     pool: &PgPool,
     parts: &SqlParts,
     params: &ParamStore,
 ) -> SupabaseResponse<T>
 where
-    T: Send + Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
+    T: DeserializeOwned + Send,
 {
     let sql = match parts.build_sql() {
         Ok(s) => s,
@@ -74,11 +79,29 @@ where
             Err(e) => SupabaseResponse::error(SupabaseError::Database(e)),
         }
     } else {
-        match sqlx::query_as_with::<_, T, _>(&sql, args)
+        // Query as Row (which implements FromRow), then deserialize to T via serde.
+        // This makes direct-sql behavior consistent with REST mode (both go through serde).
+        match sqlx::query_as_with::<_, Row, _>(&sql, args)
             .fetch_all(pool)
             .await
         {
-            Ok(data) => build_response(data, parts),
+            Ok(rows) => {
+                let mut data = Vec::with_capacity(rows.len());
+                for row in rows {
+                    let json_obj = serde_json::Value::Object(
+                        row.into_inner().into_iter().collect(),
+                    );
+                    match serde_json::from_value::<T>(json_obj) {
+                        Ok(val) => data.push(val),
+                        Err(e) => {
+                            return SupabaseResponse::error(SupabaseError::QueryBuilder(
+                                format!("Failed to deserialize row: {}", e),
+                            ))
+                        }
+                    }
+                }
+                build_response(data, parts)
+            }
             Err(e) => SupabaseResponse::error(SupabaseError::Database(e)),
         }
     }

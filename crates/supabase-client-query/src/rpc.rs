@@ -303,30 +303,9 @@ where
     }
 }
 
-// REST-only mode: only DeserializeOwned + Send needed
-#[cfg(not(feature = "direct-sql"))]
 impl<T> TypedRpcBuilder<T>
 where
     T: DeserializeOwned + Send,
-{
-    /// Execute the typed RPC call.
-    pub async fn execute(self) -> SupabaseResponse<T> {
-        let QueryBackend::Rest { ref http, ref base_url, ref api_key, ref schema } = self.backend;
-        let (url, headers, body) = crate::postgrest::build_postgrest_rpc(
-            base_url, &self.function, &self.args, self.rollback,
-        );
-        let parts = SqlParts::new(SqlOperation::Select, &self.schema, &self.function);
-        crate::postgrest_execute::execute_rest(
-            http, reqwest::Method::POST, &url, headers, Some(body), api_key, schema, &parts,
-        ).await
-    }
-}
-
-// Direct-SQL mode: additional FromRow + Unpin bounds
-#[cfg(feature = "direct-sql")]
-impl<T> TypedRpcBuilder<T>
-where
-    T: DeserializeOwned + Send + Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
 {
     /// Execute the typed RPC call.
     pub async fn execute(self) -> SupabaseResponse<T> {
@@ -340,6 +319,7 @@ where
                     http, reqwest::Method::POST, &url, headers, Some(body), api_key, schema, &parts,
                 ).await
             }
+            #[cfg(feature = "direct-sql")]
             QueryBackend::DirectSql { pool } => {
                 let sql = match self.build_sql() {
                     Ok(s) => s,
@@ -353,11 +333,27 @@ where
                     Err(e) => return SupabaseResponse::error(e),
                 };
 
-                match sqlx::query_as_with::<_, T, _>(&sql, args)
+                match sqlx::query_as_with::<_, Row, _>(&sql, args)
                     .fetch_all(pool.as_ref())
                     .await
                 {
-                    Ok(data) => SupabaseResponse::ok(data),
+                    Ok(rows) => {
+                        let mut data = Vec::with_capacity(rows.len());
+                        for row in rows {
+                            let json_obj = serde_json::Value::Object(
+                                row.into_inner().into_iter().collect(),
+                            );
+                            match serde_json::from_value::<T>(json_obj) {
+                                Ok(val) => data.push(val),
+                                Err(e) => {
+                                    return SupabaseResponse::error(SupabaseError::QueryBuilder(
+                                        format!("Failed to deserialize row: {}", e),
+                                    ))
+                                }
+                            }
+                        }
+                        SupabaseResponse::ok(data)
+                    }
                     Err(e) => SupabaseResponse::error(SupabaseError::Database(e)),
                 }
             }

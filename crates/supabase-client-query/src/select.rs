@@ -80,31 +80,36 @@ impl<T> SelectBuilder<T> {
     }
 }
 
-// REST-only mode: only DeserializeOwned + Send needed
-#[cfg(not(feature = "direct-sql"))]
 impl<T> SelectBuilder<T>
 where
     T: DeserializeOwned + Send,
 {
     /// Execute the SELECT query and return results.
     pub async fn execute(self) -> SupabaseResponse<T> {
-        let QueryBackend::Rest { ref http, ref base_url, ref api_key, ref schema } = self.backend;
-        let method = if self.parts.head {
-            reqwest::Method::HEAD
-        } else {
-            reqwest::Method::GET
-        };
-        let (url, headers) = match crate::postgrest::build_postgrest_select(
-            base_url, &self.parts, &self.params,
-        ) {
-            Ok(r) => r,
-            Err(e) => return SupabaseResponse::error(
-                supabase_client_core::SupabaseError::QueryBuilder(e),
-            ),
-        };
-        crate::postgrest_execute::execute_rest(
-            http, method, &url, headers, None, api_key, schema, &self.parts,
-        ).await
+        match &self.backend {
+            QueryBackend::Rest { http, base_url, api_key, schema } => {
+                let method = if self.parts.head {
+                    reqwest::Method::HEAD
+                } else {
+                    reqwest::Method::GET
+                };
+                let (url, headers) = match crate::postgrest::build_postgrest_select(
+                    base_url, &self.parts, &self.params,
+                ) {
+                    Ok(r) => r,
+                    Err(e) => return SupabaseResponse::error(
+                        supabase_client_core::SupabaseError::QueryBuilder(e),
+                    ),
+                };
+                crate::postgrest_execute::execute_rest(
+                    http, method, &url, headers, None, api_key, schema, &self.parts,
+                ).await
+            }
+            #[cfg(feature = "direct-sql")]
+            QueryBackend::DirectSql { pool } => {
+                crate::execute::execute_typed::<T>(pool, &self.parts, &self.params).await
+            }
+        }
     }
 }
 
@@ -323,36 +328,3 @@ mod tests {
     }
 }
 
-// Direct-SQL mode: additional FromRow + Unpin bounds
-#[cfg(feature = "direct-sql")]
-impl<T> SelectBuilder<T>
-where
-    T: DeserializeOwned + Send + Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
-{
-    /// Execute the SELECT query and return results.
-    pub async fn execute(self) -> SupabaseResponse<T> {
-        match &self.backend {
-            QueryBackend::Rest { http, base_url, api_key, schema } => {
-                let method = if self.parts.head {
-                    reqwest::Method::HEAD
-                } else {
-                    reqwest::Method::GET
-                };
-                let (url, headers) = match crate::postgrest::build_postgrest_select(
-                    base_url, &self.parts, &self.params,
-                ) {
-                    Ok(r) => r,
-                    Err(e) => return SupabaseResponse::error(
-                        supabase_client_core::SupabaseError::QueryBuilder(e),
-                    ),
-                };
-                crate::postgrest_execute::execute_rest(
-                    http, method, &url, headers, None, api_key, schema, &self.parts,
-                ).await
-            }
-            QueryBackend::DirectSql { pool } => {
-                crate::execute::execute_typed::<T>(pool, &self.parts, &self.params).await
-            }
-        }
-    }
-}

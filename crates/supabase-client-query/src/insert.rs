@@ -244,34 +244,9 @@ mod tests {
     }
 }
 
-// REST-only mode: only DeserializeOwned + Send needed
-#[cfg(not(feature = "direct-sql"))]
 impl<T> InsertBuilder<T>
 where
     T: DeserializeOwned + Send,
-{
-    /// Execute the INSERT query.
-    pub async fn execute(self) -> SupabaseResponse<T> {
-        let QueryBackend::Rest { ref http, ref base_url, ref api_key, ref schema } = self.backend;
-        let (url, headers, body) = match crate::postgrest::build_postgrest_insert(
-            base_url, &self.parts, &self.params,
-        ) {
-            Ok(r) => r,
-            Err(e) => return SupabaseResponse::error(
-                supabase_client_core::SupabaseError::QueryBuilder(e),
-            ),
-        };
-        crate::postgrest_execute::execute_rest(
-            http, reqwest::Method::POST, &url, headers, Some(body), api_key, schema, &self.parts,
-        ).await
-    }
-}
-
-// Direct-SQL mode: additional FromRow + Unpin bounds
-#[cfg(feature = "direct-sql")]
-impl<T> InsertBuilder<T>
-where
-    T: DeserializeOwned + Send + Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
 {
     /// Execute the INSERT query.
     pub async fn execute(self) -> SupabaseResponse<T> {
@@ -289,6 +264,7 @@ where
                     http, reqwest::Method::POST, &url, headers, Some(body), api_key, schema, &self.parts,
                 ).await
             }
+            #[cfg(feature = "direct-sql")]
             QueryBackend::DirectSql { pool } => {
                 crate::execute::execute_typed::<T>(pool, &self.parts, &self.params).await
             }
