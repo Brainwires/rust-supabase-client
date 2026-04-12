@@ -1050,7 +1050,7 @@ impl AuthClient {
     /// Uses S256 method: the challenge is `BASE64URL(SHA256(verifier))`.
     /// The verifier is 43 URL-safe random characters.
     pub fn generate_pkce_pair() -> PkcePair {
-        use rand::Rng;
+        use rand::RngExt;
 
         // Generate 32 random bytes → 43 base64url chars (no padding)
         let mut rng = rand::rng();
