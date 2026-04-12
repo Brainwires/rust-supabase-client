@@ -55,11 +55,11 @@ chrono = { version = "0.4", features = ["serde", "wasmbind"] }
 uuid = { version = "1", features = ["v4", "serde", "js"] }
 
 # HTTP client (for auth/storage)
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "form"] }
 url = "2"
 
 # WebSocket (for realtime — native only, per-crate conditional)
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 
 # WASM dependencies
@@ -67,16 +67,16 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = "0.3"
-gloo-timers = { version = "0.3", features = ["futures"] }
+gloo-timers = { version = "0.4", features = ["futures"] }
 serde-wasm-bindgen = "0.6"
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 # Base64 (for JWT parsing)
 base64 = "0.22"
 
 # PKCE (for OAuth client-side flow)
-sha2 = "0.10"
-rand = "0.9"
+sha2 = "0.11"
+rand = "0.10"
 
 # Proc macros
 syn = { version = "2", features = ["full", "extra-traits"] }
