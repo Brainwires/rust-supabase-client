@@ -7,6 +7,7 @@ use sqlx::PgPool;
 
 use crate::config::SupabaseConfig;
 use crate::error::SupabaseResult;
+use crate::SupabaseError;
 
 /// The main client for interacting with Supabase.
 ///
@@ -25,7 +26,9 @@ impl SupabaseClient {
     ///
     /// This is the primary constructor. Queries go through PostgREST.
     pub fn new(config: SupabaseConfig) -> SupabaseResult<Self> {
-        let http = reqwest::Client::new();
+        let http = reqwest::Client::builder()
+            .build()
+            .map_err(|err| SupabaseError::Http(err.to_string()))?;
         Ok(Self {
             config: Arc::new(config),
             http,
@@ -39,12 +42,11 @@ impl SupabaseClient {
     /// Requires the `direct-sql` feature and a `database_url` in config.
     #[cfg(feature = "direct-sql")]
     pub async fn with_database(config: SupabaseConfig) -> SupabaseResult<Self> {
-        let db_url = config
-            .database_url
-            .as_ref()
-            .ok_or_else(|| crate::error::SupabaseError::Config(
+        let db_url = config.database_url.as_ref().ok_or_else(|| {
+            crate::error::SupabaseError::Config(
                 "database_url is required for direct-sql mode".into(),
-            ))?;
+            )
+        })?;
 
         let pool = PgPoolOptions::new()
             .max_connections(config.pool.max_connections)
