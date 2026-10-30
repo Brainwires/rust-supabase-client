@@ -56,21 +56,19 @@ impl GeoJsonSelectBuilder {
                 );
 
                 // Standard auth headers
-                headers.insert("apikey", HeaderValue::from_str(api_key).unwrap());
+                use crate::postgrest_execute::header_value;
+                headers.insert("apikey", header_value("apikey", api_key)?);
                 headers.insert(
                     "Authorization",
-                    HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
+                    header_value("Authorization", &format!("Bearer {}", api_key))?,
                 );
 
                 // Schema profile
                 if let Some(ref so) = self.parts.schema_override {
-                    headers.insert(
-                        "Accept-Profile",
-                        HeaderValue::from_str(so).unwrap(),
-                    );
+                    headers.insert("Accept-Profile", header_value("Accept-Profile", so)?);
                 } else if schema != "public" {
-                    headers.entry("Accept-Profile")
-                        .or_insert_with(|| HeaderValue::from_str(schema).unwrap());
+                    let profile = header_value("Accept-Profile", schema)?;
+                    headers.entry("Accept-Profile").or_insert(profile);
                 }
 
                 let response = http
@@ -126,6 +124,24 @@ mod tests {
         };
         builder = builder.limit(10);
         assert_eq!(builder.parts.limit, Some(10));
+    }
+
+    #[tokio::test]
+    async fn test_geojson_execute_invalid_api_key_is_config_error() {
+        let builder = GeoJsonSelectBuilder {
+            backend: QueryBackend::Rest {
+                http: reqwest::Client::new(),
+                base_url: "http://127.0.0.1:1".into(),
+                api_key: "bad\nkey".into(),
+                schema: "public".to_string(),
+            },
+            parts: SqlParts::new(SqlOperation::Select, "public", "cities"),
+            params: ParamStore::new(),
+        };
+        match builder.execute().await {
+            Err(SupabaseError::Config(msg)) => assert!(msg.contains("apikey"), "{}", msg),
+            other => panic!("expected Config error, got {:?}", other),
+        }
     }
 
     #[test]

@@ -6,6 +6,41 @@ use supabase_client_core::{StatusCode, SupabaseError, SupabaseResponse};
 
 use crate::sql::{CountOption, SqlOperation, SqlParts};
 
+/// Build a header value from a (possibly user-supplied) string, returning a
+/// `SupabaseError::Config` instead of panicking when it is not a valid header.
+pub(crate) fn header_value(name: &str, value: &str) -> Result<HeaderValue, SupabaseError> {
+    HeaderValue::from_str(value)
+        .map_err(|e| SupabaseError::Config(format!("Invalid {} header value: {}", name, e)))
+}
+
+/// Add the `apikey` / `Authorization` headers and, when the query does not
+/// override the schema and the default schema is not `public`, the
+/// `Accept-Profile` / `Content-Profile` header.
+fn apply_standard_headers(
+    headers: &mut HeaderMap,
+    api_key: &str,
+    schema: &str,
+    parts: &SqlParts,
+) -> Result<(), SupabaseError> {
+    headers.insert("apikey", header_value("apikey", api_key)?);
+    headers.insert(
+        "Authorization",
+        header_value("Authorization", &format!("Bearer {}", api_key))?,
+    );
+
+    // Set Accept-Profile / Content-Profile for schema if not already set
+    if parts.schema_override.is_none() && schema != "public" {
+        let name = match parts.operation {
+            SqlOperation::Select => "Accept-Profile",
+            _ => "Content-Profile",
+        };
+        let value = header_value(name, schema)?;
+        headers.entry(name).or_insert(value);
+    }
+
+    Ok(())
+}
+
 /// Execute a PostgREST request and parse the response.
 pub async fn execute_rest<T: DeserializeOwned + Send>(
     http: &reqwest::Client,
@@ -17,27 +52,9 @@ pub async fn execute_rest<T: DeserializeOwned + Send>(
     schema: &str,
     parts: &SqlParts,
 ) -> SupabaseResponse<T> {
-    // Add standard headers
-    headers.insert("apikey", HeaderValue::from_str(api_key).unwrap());
-    headers.insert(
-        "Authorization",
-        HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
-    );
-
-    // Set Accept-Profile / Content-Profile for schema if not already set
-    if parts.schema_override.is_none() && schema != "public" {
-        match parts.operation {
-            SqlOperation::Select => {
-                headers
-                    .entry("Accept-Profile")
-                    .or_insert_with(|| HeaderValue::from_str(schema).unwrap());
-            }
-            _ => {
-                headers
-                    .entry("Content-Profile")
-                    .or_insert_with(|| HeaderValue::from_str(schema).unwrap());
-            }
-        }
+    // Add standard auth + schema headers
+    if let Err(e) = apply_standard_headers(&mut headers, api_key, schema, parts) {
+        return SupabaseResponse::error(e);
     }
 
     // Default Accept to JSON if not already set
@@ -756,5 +773,55 @@ mod tests {
         assert_eq!(resp.data.len(), 1);
         // serde_json::Value parses "42" as Number(42) in the single-object fallback
         assert_eq!(resp.data[0], serde_json::json!(42));
+    }
+
+    // ---- header validation ----
+
+    #[tokio::test]
+    async fn test_execute_rest_invalid_api_key_returns_config_error() {
+        let http = reqwest::Client::new();
+        let parts = make_select_parts("users");
+
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::GET,
+            "http://127.0.0.1:1/rest/v1/users",
+            HeaderMap::new(),
+            None,
+            "bad\nkey",
+            "public",
+            &parts,
+        )
+        .await;
+
+        assert!(resp.is_err());
+        match resp.error {
+            Some(SupabaseError::Config(msg)) => assert!(msg.contains("apikey"), "{}", msg),
+            other => panic!("expected Config error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_rest_invalid_schema_returns_config_error() {
+        let http = reqwest::Client::new();
+        let parts = make_select_parts("users");
+
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::GET,
+            "http://127.0.0.1:1/rest/v1/users",
+            HeaderMap::new(),
+            None,
+            "test-key",
+            "bad\nschema",
+            &parts,
+        )
+        .await;
+
+        assert!(resp.is_err());
+        match resp.error {
+            Some(SupabaseError::Config(msg)) => assert!(msg.contains("Accept-Profile"), "{}", msg),
+            other => panic!("expected Config error, got {:?}", other),
+        }
     }
 }

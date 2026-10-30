@@ -277,7 +277,7 @@ impl RealtimeClient {
         self.inner.intentional_disconnect.store(false, Ordering::SeqCst);
 
         let ws_url = build_ws_url(&self.inner.config.url, &self.inner.config.api_key)?;
-        debug!(url = %ws_url, "Connecting to Supabase Realtime");
+        debug!(url = %redact_url_query(&ws_url), "Connecting to Supabase Realtime");
 
         let (write, read) = transport::connect_ws(&self.inner.config, &ws_url).await?;
         *self.inner.ws_write.lock().await = Some(write);
@@ -458,6 +458,12 @@ pub(crate) fn build_ws_url(base_url: &str, api_key: &str) -> Result<String, Real
         .append_pair("vsn", "1.0.0");
 
     Ok(parsed.to_string())
+}
+
+/// Strip the query string from a URL before logging it: the realtime URL
+/// carries the API key as `?apikey=...`.
+pub(crate) fn redact_url_query(url: &str) -> &str {
+    url.split_once('?').map_or(url, |(base, _query)| base)
 }
 
 // ── Connection Helpers ────────────────────────────────────────────────────────
@@ -942,6 +948,15 @@ async fn notify_all_channels_closed(inner: &RealtimeClientInner) {
 mod tests {
     use super::*;
     use crate::types::ReconnectConfig;
+
+    #[test]
+    fn test_redact_url_query_strips_api_key() {
+        let url = build_ws_url("http://localhost:54321", "secret-key").unwrap();
+        let redacted = redact_url_query(&url);
+        assert_eq!(redacted, "ws://localhost:54321/realtime/v1/websocket");
+        assert!(!redacted.contains("secret-key"));
+        assert_eq!(redact_url_query("ws://host/path"), "ws://host/path");
+    }
 
     #[test]
     fn test_build_ws_url_http() {

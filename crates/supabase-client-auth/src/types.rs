@@ -8,7 +8,9 @@ use tokio::sync::broadcast;
 /// A user session returned from sign-in, sign-up, or token refresh.
 ///
 /// Matches the Supabase GoTrue session object.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The `Debug` output redacts `access_token` and `refresh_token`.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Session {
     pub access_token: String,
     pub refresh_token: String,
@@ -17,6 +19,19 @@ pub struct Session {
     pub expires_at: Option<i64>,
     pub token_type: String,
     pub user: User,
+}
+
+impl fmt::Debug for Session {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Session")
+            .field("access_token", &"[redacted]")
+            .field("refresh_token", &"[redacted]")
+            .field("expires_in", &self.expires_in)
+            .field("expires_at", &self.expires_at)
+            .field("token_type", &self.token_type)
+            .field("user", &self.user)
+            .finish()
+    }
 }
 
 /// A GoTrue user object.
@@ -1201,5 +1216,24 @@ mod tests {
         assert_eq!(config.check_interval, Duration::from_secs(10));
         assert_eq!(config.refresh_margin, Duration::from_secs(120));
         assert_eq!(config.max_retries, 5);
+    }
+
+    #[test]
+    fn session_debug_redacts_tokens() {
+        let session: Session = serde_json::from_value(serde_json::json!({
+            "access_token": "secret-access-token",
+            "refresh_token": "secret-refresh-token",
+            "expires_in": 3600,
+            "token_type": "bearer",
+            "user": { "id": "user-1" }
+        }))
+        .unwrap();
+        let debug = format!("{:?}", session);
+        assert!(debug.contains("access_token"), "{}", debug);
+        assert!(debug.contains("refresh_token"), "{}", debug);
+        assert!(debug.contains("[redacted]"), "{}", debug);
+        assert!(!debug.contains("secret-access-token"), "{}", debug);
+        assert!(!debug.contains("secret-refresh-token"), "{}", debug);
+        assert!(debug.contains("user-1"), "{}", debug);
     }
 }
