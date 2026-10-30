@@ -26,9 +26,8 @@ impl SupabaseClient {
     ///
     /// This is the primary constructor. Queries go through PostgREST.
     pub fn new(config: SupabaseConfig) -> SupabaseResult<Self> {
-        let http = reqwest::Client::builder()
-            .build()
-            .map_err(|err| SupabaseError::Http(err.to_string()))?;
+        validate_config(&config)?;
+        let http = build_http_client()?;
         Ok(Self {
             config: Arc::new(config),
             http,
@@ -42,6 +41,7 @@ impl SupabaseClient {
     /// Requires the `direct-sql` feature and a `database_url` in config.
     #[cfg(feature = "direct-sql")]
     pub async fn with_database(config: SupabaseConfig) -> SupabaseResult<Self> {
+        validate_config(&config)?;
         let db_url = config.database_url.as_ref().ok_or_else(|| {
             crate::error::SupabaseError::Config(
                 "database_url is required for direct-sql mode".into(),
@@ -57,7 +57,7 @@ impl SupabaseClient {
             .connect(db_url)
             .await?;
 
-        let http = reqwest::Client::new();
+        let http = build_http_client()?;
 
         Ok(Self {
             config: Arc::new(config),
@@ -134,6 +134,35 @@ impl SupabaseClient {
     }
 }
 
+/// Reject configuration values that cannot be sent as HTTP headers, so the
+/// problem surfaces here as `SupabaseError::Config` instead of as a panic or
+/// a failed request when the first query is built.
+fn validate_config(config: &SupabaseConfig) -> SupabaseResult<()> {
+    reqwest::header::HeaderValue::from_str(&config.supabase_key).map_err(|err| {
+        SupabaseError::Config(format!(
+            "supabase_key is not a valid HTTP header value: {}",
+            err
+        ))
+    })?;
+    Ok(())
+}
+
+/// Time allowed to establish a TCP connection. Native targets only: reqwest's
+/// wasm backend has no connect timeout. No total request timeout is set, since
+/// long-running requests (edge functions, large transfers) are legitimate.
+#[cfg(not(target_arch = "wasm32"))]
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Build the shared HTTP client with the crate's default settings.
+fn build_http_client() -> SupabaseResult<reqwest::Client> {
+    let builder = reqwest::Client::builder();
+    #[cfg(not(target_arch = "wasm32"))]
+    let builder = builder.connect_timeout(CONNECT_TIMEOUT);
+    builder
+        .build()
+        .map_err(|err| SupabaseError::Http(err.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,6 +176,15 @@ mod tests {
     fn test_new_succeeds_with_valid_config() {
         let client = SupabaseClient::new(test_config());
         assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_new_rejects_key_that_is_not_a_valid_header_value() {
+        let config = SupabaseConfig::new("http://localhost:54321", "test-anon-key\n");
+        match SupabaseClient::new(config) {
+            Err(SupabaseError::Config(msg)) => assert!(msg.contains("supabase_key"), "{}", msg),
+            other => panic!("expected Config error, got {:?}", other),
+        }
     }
 
     #[test]

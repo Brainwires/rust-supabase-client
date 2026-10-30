@@ -1,3 +1,4 @@
+use std::fmt;
 #[cfg(feature = "direct-sql")]
 use std::time::Duration;
 
@@ -5,7 +6,10 @@ use std::time::Duration;
 ///
 /// By default, uses the PostgREST REST API (no database connection needed).
 /// Enable the `direct-sql` feature and call `.database_url()` to use direct SQL via sqlx.
-#[derive(Debug, Clone)]
+///
+/// The `Debug` output redacts `supabase_key` and `database_url` (which may
+/// contain a password) so the config can be logged safely.
+#[derive(Clone)]
 pub struct SupabaseConfig {
     /// Supabase project URL (e.g. "http://localhost:64321")
     pub supabase_url: String,
@@ -19,6 +23,23 @@ pub struct SupabaseConfig {
     /// Connection pool configuration (only used with direct-sql)
     #[cfg(feature = "direct-sql")]
     pub pool: PoolConfig,
+}
+
+impl fmt::Debug for SupabaseConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut s = f.debug_struct("SupabaseConfig");
+        s.field("supabase_url", &self.supabase_url)
+            .field("supabase_key", &"[redacted]");
+        #[cfg(feature = "direct-sql")]
+        s.field(
+            "database_url",
+            &self.database_url.as_ref().map(|_| "[redacted]"),
+        );
+        s.field("schema", &self.schema);
+        #[cfg(feature = "direct-sql")]
+        s.field("pool", &self.pool);
+        s.finish()
+    }
 }
 
 /// Connection pool settings (only available with `direct-sql` feature).
@@ -141,6 +162,27 @@ mod tests {
         let config = SupabaseConfig::new(url, key);
         assert_eq!(config.supabase_url, "http://example.com");
         assert_eq!(config.supabase_key, "secret");
+    }
+
+    #[test]
+    fn test_debug_redacts_supabase_key() {
+        let config = SupabaseConfig::new("http://localhost:54321", "super-secret-key");
+        let debug = format!("{:?}", config);
+        assert!(debug.contains("supabase_key"), "{}", debug);
+        assert!(debug.contains("[redacted]"), "{}", debug);
+        assert!(!debug.contains("super-secret-key"), "{}", debug);
+        assert!(debug.contains("http://localhost:54321"), "{}", debug);
+        assert!(debug.contains("public"), "{}", debug);
+    }
+
+    #[cfg(feature = "direct-sql")]
+    #[test]
+    fn test_debug_redacts_database_url() {
+        let config = SupabaseConfig::new("http://localhost:54321", "key")
+            .database_url("postgres://user:hunter2@localhost:5432/db");
+        let debug = format!("{:?}", config);
+        assert!(debug.contains("database_url"), "{}", debug);
+        assert!(!debug.contains("hunter2"), "{}", debug);
     }
 
     #[test]

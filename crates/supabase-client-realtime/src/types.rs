@@ -244,7 +244,9 @@ impl Default for PresenceConfig {
 // ── Realtime Client Config ────────────────────────────────────────────────────
 
 /// Configuration for the RealtimeClient.
-#[derive(Debug, Clone)]
+///
+/// The `Debug` output redacts `api_key` and the values of `headers`.
+#[derive(Clone)]
 pub struct RealtimeConfig {
     /// The Supabase project URL (http/https).
     pub url: String,
@@ -279,6 +281,31 @@ impl RealtimeConfig {
     }
 }
 
+impl fmt::Debug for RealtimeConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RealtimeConfig")
+            .field("url", &self.url)
+            .field("api_key", &"[redacted]")
+            .field("heartbeat_interval", &self.heartbeat_interval)
+            .field("subscribe_timeout", &self.subscribe_timeout)
+            .field("reconnect", &self.reconnect)
+            .field("headers", &RedactedHeaders(&self.headers))
+            .finish()
+    }
+}
+
+/// Debug helper that prints header names but hides their values, since custom
+/// handshake headers commonly carry credentials.
+struct RedactedHeaders<'a>(&'a HashMap<String, String>);
+
+impl fmt::Debug for RedactedHeaders<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map()
+            .entries(self.0.keys().map(|name| (name, "[redacted]")))
+            .finish()
+    }
+}
+
 /// Reconnection backoff configuration.
 #[derive(Debug, Clone)]
 pub struct ReconnectConfig {
@@ -299,5 +326,25 @@ impl Default for ReconnectConfig {
             ],
             fallback: Duration::from_secs(10),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn realtime_config_debug_redacts_secrets() {
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), "Bearer secret-jwt".to_string());
+        let config =
+            RealtimeConfig::new("http://localhost:54321", "secret-api-key").with_headers(headers);
+        let debug = format!("{:?}", config);
+        assert!(debug.contains("api_key"), "{}", debug);
+        assert!(debug.contains("Authorization"), "{}", debug);
+        assert!(debug.contains("[redacted]"), "{}", debug);
+        assert!(!debug.contains("secret-api-key"), "{}", debug);
+        assert!(!debug.contains("secret-jwt"), "{}", debug);
+        assert!(debug.contains("http://localhost:54321"), "{}", debug);
     }
 }

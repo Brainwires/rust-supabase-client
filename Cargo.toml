@@ -57,6 +57,7 @@ uuid = { version = "1", features = ["v4", "serde", "js"] }
 # HTTP client (for auth/storage)
 reqwest = { version = "0.12", features = ["json"] }
 url = "2"
+percent-encoding = "2"
 
 # WebSocket (for realtime — native only, per-crate conditional)
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }

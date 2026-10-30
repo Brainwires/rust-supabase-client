@@ -83,10 +83,11 @@ impl AuthClient {
             HeaderValue::from_static("application/json"),
         );
 
-        let http = reqwest::Client::builder()
-            .default_headers(default_headers)
-            .build()
-            .map_err(AuthError::Http)?;
+        let builder = reqwest::Client::builder().default_headers(default_headers);
+        // reqwest's wasm backend has no connect timeout
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.connect_timeout(std::time::Duration::from_secs(10));
+        let http = builder.build().map_err(AuthError::Http)?;
 
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
 

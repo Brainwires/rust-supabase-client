@@ -53,10 +53,11 @@ impl FunctionsClient {
                 .map_err(|e| FunctionsError::InvalidConfig(format!("Invalid auth header: {}", e)))?,
         );
 
-        let http = reqwest::Client::builder()
-            .default_headers(default_headers)
-            .build()
-            .map_err(FunctionsError::Http)?;
+        let builder = reqwest::Client::builder().default_headers(default_headers);
+        // reqwest's wasm backend has no connect timeout
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.connect_timeout(std::time::Duration::from_secs(10));
+        let http = builder.build().map_err(FunctionsError::Http)?;
 
         Ok(Self {
             http,

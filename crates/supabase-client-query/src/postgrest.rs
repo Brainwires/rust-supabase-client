@@ -1,3 +1,4 @@
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value as JsonValue;
 
@@ -6,6 +7,45 @@ use crate::sql::{
     OrderDirection, ParamStore, PatternOperator, SqlParam, SqlParts, TextSearchType,
 };
 
+/// Percent-encode set for user-controlled values, column names, table and
+/// function names: everything except the RFC 3986 unreserved characters
+/// (`ALPHA / DIGIT / "-" / "." / "_" / "~"`). PostgREST decodes the query
+/// string before parsing it, so `&`, `#`, `+`, `%`, `=` etc. in a value can
+/// no longer break or inject query parameters.
+const VALUE_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+/// Percent-encode set for the `select` parameter. The PostgREST select
+/// syntax characters `(`, `)`, `,`, `:`, `*` and `!` are RFC 3986 sub-delims
+/// that are safe in a query string, so they are kept readable; everything
+/// else outside the unreserved set is encoded.
+const SELECT_ENCODE_SET: &AsciiSet = &VALUE_ENCODE_SET
+    .remove(b'(')
+    .remove(b')')
+    .remove(b',')
+    .remove(b':')
+    .remove(b'*')
+    .remove(b'!');
+
+/// Percent-encode a user-controlled value for the URL (see [`VALUE_ENCODE_SET`]).
+fn encode_value(value: &str) -> String {
+    utf8_percent_encode(value, VALUE_ENCODE_SET).to_string()
+}
+
+/// Percent-encode a `select` column list for the URL (see [`SELECT_ENCODE_SET`]).
+fn encode_select(select: &str) -> String {
+    utf8_percent_encode(select, SELECT_ENCODE_SET).to_string()
+}
+
+/// Build a header value, reporting an error instead of panicking when the
+/// (possibly user-supplied) string is not a valid HTTP header value.
+fn header_value(name: &str, value: &str) -> Result<HeaderValue, String> {
+    HeaderValue::from_str(value).map_err(|e| format!("Invalid {} header value: {}", name, e))
+}
+
 /// Build PostgREST URL and headers for a SELECT query.
 pub fn build_postgrest_select(
     base_url: &str,
@@ -13,7 +53,7 @@ pub fn build_postgrest_select(
     params: &ParamStore,
 ) -> Result<(String, HeaderMap), String> {
     let table = &parts.table;
-    let mut url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), table);
+    let mut url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), encode_value(table));
     let mut headers = HeaderMap::new();
     let mut query_params = Vec::new();
 
@@ -25,7 +65,7 @@ pub fn build_postgrest_select(
             .map(|c| c.trim().trim_matches('"'))
             .collect::<Vec<_>>()
             .join(",");
-        query_params.push(format!("select={}", cleaned));
+        query_params.push(format!("select={}", encode_select(&cleaned)));
     }
 
     // Filters
@@ -46,7 +86,7 @@ pub fn build_postgrest_select(
                     Some(crate::sql::NullsPosition::Last) => ".nullslast",
                     None => "",
                 };
-                format!("{}.{}{}", o.column, dir, nulls)
+                format!("{}.{}{}", encode_value(&o.column), dir, nulls)
             })
             .collect();
         query_params.push(format!("order={}", order_parts.join(",")));
@@ -69,10 +109,7 @@ pub fn build_postgrest_select(
             Some(limit) => from + limit - 1,
             None => i64::MAX,
         };
-        headers.insert(
-            "Range",
-            HeaderValue::from_str(&format!("{}-{}", from, to)).unwrap(),
-        );
+        headers.insert("Range", header_value("Range", &format!("{}-{}", from, to))?);
         headers.insert("Range-Unit", HeaderValue::from_static("items"));
     }
 
@@ -96,7 +133,7 @@ pub fn build_postgrest_select(
         if !prefer_parts.is_empty() {
             headers.insert(
                 "Prefer",
-                HeaderValue::from_str(&prefer_parts.join(",")).unwrap(),
+                header_value("Prefer", &prefer_parts.join(","))?,
             );
         }
     }
@@ -108,10 +145,7 @@ pub fn build_postgrest_select(
 
     // Schema override
     if let Some(ref schema) = parts.schema_override {
-        headers.insert(
-            "Accept-Profile",
-            HeaderValue::from_str(schema).unwrap(),
-        );
+        headers.insert("Accept-Profile", header_value("Accept-Profile", schema)?);
     }
 
     // Build URL
@@ -130,7 +164,7 @@ pub fn build_postgrest_insert(
     params: &ParamStore,
 ) -> Result<(String, HeaderMap, JsonValue), String> {
     let table = &parts.table;
-    let url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), table);
+    let url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), encode_value(table));
     let mut headers = HeaderMap::new();
 
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
@@ -148,16 +182,13 @@ pub fn build_postgrest_insert(
         }
         headers.insert(
             "Prefer",
-            HeaderValue::from_str(&prefer_parts.join(",")).unwrap(),
+            header_value("Prefer", &prefer_parts.join(","))?,
         );
     }
 
     // Schema override
     if let Some(ref schema) = parts.schema_override {
-        headers.insert(
-            "Content-Profile",
-            HeaderValue::from_str(schema).unwrap(),
-        );
+        headers.insert("Content-Profile", header_value("Content-Profile", schema)?);
     }
 
     // Build body
@@ -173,7 +204,7 @@ pub fn build_postgrest_update(
     params: &ParamStore,
 ) -> Result<(String, HeaderMap, JsonValue), String> {
     let table = &parts.table;
-    let mut url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), table);
+    let mut url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), encode_value(table));
     let mut headers = HeaderMap::new();
     let mut query_params = Vec::new();
 
@@ -192,16 +223,13 @@ pub fn build_postgrest_update(
         }
         headers.insert(
             "Prefer",
-            HeaderValue::from_str(&prefer_parts.join(",")).unwrap(),
+            header_value("Prefer", &prefer_parts.join(","))?,
         );
     }
 
     // Schema override
     if let Some(ref schema) = parts.schema_override {
-        headers.insert(
-            "Content-Profile",
-            HeaderValue::from_str(schema).unwrap(),
-        );
+        headers.insert("Content-Profile", header_value("Content-Profile", schema)?);
     }
 
     // Filters
@@ -225,7 +253,7 @@ pub fn build_postgrest_delete(
     params: &ParamStore,
 ) -> Result<(String, HeaderMap), String> {
     let table = &parts.table;
-    let mut url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), table);
+    let mut url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), encode_value(table));
     let mut headers = HeaderMap::new();
     let mut query_params = Vec::new();
 
@@ -242,16 +270,13 @@ pub fn build_postgrest_delete(
         }
         headers.insert(
             "Prefer",
-            HeaderValue::from_str(&prefer_parts.join(",")).unwrap(),
+            header_value("Prefer", &prefer_parts.join(","))?,
         );
     }
 
     // Schema override
     if let Some(ref schema) = parts.schema_override {
-        headers.insert(
-            "Content-Profile",
-            HeaderValue::from_str(schema).unwrap(),
-        );
+        headers.insert("Content-Profile", header_value("Content-Profile", schema)?);
     }
 
     // Filters
@@ -272,7 +297,7 @@ pub fn build_postgrest_upsert(
     params: &ParamStore,
 ) -> Result<(String, HeaderMap, JsonValue), String> {
     let table = &parts.table;
-    let mut url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), table);
+    let mut url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), encode_value(table));
     let mut headers = HeaderMap::new();
 
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
@@ -300,12 +325,17 @@ pub fn build_postgrest_upsert(
 
     headers.insert(
         "Prefer",
-        HeaderValue::from_str(&prefer_parts.join(",")).unwrap(),
+        header_value("Prefer", &prefer_parts.join(","))?,
     );
 
     // Conflict columns as on_conflict query param
     if !parts.conflict_columns.is_empty() {
-        let conflict = parts.conflict_columns.join(",");
+        let conflict = parts
+            .conflict_columns
+            .iter()
+            .map(|c| encode_value(c))
+            .collect::<Vec<_>>()
+            .join(",");
         url.push_str(&format!(
             "{}on_conflict={}",
             if url.contains('?') { "&" } else { "?" },
@@ -315,10 +345,7 @@ pub fn build_postgrest_upsert(
 
     // Schema override
     if let Some(ref schema) = parts.schema_override {
-        headers.insert(
-            "Content-Profile",
-            HeaderValue::from_str(schema).unwrap(),
-        );
+        headers.insert("Content-Profile", header_value("Content-Profile", schema)?);
     }
 
     // Build body (same as insert)
@@ -334,7 +361,11 @@ pub fn build_postgrest_rpc(
     args: &JsonValue,
     rollback: bool,
 ) -> (String, HeaderMap, JsonValue) {
-    let url = format!("{}/rest/v1/rpc/{}", base_url.trim_end_matches('/'), function);
+    let url = format!(
+        "{}/rest/v1/rpc/{}",
+        base_url.trim_end_matches('/'),
+        encode_value(function)
+    );
     let mut headers = HeaderMap::new();
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
 
@@ -364,6 +395,10 @@ fn count_option_prefer(option: CountOption) -> Option<&'static str> {
 }
 
 /// Render a SqlParam value as a PostgREST string.
+///
+/// The result is the raw PostgREST value syntax; it is *not* percent-encoded
+/// or list-quoted. The URL builders in this module apply both before placing
+/// it in a query string.
 pub fn render_param_value(param: &SqlParam) -> String {
     match param {
         SqlParam::Null => "null".to_string(),
@@ -419,11 +454,83 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// Render a single filter condition as PostgREST query parameter(s).
+/// Where a rendered filter is embedded, which decides whether PostgREST
+/// list quoting applies to its value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FilterContext {
+    /// `column=op.value` as its own query parameter: PostgREST reads the
+    /// value to the end of the parameter, so no quoting is needed (or allowed).
+    TopLevel,
+    /// Inside `in.(...)`, `or=(...)` or `and=(...)`, where `,` `.` `:` `(` `)`
+    /// and `"` are syntax and values containing them must be quoted.
+    List,
+}
+
+/// Render a parameter value for the given context and percent-encode it.
+fn render_value(param: &SqlParam, ctx: FilterContext) -> String {
+    let raw = render_param_value(param);
+    match ctx {
+        FilterContext::TopLevel => encode_value(&raw),
+        FilterContext::List => encode_value(&quote_list_value(&raw)),
+    }
+}
+
+/// Quote a value for use inside a PostgREST list or logic tree when it
+/// contains characters the list grammar would otherwise treat as syntax.
+/// `"` and `\` inside the value are backslash-escaped, per PostgREST rules.
+fn quote_list_value(value: &str) -> String {
+    const NEEDS_QUOTING: &[char] = &[',', '.', ':', '(', ')', '"', '\\'];
+    if !value.is_empty() && !value.contains(NEEDS_QUOTING) {
+        return value.to_string();
+    }
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for c in value.chars() {
+        if c == '"' || c == '\\' {
+            quoted.push('\\');
+        }
+        quoted.push(c);
+    }
+    quoted.push('"');
+    quoted
+}
+
+/// Whether a rendered filter key is a logic-tree operator (`or` / `and`,
+/// optionally negated) whose value is a parenthesised list rather than `op.value`.
+fn is_logic_key(key: &str) -> bool {
+    matches!(key, "or" | "and" | "not.or" | "not.and")
+}
+
+/// Convert a `(key, rhs)` pair into PostgREST logic-tree item syntax:
+/// `col.op.value` for plain filters, `or(...)` / `and(...)` for nested trees.
+fn logic_tree_item(key: &str, rhs: &str) -> String {
+    if is_logic_key(key) {
+        format!("{}{}", key, rhs)
+    } else {
+        format!("{}.{}", key, rhs)
+    }
+}
+
+/// Render the children of an `or` / `and` tree as `(child,child,...)`.
+fn render_logic_tree(conditions: &[FilterCondition], params: &ParamStore) -> Result<String, String> {
+    let mut items = Vec::new();
+    for cond in conditions {
+        let mut sub = Vec::new();
+        render_filter(cond, params, FilterContext::List, &mut sub)?;
+        items.extend(sub.iter().map(|(key, rhs)| logic_tree_item(key, rhs)));
+    }
+    Ok(format!("({})", items.join(",")))
+}
+
+/// Render a single filter condition as `(key, value)` query-parameter pairs.
+///
+/// Both halves are returned already percent-encoded. `key` is the column
+/// name, or `or` / `and` / `not.or` / `not.and` for logic trees.
 fn render_filter(
     condition: &FilterCondition,
     params: &ParamStore,
-    output: &mut Vec<String>,
+    ctx: FilterContext,
+    output: &mut Vec<(String, String)>,
 ) -> Result<(), String> {
     match condition {
         FilterCondition::Comparison { column, operator, param_index } => {
@@ -437,17 +544,17 @@ fn render_filter(
             };
             let param = params.get(*param_index - 1)
                 .ok_or_else(|| format!("Missing param at index {}", param_index))?;
-            let val = render_param_value(param);
-            output.push(format!("{}={}.{}", column, op, val));
+            let val = render_value(param, ctx);
+            output.push((encode_value(column), format!("{}.{}", op, val)));
         }
         FilterCondition::Is { column, value } => {
-            let val = match value {
-                IsValue::Null => "null",
-                IsValue::NotNull => "not.null",  // not.is.null would be more accurate
-                IsValue::True => "true",
-                IsValue::False => "false",
+            let rhs = match value {
+                IsValue::Null => "is.null",
+                IsValue::NotNull => "not.is.null",
+                IsValue::True => "is.true",
+                IsValue::False => "is.false",
             };
-            output.push(format!("{}=is.{}", column, val));
+            output.push((encode_value(column), rhs.to_string()));
         }
         FilterCondition::In { column, param_indices } => {
             let vals: Result<Vec<String>, String> = param_indices
@@ -455,11 +562,11 @@ fn render_filter(
                 .map(|idx| {
                     let param = params.get(*idx - 1)
                         .ok_or_else(|| format!("Missing param at index {}", idx))?;
-                    Ok(render_param_value(param))
+                    Ok(render_value(param, FilterContext::List))
                 })
                 .collect();
             let val_list = vals?.join(",");
-            output.push(format!("{}=in.({})", column, val_list));
+            output.push((encode_value(column), format!("in.({})", val_list)));
         }
         FilterCondition::Pattern { column, operator, param_index } => {
             let op = match operator {
@@ -468,8 +575,8 @@ fn render_filter(
             };
             let param = params.get(*param_index - 1)
                 .ok_or_else(|| format!("Missing param at index {}", param_index))?;
-            let val = render_param_value(param);
-            output.push(format!("{}={}.{}", column, op, val));
+            let val = render_value(param, ctx);
+            output.push((encode_value(column), format!("{}.{}", op, val)));
         }
         FilterCondition::TextSearch { column, query_param_index, config, search_type } => {
             let op = match search_type {
@@ -479,11 +586,14 @@ fn render_filter(
             };
             let param = params.get(*query_param_index - 1)
                 .ok_or_else(|| format!("Missing param at index {}", query_param_index))?;
-            let val = render_param_value(param);
+            let val = render_value(param, ctx);
             if let Some(cfg) = config {
-                output.push(format!("{}={}({}).{}", column, op, cfg, val));
+                output.push((
+                    encode_value(column),
+                    format!("{}({}).{}", op, encode_value(cfg), val),
+                ));
             } else {
-                output.push(format!("{}={}.{}", column, op, val));
+                output.push((encode_value(column), format!("{}.{}", op, val)));
             }
         }
         FilterCondition::ArrayRange { column, operator, param_index } => {
@@ -499,64 +609,28 @@ fn render_filter(
             };
             let param = params.get(*param_index - 1)
                 .ok_or_else(|| format!("Missing param at index {}", param_index))?;
-            let val = render_param_value(param);
-            output.push(format!("{}={}.{}", column, op, val));
+            let val = render_value(param, ctx);
+            output.push((encode_value(column), format!("{}.{}", op, val)));
         }
         FilterCondition::Not(inner) => {
             // Render inner, then prefix with not.
-            let mut inner_params = Vec::new();
-            render_filter(inner, params, &mut inner_params)?;
-            for p in inner_params {
-                if let Some(eq_pos) = p.find('=') {
-                    let col = &p[..eq_pos];
-                    let rest = &p[eq_pos + 1..];
-                    output.push(format!("{}=not.{}", col, rest));
+            let mut inner_pairs = Vec::new();
+            render_filter(inner, params, ctx, &mut inner_pairs)?;
+            for (key, rhs) in inner_pairs {
+                if is_logic_key(&key) {
+                    // A whole tree is negated as not.or=(...) / not.and=(...)
+                    output.push((format!("not.{}", key), rhs));
+                } else {
+                    output.push((key, format!("not.{}", rhs)));
                 }
             }
         }
         FilterCondition::Or(conditions) => {
-            let mut inner_parts = Vec::new();
-            for cond in conditions {
-                let mut sub = Vec::new();
-                render_filter(cond, params, &mut sub)?;
-                inner_parts.extend(sub);
-            }
             // PostgREST or syntax: or=(filter1,filter2)
-            let or_items: Vec<String> = inner_parts
-                .iter()
-                .map(|p| {
-                    // Convert "col=op.val" to "col.op.val"
-                    if let Some(eq_pos) = p.find('=') {
-                        let col = &p[..eq_pos];
-                        let rest = &p[eq_pos + 1..];
-                        format!("{}.{}", col, rest)
-                    } else {
-                        p.clone()
-                    }
-                })
-                .collect();
-            output.push(format!("or=({})", or_items.join(",")));
+            output.push(("or".to_string(), render_logic_tree(conditions, params)?));
         }
         FilterCondition::And(conditions) => {
-            let mut inner_parts = Vec::new();
-            for cond in conditions {
-                let mut sub = Vec::new();
-                render_filter(cond, params, &mut sub)?;
-                inner_parts.extend(sub);
-            }
-            let and_items: Vec<String> = inner_parts
-                .iter()
-                .map(|p| {
-                    if let Some(eq_pos) = p.find('=') {
-                        let col = &p[..eq_pos];
-                        let rest = &p[eq_pos + 1..];
-                        format!("{}.{}", col, rest)
-                    } else {
-                        p.clone()
-                    }
-                })
-                .collect();
-            output.push(format!("and=({})", and_items.join(",")));
+            output.push(("and".to_string(), render_logic_tree(conditions, params)?));
         }
         FilterCondition::Raw(sql) => {
             // Raw SQL cannot be directly translated to PostgREST
@@ -566,8 +640,8 @@ fn render_filter(
             for (col, idx) in conditions {
                 let param = params.get(*idx - 1)
                     .ok_or_else(|| format!("Missing param at index {}", idx))?;
-                let val = render_param_value(param);
-                output.push(format!("{}=eq.{}", col, val));
+                let val = render_value(param, ctx);
+                output.push((encode_value(col), format!("eq.{}", val)));
             }
         }
     }
@@ -580,7 +654,9 @@ fn render_filters_to_params(
     output: &mut Vec<String>,
 ) -> Result<(), String> {
     for filter in filters {
-        render_filter(filter, params, output)?;
+        let mut pairs = Vec::new();
+        render_filter(filter, params, FilterContext::TopLevel, &mut pairs)?;
+        output.extend(pairs.into_iter().map(|(key, value)| format!("{}={}", key, value)));
     }
     Ok(())
 }
@@ -813,7 +889,8 @@ mod tests {
         });
         let params = make_params(vec![SqlParam::Text("%auck%".to_string())]);
         let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
-        assert!(url.contains("name=like.%auck%"));
+        // `%` must be percent-encoded or the server would see a broken escape
+        assert!(url.contains("name=like.%25auck%25"));
     }
 
     #[test]
@@ -826,7 +903,7 @@ mod tests {
         });
         let params = make_params(vec![SqlParam::Text("%auck%".to_string())]);
         let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
-        assert!(url.contains("name=ilike.%auck%"));
+        assert!(url.contains("name=ilike.%25auck%25"));
     }
 
     #[test]
@@ -853,7 +930,8 @@ mod tests {
         });
         let params = make_params(vec![SqlParam::TextArray(vec!["a".to_string(), "b".to_string()])]);
         let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
-        assert!(url.contains("tags=cs.{\"a\",\"b\"}"));
+        // {"a","b"} percent-encoded (`{`, `"` and `}` are not valid URL characters)
+        assert!(url.contains("tags=cs.%7B%22a%22%2C%22b%22%7D"));
     }
 
     #[test]
@@ -1202,5 +1280,437 @@ mod tests {
         let params = make_params(vec![SqlParam::Text("Auckland".to_string())]);
         let (_, headers, _) = build_postgrest_insert("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(headers.get("Content-Profile").unwrap(), "custom");
+    }
+
+    // ─── Header Value Validation ────────────────────────────
+
+    #[test]
+    fn test_schema_override_invalid_header_value_is_error_not_panic() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.schema_override = Some("custom\nschema".to_string());
+        let params = ParamStore::new();
+        let err = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap_err();
+        assert!(err.contains("Accept-Profile"), "unexpected error: {}", err);
+
+        let mut parts = SqlParts::new(SqlOperation::Insert, "public", "cities");
+        parts.schema_override = Some("custom\nschema".to_string());
+        parts.set_clauses = vec![("name".to_string(), 1)];
+        let params = make_params(vec![SqlParam::Text("Auckland".to_string())]);
+        let err = build_postgrest_insert("http://localhost:64321", &parts, &params).unwrap_err();
+        assert!(err.contains("Content-Profile"), "unexpected error: {}", err);
+
+        let mut parts = SqlParts::new(SqlOperation::Update, "public", "cities");
+        parts.schema_override = Some("custom\nschema".to_string());
+        assert!(build_postgrest_update("http://localhost:64321", &parts, &params).is_err());
+
+        let mut parts = SqlParts::new(SqlOperation::Delete, "public", "cities");
+        parts.schema_override = Some("custom\nschema".to_string());
+        assert!(build_postgrest_delete("http://localhost:64321", &parts, &params).is_err());
+
+        let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "cities");
+        parts.schema_override = Some("custom\nschema".to_string());
+        parts.set_clauses = vec![("name".to_string(), 1)];
+        assert!(build_postgrest_upsert("http://localhost:64321", &parts, &params).is_err());
+    }
+
+    // ─── URL Encoding ───────────────────────────────────────
+
+    fn eq_filter_url(value: &str) -> String {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::Comparison {
+            column: "name".to_string(),
+            operator: FilterOperator::Eq,
+            param_index: 1,
+        });
+        let params = make_params(vec![SqlParam::Text(value.to_string())]);
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        url
+    }
+
+    #[test]
+    fn test_encode_plain_value_is_unchanged() {
+        assert_eq!(
+            eq_filter_url("Auck-land_1.0~x"),
+            "http://localhost:64321/rest/v1/cities?name=eq.Auck-land_1.0~x"
+        );
+    }
+
+    #[test]
+    fn test_encode_value_with_ampersand_cannot_inject_params() {
+        assert_eq!(
+            eq_filter_url("x&limit=1"),
+            "http://localhost:64321/rest/v1/cities?name=eq.x%26limit%3D1"
+        );
+    }
+
+    #[test]
+    fn test_encode_value_with_hash() {
+        assert_eq!(
+            eq_filter_url("a#b"),
+            "http://localhost:64321/rest/v1/cities?name=eq.a%23b"
+        );
+    }
+
+    #[test]
+    fn test_encode_value_with_plus() {
+        assert_eq!(
+            eq_filter_url("a+b"),
+            "http://localhost:64321/rest/v1/cities?name=eq.a%2Bb"
+        );
+    }
+
+    #[test]
+    fn test_encode_value_with_percent() {
+        assert_eq!(
+            eq_filter_url("100%"),
+            "http://localhost:64321/rest/v1/cities?name=eq.100%25"
+        );
+    }
+
+    #[test]
+    fn test_encode_value_with_space_question_mark_and_unicode() {
+        assert_eq!(
+            eq_filter_url("a b?c=ü"),
+            "http://localhost:64321/rest/v1/cities?name=eq.a%20b%3Fc%3D%C3%BC"
+        );
+    }
+
+    #[test]
+    fn test_encode_top_level_value_keeps_list_syntax_chars_unquoted() {
+        // At top level the value runs to the end of the parameter, so a comma
+        // or parenthesis is data and must not be quoted (only encoded).
+        assert_eq!(
+            eq_filter_url("a,b(c)"),
+            "http://localhost:64321/rest/v1/cities?name=eq.a%2Cb%28c%29"
+        );
+    }
+
+    #[test]
+    fn test_encode_in_list_quotes_element_with_comma() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::In {
+            column: "name".to_string(),
+            param_indices: vec![1, 2],
+        });
+        let params = make_params(vec![
+            SqlParam::Text("a,b".to_string()),
+            SqlParam::Text("c".to_string()),
+        ]);
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?name=in.(%22a%2Cb%22,c)"
+        );
+    }
+
+    #[test]
+    fn test_encode_in_list_escapes_quotes_and_backslashes() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::In {
+            column: "name".to_string(),
+            param_indices: vec![1, 2],
+        });
+        let params = make_params(vec![
+            SqlParam::Text("a\"b\\c".to_string()),
+            SqlParam::Text("".to_string()),
+        ]);
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        // "a\"b\\c" and "" (empty string must be quoted to survive the list)
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?name=in.(%22a%5C%22b%5C%5Cc%22,%22%22)"
+        );
+    }
+
+    #[test]
+    fn test_encode_in_list_with_ampersand_element() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::In {
+            column: "id".to_string(),
+            param_indices: vec![1, 2],
+        });
+        let params = make_params(vec![SqlParam::Text("1&x=2".to_string()), SqlParam::I32(3)]);
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?id=in.(1%26x%3D2,3)"
+        );
+    }
+
+    #[test]
+    fn test_encode_or_tree_quotes_values_with_syntax_chars() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::Or(vec![
+            FilterCondition::Comparison {
+                column: "name".to_string(),
+                operator: FilterOperator::Eq,
+                param_index: 1,
+            },
+            FilterCondition::Pattern {
+                column: "name".to_string(),
+                operator: PatternOperator::ILike,
+                param_index: 2,
+            },
+        ]));
+        let params = make_params(vec![
+            SqlParam::Text("a,b".to_string()),
+            SqlParam::Text("x(y)&z".to_string()),
+        ]);
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?or=(name.eq.%22a%2Cb%22,name.ilike.%22x%28y%29%26z%22)"
+        );
+    }
+
+    #[test]
+    fn test_encode_or_tree_with_in_list() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::Or(vec![
+            FilterCondition::In {
+                column: "id".to_string(),
+                param_indices: vec![1, 2],
+            },
+            FilterCondition::Is {
+                column: "deleted_at".to_string(),
+                value: IsValue::Null,
+            },
+        ]));
+        let params = make_params(vec![SqlParam::I32(1), SqlParam::Text("a,b".to_string())]);
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?or=(id.in.(1,%22a%2Cb%22),deleted_at.is.null)"
+        );
+    }
+
+    #[test]
+    fn test_nested_logic_tree_syntax() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::And(vec![
+            FilterCondition::Comparison {
+                column: "a".to_string(),
+                operator: FilterOperator::Eq,
+                param_index: 1,
+            },
+            FilterCondition::Or(vec![
+                FilterCondition::Comparison {
+                    column: "b".to_string(),
+                    operator: FilterOperator::Eq,
+                    param_index: 2,
+                },
+                FilterCondition::Comparison {
+                    column: "c".to_string(),
+                    operator: FilterOperator::Eq,
+                    param_index: 3,
+                },
+            ]),
+        ]));
+        let params = make_params(vec![SqlParam::I32(1), SqlParam::I32(2), SqlParam::I32(3)]);
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?and=(a.eq.1,or(b.eq.2,c.eq.3))"
+        );
+    }
+
+    #[test]
+    fn test_not_or_tree_syntax() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::Not(Box::new(FilterCondition::Or(vec![
+            FilterCondition::Comparison {
+                column: "a".to_string(),
+                operator: FilterOperator::Eq,
+                param_index: 1,
+            },
+            FilterCondition::Comparison {
+                column: "b".to_string(),
+                operator: FilterOperator::Eq,
+                param_index: 2,
+            },
+        ]))));
+        let params = make_params(vec![SqlParam::I32(1), SqlParam::I32(2)]);
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?not.or=(a.eq.1,b.eq.2)"
+        );
+    }
+
+    #[test]
+    fn test_filter_is_not_null() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::Is {
+            column: "deleted_at".to_string(),
+            value: IsValue::NotNull,
+        });
+        let params = ParamStore::new();
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?deleted_at=not.is.null"
+        );
+    }
+
+    #[test]
+    fn test_filter_is_true_false() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::Is {
+            column: "active".to_string(),
+            value: IsValue::True,
+        });
+        parts.filters.push(FilterCondition::Is {
+            column: "banned".to_string(),
+            value: IsValue::False,
+        });
+        let params = ParamStore::new();
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?active=is.true&banned=is.false"
+        );
+    }
+
+    #[test]
+    fn test_encode_column_name() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::Comparison {
+            column: "data->>key&x".to_string(),
+            operator: FilterOperator::Eq,
+            param_index: 1,
+        });
+        let params = make_params(vec![SqlParam::I32(1)]);
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?data-%3E%3Ekey%26x=eq.1"
+        );
+    }
+
+    #[test]
+    fn test_encode_text_search_config_and_value() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::TextSearch {
+            column: "fts".to_string(),
+            query_param_index: 1,
+            config: Some("eng&lish".to_string()),
+            search_type: TextSearchType::Websearch,
+        });
+        let params = make_params(vec![SqlParam::Text("fat & rat".to_string())]);
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?fts=wfts(eng%26lish).fat%20%26%20rat"
+        );
+    }
+
+    #[test]
+    fn test_encode_match_values() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.filters.push(FilterCondition::Match {
+            conditions: vec![("name".to_string(), 1)],
+        });
+        let params = make_params(vec![SqlParam::Text("a&b".to_string())]);
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(url, "http://localhost:64321/rest/v1/cities?name=eq.a%26b");
+    }
+
+    #[test]
+    fn test_encode_select_keeps_postgrest_syntax() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.select_columns =
+            Some("*, author:authors!inner(name), data->>key, count(*)&x".to_string());
+        let params = ParamStore::new();
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?select=*,author:authors!inner(name),data-%3E%3Ekey,count(*)%26x"
+        );
+    }
+
+    #[test]
+    fn test_encode_order_column() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
+        parts.orders.push(OrderClause {
+            column: "a&b=c".to_string(),
+            direction: OrderDirection::Descending,
+            nulls: Some(NullsPosition::First),
+        });
+        let params = ParamStore::new();
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?order=a%26b%3Dc.desc.nullsfirst"
+        );
+    }
+
+    #[test]
+    fn test_encode_table_name_in_path() {
+        let parts = SqlParts::new(SqlOperation::Select, "public", "my table/x");
+        let params = ParamStore::new();
+        let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(url, "http://localhost:64321/rest/v1/my%20table%2Fx");
+
+        let (url, _) = build_postgrest_delete("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(url, "http://localhost:64321/rest/v1/my%20table%2Fx");
+    }
+
+    #[test]
+    fn test_encode_on_conflict_columns() {
+        let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "cities");
+        parts.set_clauses = vec![("id".to_string(), 1)];
+        parts.conflict_columns = vec!["id".to_string(), "a&b".to_string()];
+        let params = make_params(vec![SqlParam::I32(1)]);
+        let (url, _, _) = build_postgrest_upsert("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?on_conflict=id,a%26b"
+        );
+    }
+
+    #[test]
+    fn test_encode_rpc_function_name() {
+        let args = serde_json::json!(null);
+        let (url, _, _) = build_postgrest_rpc("http://localhost:64321", "get city?x", &args, false);
+        assert_eq!(url, "http://localhost:64321/rest/v1/rpc/get%20city%3Fx");
+    }
+
+    #[test]
+    fn test_encode_update_and_delete_filters() {
+        let mut parts = SqlParts::new(SqlOperation::Update, "public", "cities");
+        parts.set_clauses = vec![("name".to_string(), 1)];
+        parts.filters.push(FilterCondition::Comparison {
+            column: "slug".to_string(),
+            operator: FilterOperator::Eq,
+            param_index: 2,
+        });
+        let params = make_params(vec![
+            SqlParam::Text("x".to_string()),
+            SqlParam::Text("a&b".to_string()),
+        ]);
+        let (url, _, _) = build_postgrest_update("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(url, "http://localhost:64321/rest/v1/cities?slug=eq.a%26b");
+
+        let mut parts = SqlParts::new(SqlOperation::Delete, "public", "cities");
+        parts.filters.push(FilterCondition::Comparison {
+            column: "slug".to_string(),
+            operator: FilterOperator::Eq,
+            param_index: 1,
+        });
+        let params = make_params(vec![SqlParam::Text("a&b".to_string())]);
+        let (url, _) = build_postgrest_delete("http://localhost:64321", &parts, &params).unwrap();
+        assert_eq!(url, "http://localhost:64321/rest/v1/cities?slug=eq.a%26b");
+    }
+
+    #[test]
+    fn test_quote_list_value() {
+        assert_eq!(quote_list_value("plain"), "plain");
+        assert_eq!(quote_list_value("a,b"), "\"a,b\"");
+        assert_eq!(quote_list_value("1.5"), "\"1.5\"");
+        assert_eq!(quote_list_value("a:b"), "\"a:b\"");
+        assert_eq!(quote_list_value("(x)"), "\"(x)\"");
+        assert_eq!(quote_list_value("say \"hi\""), "\"say \\\"hi\\\"\"");
+        assert_eq!(quote_list_value("back\\slash"), "\"back\\\\slash\"");
+        assert_eq!(quote_list_value(""), "\"\"");
     }
 }
