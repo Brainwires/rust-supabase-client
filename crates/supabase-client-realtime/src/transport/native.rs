@@ -44,8 +44,13 @@ pub(crate) async fn connect_ws(
         );
     }
 
+    #[cfg(any(feature = "rustls", feature = "native-tls"))]
     let connect =
         tokio_tungstenite::connect_async_tls_with_config(request, None, false, tls_connector()?);
+    // No TLS feature: plain ws:// only (wss:// fails with "TLS support not
+    // compiled in").
+    #[cfg(not(any(feature = "rustls", feature = "native-tls")))]
+    let connect = tokio_tungstenite::connect_async(request);
     let (ws_stream, _) = tokio::time::timeout(config.connect_timeout, connect)
         .await
         .map_err(|_| {
@@ -68,8 +73,7 @@ pub(crate) async fn connect_ws(
 /// With the `rustls` feature, an explicit rustls config (see
 /// [`rustls_client_config`]); it takes precedence when both TLS features are
 /// enabled. With only `native-tls`, `None` lets tokio-tungstenite use
-/// native-tls. With neither, `wss://` URLs fail with a "TLS support not
-/// compiled in" error.
+/// native-tls.
 #[cfg(feature = "rustls")]
 fn tls_connector() -> Result<Option<tokio_tungstenite::Connector>, RealtimeError> {
     Ok(Some(tokio_tungstenite::Connector::Rustls(Arc::new(
@@ -77,7 +81,7 @@ fn tls_connector() -> Result<Option<tokio_tungstenite::Connector>, RealtimeError
     ))))
 }
 
-#[cfg(not(feature = "rustls"))]
+#[cfg(all(feature = "native-tls", not(feature = "rustls")))]
 fn tls_connector() -> Result<Option<tokio_tungstenite::Connector>, RealtimeError> {
     Ok(None)
 }

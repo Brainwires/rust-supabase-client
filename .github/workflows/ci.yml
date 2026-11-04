@@ -95,6 +95,8 @@ jobs:
             args: -p supabase-client-sdk
           - name: sdk no default features
             args: -p supabase-client-sdk --no-default-features
+          - name: realtime without TLS
+            args: -p supabase-client-realtime --no-default-features
           - name: sdk full
             args: -p supabase-client-sdk --features full
           - name: sdk full + direct-sql
