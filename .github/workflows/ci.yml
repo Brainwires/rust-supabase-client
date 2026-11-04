@@ -52,7 +52,14 @@ jobs:
         run: cargo test --workspace --all-features --locked --lib
 
       - name: Offline integration tests
-        run: cargo test -p supabase-client-sdk --all-features --locked --test session_token
+        # wiremock / in-process servers only, no Supabase stack.
+        run: >-
+          cargo test --workspace --all-features --locked
+          --test session_token
+          --test security_regressions
+          --test wiremock_tests
+          --test protocol_regressions
+          --test derive_table
 
       - name: Doctests
         run: cargo test --workspace --all-features --locked --doc
