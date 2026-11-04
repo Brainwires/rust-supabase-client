@@ -2159,6 +2159,7 @@ dependencies = [
 name = "supabase-client-core"
 version = "0.2.2"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "futures-util",
  "getrandom 0.3.4",
@@ -2280,6 +2281,7 @@ dependencies = [
 name = "supabase-client-storage"
 version = "0.2.2"
 dependencies = [
+ "base64 0.22.1",
  "reqwest",
  "serde",
  "serde_json",
