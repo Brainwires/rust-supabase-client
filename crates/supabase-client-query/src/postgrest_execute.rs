@@ -13,26 +13,46 @@ pub(crate) fn header_value(name: &str, value: &str) -> Result<HeaderValue, Supab
         .map_err(|e| SupabaseError::Config(format!("Invalid {} header value: {}", name, e)))
 }
 
-/// Add the `apikey` / `Authorization` headers and, when the query does not
-/// override the schema and the default schema is not `public`, the
-/// `Accept-Profile` / `Content-Profile` header.
-fn apply_standard_headers(
+/// Add the `apikey` and `Authorization` headers.
+///
+/// `apikey` is always the project API key. `Authorization` carries the
+/// signed-in user's access token when one is set, so PostgREST evaluates RLS
+/// policies as that user; otherwise it falls back to the API key (the `anon`
+/// or `service_role` role).
+pub(crate) fn apply_auth_headers(
     headers: &mut HeaderMap,
     api_key: &str,
+    access_token: Option<&str>,
+) -> Result<(), SupabaseError> {
+    headers.insert("apikey", header_value("apikey", api_key)?);
+    let bearer = access_token.unwrap_or(api_key);
+    headers.insert(
+        "Authorization",
+        header_value("Authorization", &format!("Bearer {}", bearer))?,
+    );
+    Ok(())
+}
+
+/// Add the auth headers and, when the query does not override the schema and
+/// the default schema is not `public`, the schema profile header:
+/// `Accept-Profile` for GET/HEAD and `Content-Profile` for every other method
+/// (including RPC calls, which are POST).
+fn apply_standard_headers(
+    headers: &mut HeaderMap,
+    method: &reqwest::Method,
+    api_key: &str,
+    access_token: Option<&str>,
     schema: &str,
     parts: &SqlParts,
 ) -> Result<(), SupabaseError> {
-    headers.insert("apikey", header_value("apikey", api_key)?);
-    headers.insert(
-        "Authorization",
-        header_value("Authorization", &format!("Bearer {}", api_key))?,
-    );
+    apply_auth_headers(headers, api_key, access_token)?;
 
     // Set Accept-Profile / Content-Profile for schema if not already set
     if parts.schema_override.is_none() && schema != "public" {
-        let name = match parts.operation {
-            SqlOperation::Select => "Accept-Profile",
-            _ => "Content-Profile",
+        let name = if *method == reqwest::Method::GET || *method == reqwest::Method::HEAD {
+            "Accept-Profile"
+        } else {
+            "Content-Profile"
         };
         let value = header_value(name, schema)?;
         headers.entry(name).or_insert(value);
@@ -41,19 +61,47 @@ fn apply_standard_headers(
     Ok(())
 }
 
-/// Execute a PostgREST request and parse the response.
+/// Execute a PostgREST request authenticated with the API key only, and
+/// parse the response.
+///
+/// Prefer [`execute_rest_with_token`], which can send a user access token.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_rest<T: DeserializeOwned + Send>(
+    http: &reqwest::Client,
+    method: reqwest::Method,
+    url: &str,
+    headers: HeaderMap,
+    body: Option<JsonValue>,
+    api_key: &str,
+    schema: &str,
+    parts: &SqlParts,
+) -> SupabaseResponse<T> {
+    execute_rest_with_token(
+        http, method, url, headers, body, api_key, None, schema, parts,
+    )
+    .await
+}
+
+/// Execute a PostgREST request and parse the response.
+///
+/// `access_token`, when set, is sent as `Authorization: Bearer <token>`
+/// (with `apikey: <api_key>`), so the request runs as the signed-in user.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_rest_with_token<T: DeserializeOwned + Send>(
     http: &reqwest::Client,
     method: reqwest::Method,
     url: &str,
     mut headers: HeaderMap,
     body: Option<JsonValue>,
     api_key: &str,
+    access_token: Option<&str>,
     schema: &str,
     parts: &SqlParts,
 ) -> SupabaseResponse<T> {
     // Add standard auth + schema headers
-    if let Err(e) = apply_standard_headers(&mut headers, api_key, schema, parts) {
+    if let Err(e) =
+        apply_standard_headers(&mut headers, &method, api_key, access_token, schema, parts)
+    {
         return SupabaseResponse::error(e);
     }
 
@@ -85,7 +133,7 @@ pub async fn execute_rest<T: DeserializeOwned + Send>(
     // For HEAD method (head mode), we just need the count from Content-Range
     if method == reqwest::Method::HEAD || parts.head {
         let count = parse_count_from_headers(&resp_headers);
-        if status_code >= 200 && status_code < 300 {
+        if (200..300).contains(&status_code) {
             let mut resp = SupabaseResponse::<T>::ok(Vec::new());
             if let Some(c) = count {
                 resp.count = Some(c);
@@ -171,33 +219,26 @@ pub async fn execute_rest<T: DeserializeOwned + Send>(
                         // Wrap the scalar in an object keyed by the function/table name.
                         match serde_json::from_str::<JsonValue>(&body_text) {
                             Ok(scalar) if !scalar.is_array() && !scalar.is_object() => {
-                                let wrapped = format!(
-                                    "[{{\"{}\": {}}}]",
-                                    parts.table, body_text
-                                );
+                                let wrapped = format!("[{{\"{}\": {}}}]", parts.table, body_text);
                                 match serde_json::from_str::<Vec<T>>(&wrapped) {
                                     Ok(data) => {
-                                        let mut resp =
-                                            build_response_from_operation(data, parts);
+                                        let mut resp = build_response_from_operation(data, parts);
                                         if let Some(c) = count {
                                             resp.count = Some(c);
                                         }
                                         resp
                                     }
-                                    Err(e) => SupabaseResponse::error(
-                                        SupabaseError::Serialization(format!(
-                                            "Failed to parse scalar response: {}",
-                                            e
-                                        )),
-                                    ),
+                                    Err(e) => {
+                                        SupabaseResponse::error(SupabaseError::Serialization(
+                                            format!("Failed to parse scalar response: {}", e),
+                                        ))
+                                    }
                                 }
                             }
-                            _ => SupabaseResponse::error(SupabaseError::Serialization(
-                                format!(
-                                    "Failed to parse response: {}",
-                                    body_text
-                                ),
-                            )),
+                            _ => SupabaseResponse::error(SupabaseError::Serialization(format!(
+                                "Failed to parse response: {}",
+                                body_text
+                            ))),
                         }
                     }
                 }
@@ -334,7 +375,11 @@ mod tests {
         let resp: SupabaseResponse<JsonValue> = parse_error_response(404, body);
         assert!(resp.is_err());
         match resp.error.as_ref().unwrap() {
-            SupabaseError::PostgRest { status, message, code } => {
+            SupabaseError::PostgRest {
+                status,
+                message,
+                code,
+            } => {
                 assert_eq!(*status, 404);
                 assert_eq!(message, "Row not found");
                 assert_eq!(code.as_deref(), Some("PGRST116"));
@@ -349,7 +394,11 @@ mod tests {
         let resp: SupabaseResponse<JsonValue> = parse_error_response(500, body);
         assert!(resp.is_err());
         match resp.error.as_ref().unwrap() {
-            SupabaseError::PostgRest { status, message, code } => {
+            SupabaseError::PostgRest {
+                status,
+                message,
+                code,
+            } => {
                 assert_eq!(*status, 500);
                 assert_eq!(message, "Something went wrong");
                 assert!(code.is_none());
@@ -377,7 +426,11 @@ mod tests {
         let resp: SupabaseResponse<JsonValue> = parse_error_response(500, body);
         assert!(resp.is_err());
         match resp.error.as_ref().unwrap() {
-            SupabaseError::PostgRest { status, message, code } => {
+            SupabaseError::PostgRest {
+                status,
+                message,
+                code,
+            } => {
                 assert_eq!(*status, 500);
                 assert_eq!(message, "this is not json");
                 assert!(code.is_none());
@@ -409,8 +462,17 @@ mod tests {
         let headers = HeaderMap::new();
         let parts = make_select_parts("users");
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "test-key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::GET,
+            &url,
+            headers,
+            None,
+            "test-key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_ok());
         assert_eq!(resp.data.len(), 2);
@@ -426,8 +488,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/rest/v1/users"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(json!({"id": 1, "name": "Alice"})),
+                ResponseTemplate::new(200).set_body_json(json!({"id": 1, "name": "Alice"})),
             )
             .mount(&mock_server)
             .await;
@@ -438,8 +499,17 @@ mod tests {
         let mut parts = make_select_parts("users");
         parts.single = true;
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "test-key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::GET,
+            &url,
+            headers,
+            None,
+            "test-key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_ok());
         assert_eq!(resp.data.len(), 1);
@@ -452,10 +522,7 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("HEAD"))
             .and(path("/rest/v1/users"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("content-range", "0-9/42"),
-            )
+            .respond_with(ResponseTemplate::new(200).insert_header("content-range", "0-9/42"))
             .mount(&mock_server)
             .await;
 
@@ -465,8 +532,17 @@ mod tests {
         let mut parts = make_select_parts("users");
         parts.head = true;
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::HEAD, &url, headers, None, "test-key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::HEAD,
+            &url,
+            headers,
+            None,
+            "test-key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_ok());
         assert!(resp.data.is_empty());
@@ -488,8 +564,17 @@ mod tests {
         let mut parts = make_select_parts("users");
         parts.head = true;
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::HEAD, &url, headers, None, "test-key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::HEAD,
+            &url,
+            headers,
+            None,
+            "test-key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_err());
         match resp.error.as_ref().unwrap() {
@@ -517,12 +602,25 @@ mod tests {
         let headers = HeaderMap::new();
         let parts = make_select_parts("users");
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "test-key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::GET,
+            &url,
+            headers,
+            None,
+            "test-key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_err());
         match resp.error.as_ref().unwrap() {
-            SupabaseError::PostgRest { status, message, code } => {
+            SupabaseError::PostgRest {
+                status,
+                message,
+                code,
+            } => {
                 assert_eq!(*status, 400);
                 assert_eq!(message, "Bad request");
                 assert_eq!(code.as_deref(), Some("42703"));
@@ -547,8 +645,17 @@ mod tests {
         // No returning - expect 204
         parts.returning = None;
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::DELETE, &url, headers, None, "test-key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::DELETE,
+            &url,
+            headers,
+            None,
+            "test-key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_ok());
         assert!(resp.data.is_empty());
@@ -568,8 +675,17 @@ mod tests {
         let headers = HeaderMap::new();
         let parts = SqlParts::new(SqlOperation::Insert, "public", "users");
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::POST, &url, headers, None, "test-key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::POST,
+            &url,
+            headers,
+            None,
+            "test-key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_ok());
         assert!(resp.data.is_empty());
@@ -581,8 +697,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/rest/v1/users"))
             .respond_with(
-                ResponseTemplate::new(201)
-                    .set_body_json(json!([{"id": 1, "name": "Alice"}])),
+                ResponseTemplate::new(201).set_body_json(json!([{"id": 1, "name": "Alice"}])),
             )
             .mount(&mock_server)
             .await;
@@ -592,8 +707,17 @@ mod tests {
         let headers = HeaderMap::new();
         let parts = SqlParts::new(SqlOperation::Insert, "public", "users");
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::POST, &url, headers, None, "test-key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::POST,
+            &url,
+            headers,
+            None,
+            "test-key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_ok());
         assert_eq!(resp.data.len(), 1);
@@ -618,8 +742,17 @@ mod tests {
         let headers = HeaderMap::new();
         let parts = make_select_parts("users");
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "test-key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::GET,
+            &url,
+            headers,
+            None,
+            "test-key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_ok());
         assert_eq!(resp.count, Some(25));
@@ -631,7 +764,10 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/rest/v1/users"))
             .and(wiremock::matchers::header("apikey", "my-secret-key"))
-            .and(wiremock::matchers::header("Authorization", "Bearer my-secret-key"))
+            .and(wiremock::matchers::header(
+                "Authorization",
+                "Bearer my-secret-key",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
             .mount(&mock_server)
             .await;
@@ -641,8 +777,17 @@ mod tests {
         let headers = HeaderMap::new();
         let parts = make_select_parts("users");
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "my-secret-key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::GET,
+            &url,
+            headers,
+            None,
+            "my-secret-key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_ok());
     }
@@ -652,7 +797,10 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/rest/v1/users"))
-            .and(wiremock::matchers::header("Accept-Profile", "custom_schema"))
+            .and(wiremock::matchers::header(
+                "Accept-Profile",
+                "custom_schema",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
             .mount(&mock_server)
             .await;
@@ -662,8 +810,17 @@ mod tests {
         let headers = HeaderMap::new();
         let parts = make_select_parts("users");
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "key", "custom_schema", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::GET,
+            &url,
+            headers,
+            None,
+            "key",
+            "custom_schema",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_ok());
     }
@@ -675,8 +832,7 @@ mod tests {
             .and(path("/rest/v1/users"))
             .and(wiremock::matchers::body_json(json!({"name": "Alice"})))
             .respond_with(
-                ResponseTemplate::new(201)
-                    .set_body_json(json!([{"id": 1, "name": "Alice"}])),
+                ResponseTemplate::new(201).set_body_json(json!([{"id": 1, "name": "Alice"}])),
             )
             .mount(&mock_server)
             .await;
@@ -686,11 +842,17 @@ mod tests {
         let headers = HeaderMap::new();
         let parts = SqlParts::new(SqlOperation::Insert, "public", "users");
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(
-                &http, reqwest::Method::POST, &url, headers,
-                Some(json!({"name": "Alice"})), "key", "public", &parts,
-            ).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::POST,
+            &url,
+            headers,
+            Some(json!({"name": "Alice"})),
+            "key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_ok());
         assert_eq!(resp.data.len(), 1);
@@ -701,10 +863,7 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/rest/v1/users"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(json!([{"id": 1}])),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{"id": 1}])))
             .mount(&mock_server)
             .await;
 
@@ -714,8 +873,17 @@ mod tests {
         let mut parts = make_select_parts("users");
         parts.maybe_single = true;
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::GET,
+            &url,
+            headers,
+            None,
+            "key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_ok());
         assert_eq!(resp.data.len(), 1);
@@ -727,8 +895,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/rest/v1/users"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(json!([{"id": 1}, {"id": 2}, {"id": 3}])),
+                ResponseTemplate::new(200).set_body_json(json!([{"id": 1}, {"id": 2}, {"id": 3}])),
             )
             .mount(&mock_server)
             .await;
@@ -739,11 +906,23 @@ mod tests {
         let mut parts = make_select_parts("users");
         parts.maybe_single = true;
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::GET,
+            &url,
+            headers,
+            None,
+            "key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_err());
-        assert!(matches!(resp.error.as_ref().unwrap(), SupabaseError::MultipleRows(3)));
+        assert!(matches!(
+            resp.error.as_ref().unwrap(),
+            SupabaseError::MultipleRows(3)
+        ));
     }
 
     #[tokio::test]
@@ -755,9 +934,7 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/rest/v1/my_func"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_string("42"),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_string("42"))
             .mount(&mock_server)
             .await;
 
@@ -766,8 +943,17 @@ mod tests {
         let headers = HeaderMap::new();
         let parts = make_select_parts("my_func");
 
-        let resp: SupabaseResponse<JsonValue> =
-            execute_rest(&http, reqwest::Method::GET, &url, headers, None, "key", "public", &parts).await;
+        let resp: SupabaseResponse<JsonValue> = execute_rest(
+            &http,
+            reqwest::Method::GET,
+            &url,
+            headers,
+            None,
+            "key",
+            "public",
+            &parts,
+        )
+        .await;
 
         assert!(resp.is_ok());
         assert_eq!(resp.data.len(), 1);

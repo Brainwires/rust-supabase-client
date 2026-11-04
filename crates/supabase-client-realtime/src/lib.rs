@@ -22,6 +22,10 @@
 //!     .await?;
 //! ```
 
+// `RealtimeError::WebSocket` wraps tungstenite's (large) error by value;
+// boxing it would change the public variant for little gain.
+#![allow(clippy::result_large_err)]
+
 pub mod callback;
 pub mod channel;
 pub mod client;
@@ -36,10 +40,9 @@ pub use channel::{ChannelBuilder, RealtimeChannel};
 pub use client::RealtimeClient;
 pub use error::RealtimeError;
 pub use types::{
-    BroadcastConfig, ChannelState, ColumnInfo, JoinConfig, JoinPayload,
-    PostgresChangePayload, PostgresChangesEvent, PostgresChangesFilter, PresenceConfig,
-    PresenceDiff, PresenceEntry, PresenceMeta, PresenceState, RealtimeConfig,
-    ReconnectConfig, SubscriptionStatus,
+    BroadcastConfig, ChannelState, ColumnInfo, JoinConfig, JoinPayload, PostgresChangePayload,
+    PostgresChangesEvent, PostgresChangesFilter, PresenceConfig, PresenceDiff, PresenceEntry,
+    PresenceMeta, PresenceState, RealtimeConfig, ReconnectConfig, SubscriptionStatus,
 };
 
 use supabase_client_core::SupabaseClient;
@@ -70,6 +73,6 @@ mod tests {
         let realtime = client.realtime();
         assert!(realtime.is_ok());
         let realtime = realtime.unwrap();
-        assert!(realtime.is_connected() == false);
+        assert!(!realtime.is_connected());
     }
 }

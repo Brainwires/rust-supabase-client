@@ -32,8 +32,23 @@ impl QueryBuilder {
         }
     }
 
+    /// Run this query as a signed-in user: send `Authorization: Bearer
+    /// <access_token>` (with `apikey: <api key>`) so PostgREST applies row
+    /// level security for that user instead of the `anon` role.
+    ///
+    /// Ignored by the direct-SQL backend.
+    pub fn access_token(mut self, access_token: &str) -> Self {
+        self.backend.set_access_token(Some(access_token.into()));
+        self
+    }
+
     /// Start a SELECT query.
     /// Pass column expressions like "name, country_id" or "*".
+    ///
+    /// With the REST backend the full PostgREST select syntax (embedded
+    /// resources, aliases, casts) is passed through. With the direct-SQL
+    /// backend only `*` and a list of plain column names are accepted;
+    /// anything else makes `execute()` return an error.
     pub fn select(self, columns: &str) -> SelectBuilder<Row> {
         let mut parts = SqlParts::new(SqlOperation::Select, &self.schema, &self.table);
 
@@ -218,6 +233,12 @@ impl<T: Table> TypedQueryBuilder<T> {
         }
     }
 
+    /// Run this query as a signed-in user. See [`QueryBuilder::access_token`].
+    pub fn access_token(mut self, access_token: &str) -> Self {
+        self.backend.set_access_token(Some(access_token.into()));
+        self
+    }
+
     /// Start a typed SELECT query (selects all columns by default).
     pub fn select(self) -> SelectBuilder<T> {
         let parts = SqlParts::new(SqlOperation::Select, &self.schema, T::table_name());
@@ -263,7 +284,7 @@ impl<T: Table> TypedQueryBuilder<T> {
         let columns = T::insertable_columns();
         let values = value.bind_insert();
 
-        for (col, val) in columns.iter().zip(values.into_iter()) {
+        for (col, val) in columns.iter().zip(values) {
             let idx = params.push(val);
             parts.set_clauses.push((col.to_string(), idx));
         }
@@ -286,19 +307,27 @@ impl<T: Table> TypedQueryBuilder<T> {
         let all_cols = T::column_names();
         let update_vals = value.bind_update();
 
-        let update_cols: Vec<&&str> = all_cols
-            .iter()
-            .filter(|c| !pk_cols.contains(c))
-            .collect();
+        let update_cols: Vec<&&str> = all_cols.iter().filter(|c| !pk_cols.contains(c)).collect();
 
-        for (col, val) in update_cols.iter().zip(update_vals.into_iter()) {
+        for (col, val) in update_cols.iter().zip(update_vals) {
             let idx = params.push(val);
             parts.set_clauses.push((col.to_string(), idx));
         }
 
-        // WHERE clause: primary key match
+        // WHERE clause: primary key match. Without a primary key there is no
+        // WHERE clause at all and the UPDATE would rewrite every row, so record
+        // an error that `execute()` returns instead.
         let pk_vals = value.bind_primary_key();
-        for (col, val) in pk_cols.iter().zip(pk_vals.into_iter()) {
+        if pk_cols.is_empty() || pk_vals.len() != pk_cols.len() {
+            parts
+                .filters
+                .push(crate::sql::FilterCondition::Invalid(format!(
+                    "Typed update on {:?} needs a primary key (mark a field with #[primary_key]); \
+                 refusing to update without a WHERE clause",
+                    T::table_name()
+                )));
+        }
+        for (col, val) in pk_cols.iter().zip(pk_vals) {
             let idx = params.push(val);
             parts.filters.push(crate::sql::FilterCondition::Comparison {
                 column: col.to_string(),
@@ -336,14 +365,19 @@ impl<T: Table> TypedQueryBuilder<T> {
 
         // First add PK columns
         let pk_vals = value.bind_primary_key();
-        for (col, val) in pk_cols.iter().zip(pk_vals.into_iter()) {
+        for (col, val) in pk_cols.iter().zip(pk_vals) {
             let idx = params.push(val);
             parts.set_clauses.push((col.to_string(), idx));
         }
 
-        // Then add insertable columns
+        // Then add insertable columns. A primary key that is not
+        // auto-generated is also insertable; it was added above, so skip it
+        // here instead of sending the column twice.
         let insert_vals = value.bind_insert();
-        for (col, val) in insertable_cols.iter().zip(insert_vals.into_iter()) {
+        for (col, val) in insertable_cols.iter().zip(insert_vals) {
+            if pk_cols.contains(col) {
+                continue;
+            }
             let idx = params.push(val);
             parts.set_clauses.push((col.to_string(), idx));
         }
@@ -390,6 +424,7 @@ fn json_to_sql_param(value: JsonValue) -> crate::sql::SqlParam {
 }
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
     use crate::backend::QueryBackend;
@@ -403,6 +438,7 @@ mod tests {
             http: reqwest::Client::new(),
             base_url: Arc::from("http://localhost"),
             api_key: Arc::from("key"),
+            access_token: None,
             schema: "public".to_string(),
         }
     }
@@ -738,5 +774,142 @@ mod tests {
         assert_eq!(upsert_builder.parts.set_clauses.len(), 2);
         // Conflict columns should be set to PK
         assert_eq!(upsert_builder.parts.conflict_columns, vec!["id"]);
+    }
+
+    // ---- Regression tests (security audit) ----
+
+    /// A table without a primary key.
+    #[derive(Debug, Clone, serde::Deserialize)]
+    struct NoPkTable {
+        name: String,
+    }
+
+    impl crate::table::Table for NoPkTable {
+        fn table_name() -> &'static str {
+            "no_pk"
+        }
+        fn primary_key_columns() -> &'static [&'static str] {
+            &[]
+        }
+        fn column_names() -> &'static [&'static str] {
+            &["name"]
+        }
+        fn insertable_columns() -> &'static [&'static str] {
+            &["name"]
+        }
+        fn field_to_column(_: &str) -> Option<&'static str> {
+            Some("name")
+        }
+        fn column_to_field(_: &str) -> Option<&'static str> {
+            Some("name")
+        }
+        fn bind_insert(&self) -> Vec<SqlParam> {
+            vec![SqlParam::Text(self.name.clone())]
+        }
+        fn bind_update(&self) -> Vec<SqlParam> {
+            vec![SqlParam::Text(self.name.clone())]
+        }
+        fn bind_primary_key(&self) -> Vec<SqlParam> {
+            vec![]
+        }
+    }
+
+    /// A table whose primary key is not auto-generated (so it is insertable).
+    #[derive(Debug, Clone, serde::Deserialize)]
+    struct ManualPkTable {
+        code: String,
+        name: String,
+    }
+
+    impl crate::table::Table for ManualPkTable {
+        fn table_name() -> &'static str {
+            "manual_pk"
+        }
+        fn primary_key_columns() -> &'static [&'static str] {
+            &["code"]
+        }
+        fn column_names() -> &'static [&'static str] {
+            &["code", "name"]
+        }
+        fn insertable_columns() -> &'static [&'static str] {
+            &["code", "name"]
+        }
+        fn field_to_column(f: &str) -> Option<&'static str> {
+            Self::column_names().iter().copied().find(|c| *c == f)
+        }
+        fn column_to_field(c: &str) -> Option<&'static str> {
+            Self::column_names().iter().copied().find(|f| *f == c)
+        }
+        fn bind_insert(&self) -> Vec<SqlParam> {
+            vec![
+                SqlParam::Text(self.code.clone()),
+                SqlParam::Text(self.name.clone()),
+            ]
+        }
+        fn bind_update(&self) -> Vec<SqlParam> {
+            vec![SqlParam::Text(self.name.clone())]
+        }
+        fn bind_primary_key(&self) -> Vec<SqlParam> {
+            vec![SqlParam::Text(self.code.clone())]
+        }
+    }
+
+    #[test]
+    fn test_typed_update_without_primary_key_is_an_error() {
+        let builder = TypedQueryBuilder::<NoPkTable>::new(make_backend(), "public".into())
+            .update(&NoPkTable { name: "x".into() });
+        assert!(builder.parts.check_valid().is_err());
+        let err =
+            crate::postgrest::build_postgrest_update("http://x", &builder.parts, &builder.params)
+                .unwrap_err();
+        assert!(err.contains("primary key"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn test_typed_update_without_primary_key_sends_nothing() {
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        let backend = QueryBackend::Rest {
+            http: reqwest::Client::new(),
+            base_url: Arc::from(server.uri().as_str()),
+            api_key: Arc::from("anon"),
+            access_token: None,
+            schema: "public".into(),
+        };
+        let resp = TypedQueryBuilder::<NoPkTable>::new(backend, "public".into())
+            .update(&NoPkTable { name: "x".into() })
+            .execute()
+            .await;
+        assert!(resp.error.is_some());
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_typed_upsert_does_not_duplicate_insertable_primary_key() {
+        let builder = TypedQueryBuilder::<ManualPkTable>::new(make_backend(), "public".into())
+            .upsert(&ManualPkTable {
+                code: "nz".into(),
+                name: "New Zealand".into(),
+            });
+        let cols: Vec<&str> = builder
+            .parts
+            .set_clauses
+            .iter()
+            .map(|(c, _)| c.as_str())
+            .collect();
+        assert_eq!(cols, vec!["code", "name"]);
+    }
+
+    #[test]
+    fn test_access_token_is_set_on_backend() {
+        let builder = make_query_builder().access_token("user-jwt");
+        assert_eq!(builder.backend.access_token(), Some("user-jwt"));
+        let typed: TypedQueryBuilder<TestTable> =
+            TypedQueryBuilder::new(make_backend(), "public".into()).access_token("user-jwt");
+        assert_eq!(typed.backend.access_token(), Some("user-jwt"));
     }
 }

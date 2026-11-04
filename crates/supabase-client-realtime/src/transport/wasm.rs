@@ -3,7 +3,8 @@
 //! Bridges web_sys callback-based WebSocket API into async channels
 //! compatible with the client's message loop.
 
-use std::sync::Arc;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use tokio::sync::mpsc;
 use wasm_bindgen::prelude::*;
@@ -21,7 +22,7 @@ pub(crate) struct WsSink {
 pub(crate) struct WsRead {
     rx: mpsc::UnboundedReceiver<Result<WsMessage, RealtimeError>>,
     /// Must be kept alive to prevent closures from being dropped.
-    _closures: Arc<WsClosures>,
+    _closures: Rc<WsClosures>,
 }
 
 /// Prevents JS closures from being garbage collected.
@@ -41,7 +42,7 @@ pub(crate) enum WsMessage {
 
 /// Connect to a WebSocket URL and return split (sink, read).
 pub(crate) async fn connect_ws(
-    _config: &RealtimeConfig,
+    config: &RealtimeConfig,
     ws_url: &str,
 ) -> Result<(WsSink, WsRead), RealtimeError> {
     let ws = web_sys::WebSocket::new(ws_url)
@@ -50,6 +51,11 @@ pub(crate) async fn connect_ws(
     ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
     let (tx, rx) = mpsc::unbounded_channel();
+
+    // Resolves the connect wait: Ok on open, Err on an error or close that
+    // happens before the socket opened.
+    let (open_tx, open_rx) = tokio::sync::oneshot::channel::<Result<(), RealtimeError>>();
+    let open_tx = Rc::new(RefCell::new(Some(open_tx)));
 
     // onmessage callback
     let tx_msg = tx.clone();
@@ -62,41 +68,65 @@ pub(crate) async fn connect_ws(
 
     // onerror callback
     let tx_err = tx.clone();
+    let open_err = Rc::clone(&open_tx);
     let on_error = Closure::<dyn FnMut(_)>::new(move |_event: web_sys::ErrorEvent| {
+        if let Some(open) = open_err.borrow_mut().take() {
+            let _ = open.send(Err(RealtimeError::WebSocket(
+                "WebSocket error while connecting".to_string(),
+            )));
+        }
         let _ = tx_err.send(Err(RealtimeError::WebSocket("WebSocket error".to_string())));
     });
     ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
 
     // onclose callback
     let tx_close = tx;
+    let open_close = Rc::clone(&open_tx);
     let on_close = Closure::<dyn FnMut(_)>::new(move |_event: web_sys::CloseEvent| {
+        if let Some(open) = open_close.borrow_mut().take() {
+            let _ = open.send(Err(RealtimeError::ConnectionClosed));
+        }
         let _ = tx_close.send(Ok(WsMessage::Close));
     });
     ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
 
     // Wait for connection to open
-    let (open_tx, open_rx) = tokio::sync::oneshot::channel::<Result<(), RealtimeError>>();
-    let on_open = Closure::once(move || {
-        let _ = open_tx.send(Ok(()));
+    let open_ok = Rc::clone(&open_tx);
+    let on_open = Closure::<dyn FnMut()>::new(move || {
+        if let Some(open) = open_ok.borrow_mut().take() {
+            let _ = open.send(Ok(()));
+        }
     });
     ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
     // Await open with timeout
-    let open_result = supabase_client_core::platform::timeout(
-        std::time::Duration::from_secs(10),
-        async {
-            open_rx.await.unwrap_or(Err(RealtimeError::ConnectionClosed))
-        },
-    ).await;
+    let open_result = supabase_client_core::platform::timeout(config.connect_timeout, async {
+        open_rx
+            .await
+            .unwrap_or(Err(RealtimeError::ConnectionClosed))
+    })
+    .await;
+    ws.set_onopen(None);
 
-    match open_result {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(e),
-        Err(_) => return Err(RealtimeError::WebSocket("WebSocket connection timed out".to_string())),
+    let failure = match open_result {
+        Ok(Ok(())) => None,
+        Ok(Err(e)) => Some(e),
+        Err(_) => Some(RealtimeError::WebSocket(
+            "WebSocket connection timed out".to_string(),
+        )),
+    };
+    if let Some(e) = failure {
+        // Do not leave a half-open socket (and its handlers) behind.
+        ws.set_onmessage(None);
+        ws.set_onerror(None);
+        ws.set_onclose(None);
+        let _ = ws.close();
+        return Err(e);
     }
+    drop(on_open);
 
     // Keep closures alive
-    let closures = Arc::new(WsClosures {
+    let closures = Rc::new(WsClosures {
         _on_message: on_message,
         _on_error: on_error,
         _on_close: on_close,
@@ -104,7 +134,10 @@ pub(crate) async fn connect_ws(
 
     Ok((
         WsSink { ws },
-        WsRead { rx, _closures: closures },
+        WsRead {
+            rx,
+            _closures: closures,
+        },
     ))
 }
 

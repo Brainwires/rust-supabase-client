@@ -5,25 +5,20 @@ use tokio::sync::RwLock;
 
 use crate::error::RealtimeError;
 use crate::types::{
-    PostgresChangePayload, PostgresChangesEvent, PresenceMeta, PresenceState,
-    SubscriptionStatus,
+    PostgresChangePayload, PostgresChangesEvent, PresenceMeta, PresenceState, SubscriptionStatus,
 };
 
 // ── Callback type aliases ─────────────────────────────────────────────────────
 
-pub type PostgresChangesCallback =
-    Arc<dyn Fn(PostgresChangePayload) + Send + Sync + 'static>;
+pub type PostgresChangesCallback = Arc<dyn Fn(PostgresChangePayload) + Send + Sync + 'static>;
 
 pub type BroadcastCallback = Arc<dyn Fn(Value) + Send + Sync + 'static>;
 
-pub type PresenceSyncCallback =
-    Arc<dyn Fn(&PresenceState) + Send + Sync + 'static>;
+pub type PresenceSyncCallback = Arc<dyn Fn(&PresenceState) + Send + Sync + 'static>;
 
-pub type PresenceJoinCallback =
-    Arc<dyn Fn(String, Vec<PresenceMeta>) + Send + Sync + 'static>;
+pub type PresenceJoinCallback = Arc<dyn Fn(String, Vec<PresenceMeta>) + Send + Sync + 'static>;
 
-pub type PresenceLeaveCallback =
-    Arc<dyn Fn(String, Vec<PresenceMeta>) + Send + Sync + 'static>;
+pub type PresenceLeaveCallback = Arc<dyn Fn(String, Vec<PresenceMeta>) + Send + Sync + 'static>;
 
 pub type StatusCallback =
     Arc<dyn Fn(SubscriptionStatus, Option<RealtimeError>) + Send + Sync + 'static>;

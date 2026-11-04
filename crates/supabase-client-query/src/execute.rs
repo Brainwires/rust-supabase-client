@@ -86,25 +86,94 @@ where
             .await
         {
             Ok(rows) => {
-                let mut data = Vec::with_capacity(rows.len());
-                for row in rows {
-                    let json_obj = serde_json::Value::Object(
-                        row.into_inner().into_iter().collect(),
-                    );
-                    match serde_json::from_value::<T>(json_obj) {
+                let mut objects: Vec<serde_json::Map<String, serde_json::Value>> = rows
+                    .into_iter()
+                    .map(|row| row.into_inner().into_iter().collect())
+                    .collect();
+                let window_count = take_window_count(parts, &mut objects);
+
+                let mut data = Vec::with_capacity(objects.len());
+                for obj in objects {
+                    match serde_json::from_value::<T>(serde_json::Value::Object(obj)) {
                         Ok(val) => data.push(val),
                         Err(e) => {
-                            return SupabaseResponse::error(SupabaseError::QueryBuilder(
-                                format!("Failed to deserialize row: {}", e),
-                            ))
+                            return SupabaseResponse::error(SupabaseError::QueryBuilder(format!(
+                                "Failed to deserialize row: {}",
+                                e
+                            )))
                         }
                     }
                 }
-                build_response(data, parts)
+                let mut resp = build_response(data, parts);
+                let counted_select = parts.count == CountOption::Exact
+                    && parts.operation == crate::sql::SqlOperation::Select
+                    && !parts.head
+                    && parts.explain.is_none();
+                if resp.error.is_none() && counted_select {
+                    resp.count = match window_count {
+                        Some(n) => Some(n),
+                        // No rows and no offset: nothing matches.
+                        None if parts.offset.unwrap_or(0) <= 0 => Some(0),
+                        // No rows past an offset: the window count is unknown,
+                        // so count the matching rows separately.
+                        None => match count_matching_rows(pool, parts, params).await {
+                            Ok(n) => Some(n),
+                            Err(e) => return SupabaseResponse::error(e),
+                        },
+                    };
+                }
+                resp
             }
             Err(e) => SupabaseResponse::error(SupabaseError::Database(e)),
         }
     }
+}
+
+/// Name of the `COUNT(*) OVER()` column added to `count=exact` selects.
+pub(crate) const COUNT_COLUMN: &str = "__count";
+
+/// For a `count=exact` SELECT, remove the [`COUNT_COLUMN`] window column from
+/// every row and return its value (the total number of matching rows,
+/// ignoring LIMIT/OFFSET). Returns `None` when there are no rows or the
+/// query is not a counted SELECT.
+pub(crate) fn take_window_count(
+    parts: &SqlParts,
+    rows: &mut [serde_json::Map<String, serde_json::Value>],
+) -> Option<i64> {
+    if parts.count != CountOption::Exact
+        || parts.operation != crate::sql::SqlOperation::Select
+        || parts.head
+        || parts.explain.is_some()
+    {
+        return None;
+    }
+    let mut count = None;
+    for row in rows.iter_mut() {
+        if let Some(v) = row.remove(COUNT_COLUMN) {
+            count = count.or_else(|| v.as_i64());
+        }
+    }
+    count
+}
+
+/// Run `SELECT count(*)` with the same filters as `parts`.
+async fn count_matching_rows(
+    pool: &PgPool,
+    parts: &SqlParts,
+    params: &ParamStore,
+) -> Result<i64, SupabaseError> {
+    let mut head = parts.clone();
+    head.head = true;
+    head.explain = None;
+    head.orders.clear();
+    head.limit = None;
+    head.offset = None;
+    let sql = head.build_sql()?;
+    let args = bind_params(params)?;
+    sqlx::query_scalar_with::<_, i64, _>(&sql, args)
+        .fetch_one(pool)
+        .await
+        .map_err(SupabaseError::Database)
 }
 
 /// Build a response applying single/maybe_single/count semantics.
@@ -141,4 +210,47 @@ fn build_response<T>(data: Vec<T>, parts: &SqlParts) -> SupabaseResponse<T> {
     }
 
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sql::SqlOperation;
+    use serde_json::json;
+
+    fn rows(values: Vec<serde_json::Value>) -> Vec<serde_json::Map<String, serde_json::Value>> {
+        values
+            .into_iter()
+            .map(|v| v.as_object().unwrap().clone())
+            .collect()
+    }
+
+    #[test]
+    fn test_take_window_count_strips_column_and_returns_total() {
+        // Audit: count=exact returned data.len() and leaked __count into rows.
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "t");
+        parts.count = CountOption::Exact;
+        parts.limit = Some(2);
+        let mut data = rows(vec![
+            json!({"id": 1, "__count": 57}),
+            json!({"id": 2, "__count": 57}),
+        ]);
+        assert_eq!(take_window_count(&parts, &mut data), Some(57));
+        assert!(data.iter().all(|r| !r.contains_key(COUNT_COLUMN)));
+    }
+
+    #[test]
+    fn test_take_window_count_ignores_uncounted_queries() {
+        let parts = SqlParts::new(SqlOperation::Select, "public", "t");
+        let mut data = rows(vec![json!({"id": 1, "__count": 3})]);
+        assert_eq!(take_window_count(&parts, &mut data), None);
+        assert!(data[0].contains_key(COUNT_COLUMN));
+    }
+
+    #[test]
+    fn test_take_window_count_no_rows() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "t");
+        parts.count = CountOption::Exact;
+        assert_eq!(take_window_count(&parts, &mut []), None);
+    }
 }

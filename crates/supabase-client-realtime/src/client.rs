@@ -1,12 +1,12 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use futures_util::future::{select, Either};
 use serde_json::{json, Value};
-use supabase_client_core::platform;
-use tokio::sync::{broadcast, oneshot, Mutex, RwLock};
+use supabase_client_core::platform::{self, SpawnHandle};
+use tokio::sync::{broadcast, oneshot, Mutex, Notify, RwLock};
 use tracing::{debug, info, trace, warn};
 
 use crate::callback::Binding;
@@ -16,133 +16,61 @@ use crate::presence;
 use crate::protocol::{self, RefCounter};
 use crate::transport::{self, WsMessage, WsRead, WsSink};
 use crate::types::{
-    BroadcastConfig, ChannelState, JoinPayload, PhoenixMessage, PostgresChangePayload,
-    PostgresChangesEvent, PresenceDiff, RealtimeConfig, SubscriptionStatus,
+    BroadcastConfig, ChannelState, PhoenixMessage, PostgresChangePayload, PostgresChangesEvent,
+    PresenceDiff, RealtimeConfig, SubscriptionStatus,
 };
 
 // ── ClientSender ──────────────────────────────────────────────────────────────
 
 /// Handle passed to channels for sending messages through the client's WebSocket.
+///
+/// Holds a weak reference: the client owns its channels, so a strong
+/// reference back from each channel would form an `Arc` cycle and leak both.
+/// Once every `RealtimeClient` handle is dropped, sends fail with
+/// [`RealtimeError::ConnectionClosed`].
 #[derive(Clone)]
 pub struct ClientSender {
-    inner: Arc<RealtimeClientInner>,
+    inner: Weak<RealtimeClientInner>,
 }
 
 impl ClientSender {
+    fn upgrade(&self) -> Result<Arc<RealtimeClientInner>, RealtimeError> {
+        self.inner.upgrade().ok_or(RealtimeError::ConnectionClosed)
+    }
+
     /// Register a channel and send phx_join, waiting for acknowledgement.
+    ///
+    /// The channel is only kept registered if the join succeeds.
     pub(crate) async fn subscribe_channel(
         &self,
         channel: RealtimeChannel,
-        join_payload: JoinPayload,
         timeout_dur: Duration,
     ) -> Result<(), RealtimeError> {
+        let inner = self.upgrade()?;
         let topic = channel.topic().to_string();
 
-        // Check if channel already exists
+        // Check and register under one lock so two concurrent subscribes to
+        // the same topic cannot both pass the check.
         {
-            let channels = self.inner.channels.read().await;
+            let mut channels = inner.channels.write().await;
             if channels.contains_key(&topic) {
                 return Err(RealtimeError::ChannelAlreadyExists(topic));
             }
-        }
-
-        // Build join message
-        let join_msg = protocol::build_join(&topic, &join_payload, &self.inner.ref_counter);
-        let join_ref = join_msg.join_ref.clone().unwrap();
-
-        // Set join_ref on the channel
-        {
-            let mut ch_join_ref = channel.inner.join_ref.write().await;
-            *ch_join_ref = Some(join_ref.clone());
-        }
-
-        // Register pending reply
-        let (reply_tx, reply_rx) = oneshot::channel();
-        {
-            let mut pending = self.inner.pending_replies.lock().await;
-            pending.insert(join_ref.clone(), reply_tx);
-        }
-
-        // Register channel
-        {
-            let mut channels = self.inner.channels.write().await;
             channels.insert(topic.clone(), channel.clone());
         }
 
-        // Send join message
-        self.send_message(join_msg).await?;
+        let result = join_channel(&inner, &channel, timeout_dur).await;
+        if result.is_err() {
+            forget_channel(&inner, &channel).await;
+        }
+        result
+    }
 
-        // Wait for reply with timeout
-        let result = platform::timeout(timeout_dur, reply_rx).await;
-
-        match result {
-            Ok(Ok(reply)) => {
-                let status = reply
-                    .payload
-                    .get("status")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("");
-                if status == "ok" {
-                    // Extract server-assigned postgres_changes IDs
-                    if let Some(pg_changes) = reply
-                        .payload
-                        .get("response")
-                        .and_then(|r| r.get("postgres_changes"))
-                        .and_then(|pc| pc.as_array())
-                    {
-                        let mut id_map = channel.inner.pg_change_id_map.write().await;
-                        for (index, entry) in pg_changes.iter().enumerate() {
-                            if let Some(server_id) = entry.get("id").and_then(|id| id.as_u64()) {
-                                id_map.insert(server_id, index);
-                            }
-                        }
-                    }
-
-                    *channel.inner.state.write().await = ChannelState::Joined;
-                    // Notify status callback
-                    let status_cb = channel.inner.registry.status_callback.read().await;
-                    if let Some(cb) = status_cb.as_ref() {
-                        cb(SubscriptionStatus::Subscribed, None);
-                    }
-                    Ok(())
-                } else {
-                    *channel.inner.state.write().await = ChannelState::Errored;
-                    let reason = reply
-                        .payload
-                        .get("response")
-                        .and_then(|r| r.get("reason"))
-                        .and_then(|r| r.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    // Remove channel on failure
-                    self.inner.channels.write().await.remove(&topic);
-                    // Notify status callback
-                    let status_cb = channel.inner.registry.status_callback.read().await;
-                    if let Some(cb) = status_cb.as_ref() {
-                        cb(
-                            SubscriptionStatus::ChannelError,
-                            Some(RealtimeError::ServerError(reason.clone())),
-                        );
-                    }
-                    Err(RealtimeError::ServerError(reason))
-                }
-            }
-            Ok(Err(_)) => {
-                *channel.inner.state.write().await = ChannelState::Errored;
-                self.inner.channels.write().await.remove(&topic);
-                Err(RealtimeError::ConnectionClosed)
-            }
-            Err(_) => {
-                *channel.inner.state.write().await = ChannelState::Errored;
-                self.inner.channels.write().await.remove(&topic);
-                // Clean up pending reply
-                self.inner.pending_replies.lock().await.remove(&join_ref);
-                let status_cb = channel.inner.registry.status_callback.read().await;
-                if let Some(cb) = status_cb.as_ref() {
-                    cb(SubscriptionStatus::TimedOut, None);
-                }
-                Err(RealtimeError::SubscribeTimeout(timeout_dur))
-            }
+    /// Remove a channel from the client's registry (if it is still the one
+    /// registered under its topic).
+    pub(crate) async fn forget_channel(&self, channel: &RealtimeChannel) {
+        if let Some(inner) = self.inner.upgrade() {
+            forget_channel(&inner, channel).await;
         }
     }
 
@@ -153,9 +81,9 @@ impl ClientSender {
         payload: Value,
         join_ref: &str,
     ) -> Result<(), RealtimeError> {
-        let msg =
-            protocol::build_broadcast(topic, event, payload, join_ref, &self.inner.ref_counter);
-        self.send_message(msg).await
+        let inner = self.upgrade()?;
+        let msg = protocol::build_broadcast(topic, event, payload, join_ref, &inner.ref_counter);
+        send_message(&inner, msg).await
     }
 
     pub(crate) async fn send_presence_track(
@@ -164,9 +92,9 @@ impl ClientSender {
         payload: Value,
         join_ref: &str,
     ) -> Result<(), RealtimeError> {
-        let msg =
-            protocol::build_presence_track(topic, payload, join_ref, &self.inner.ref_counter);
-        self.send_message(msg).await
+        let inner = self.upgrade()?;
+        let msg = protocol::build_presence_track(topic, payload, join_ref, &inner.ref_counter);
+        send_message(&inner, msg).await
     }
 
     pub(crate) async fn send_presence_untrack(
@@ -174,8 +102,9 @@ impl ClientSender {
         topic: &str,
         join_ref: &str,
     ) -> Result<(), RealtimeError> {
-        let msg = protocol::build_presence_untrack(topic, join_ref, &self.inner.ref_counter);
-        self.send_message(msg).await
+        let inner = self.upgrade()?;
+        let msg = protocol::build_presence_untrack(topic, join_ref, &inner.ref_counter);
+        send_message(&inner, msg).await
     }
 
     pub(crate) async fn send_leave(
@@ -183,8 +112,9 @@ impl ClientSender {
         topic: &str,
         join_ref: &str,
     ) -> Result<(), RealtimeError> {
-        let msg = protocol::build_leave(topic, join_ref, &self.inner.ref_counter);
-        self.send_message(msg).await
+        let inner = self.upgrade()?;
+        let msg = protocol::build_leave(topic, join_ref, &inner.ref_counter);
+        send_message(&inner, msg).await
     }
 
     pub(crate) async fn send_access_token(
@@ -193,23 +123,177 @@ impl ClientSender {
         token: &str,
         join_ref: &str,
     ) -> Result<(), RealtimeError> {
-        let msg =
-            protocol::build_access_token(topic, token, join_ref, &self.inner.ref_counter);
-        self.send_message(msg).await
+        let inner = self.upgrade()?;
+        let msg = protocol::build_access_token(topic, token, join_ref, &inner.ref_counter);
+        send_message(&inner, msg).await
+    }
+}
+
+async fn send_message(
+    inner: &RealtimeClientInner,
+    msg: PhoenixMessage,
+) -> Result<(), RealtimeError> {
+    let text = serde_json::to_string(&msg)?;
+    let mut ws = inner.ws_write.lock().await;
+    let sink = ws.as_mut().ok_or(RealtimeError::ConnectionClosed)?;
+    trace!(topic = %msg.topic, event = %msg.event, "Sending WS message");
+    transport::send_text(sink, text).await
+}
+
+/// Remove `channel` from the registry if it is the entry under its topic.
+async fn forget_channel(inner: &RealtimeClientInner, channel: &RealtimeChannel) {
+    let mut channels = inner.channels.write().await;
+    if channels
+        .get(channel.topic())
+        .is_some_and(|c| Arc::ptr_eq(&c.inner, &channel.inner))
+    {
+        channels.remove(channel.topic());
+    }
+}
+
+/// Send `phx_join` for a registered channel and wait for the reply.
+///
+/// Used for the first subscribe and for every rejoin after a reconnect, so
+/// both store the new `join_ref`, register the pending reply, rebuild the
+/// postgres_changes id map and move the channel to `Joined`. The join payload
+/// carries the latest access token set with [`RealtimeClient::set_auth`].
+async fn join_channel(
+    inner: &RealtimeClientInner,
+    channel: &RealtimeChannel,
+    timeout_dur: Duration,
+) -> Result<(), RealtimeError> {
+    let topic = channel.topic().to_string();
+
+    let join_payload = {
+        let mut jp = channel.inner.join_payload.write().await;
+        if let Some(token) = inner.current_access_token() {
+            jp.access_token = Some(token);
+        }
+        jp.clone()
+    };
+
+    *channel.inner.state.write().await = ChannelState::Joining;
+
+    let join_msg = protocol::build_join(&topic, &join_payload, &inner.ref_counter);
+    let join_ref = join_msg
+        .join_ref
+        .clone()
+        .ok_or_else(|| RealtimeError::Internal("join message without join_ref".to_string()))?;
+    *channel.inner.join_ref.write().await = Some(join_ref.clone());
+    channel
+        .inner
+        .join_gen
+        .store(inner.conn_gen.load(Ordering::SeqCst), Ordering::SeqCst);
+
+    let (reply_tx, reply_rx) = oneshot::channel();
+    inner
+        .pending_replies
+        .lock()
+        .await
+        .insert(join_ref.clone(), reply_tx);
+
+    if let Err(e) = send_message(inner, join_msg).await {
+        inner.pending_replies.lock().await.remove(&join_ref);
+        *channel.inner.state.write().await = ChannelState::Errored;
+        return Err(e);
     }
 
-    async fn send_message(&self, msg: PhoenixMessage) -> Result<(), RealtimeError> {
-        let text = serde_json::to_string(&msg)?;
-        let mut ws = self.inner.ws_write.lock().await;
-        let sink = ws
-            .as_mut()
-            .ok_or(RealtimeError::ConnectionClosed)?;
-        trace!(topic = %msg.topic, event = %msg.event, "Sending WS message");
-        transport::send_text(sink, text).await
+    match platform::timeout(timeout_dur, reply_rx).await {
+        Ok(Ok(reply)) => {
+            let status = reply
+                .payload
+                .get("status")
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
+            if status == "ok" {
+                // Server-assigned postgres_changes IDs change on every join.
+                {
+                    let mut id_map = channel.inner.pg_change_id_map.write().await;
+                    id_map.clear();
+                    if let Some(pg_changes) = reply
+                        .payload
+                        .get("response")
+                        .and_then(|r| r.get("postgres_changes"))
+                        .and_then(|pc| pc.as_array())
+                    {
+                        for (index, entry) in pg_changes.iter().enumerate() {
+                            if let Some(server_id) = entry.get("id").and_then(|id| id.as_u64()) {
+                                id_map.insert(server_id, index);
+                            }
+                        }
+                    }
+                }
+
+                *channel.inner.state.write().await = ChannelState::Joined;
+                notify_status(channel, SubscriptionStatus::Subscribed, None).await;
+                Ok(())
+            } else {
+                *channel.inner.state.write().await = ChannelState::Errored;
+                let reason = reply
+                    .payload
+                    .get("response")
+                    .and_then(|r| r.get("reason"))
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                notify_status(
+                    channel,
+                    SubscriptionStatus::ChannelError,
+                    Some(RealtimeError::ServerError(reason.clone())),
+                )
+                .await;
+                Err(RealtimeError::ServerError(reason))
+            }
+        }
+        Ok(Err(_)) => {
+            // Reply sender dropped: the connection went away.
+            *channel.inner.state.write().await = ChannelState::Errored;
+            Err(RealtimeError::ConnectionClosed)
+        }
+        Err(_) => {
+            *channel.inner.state.write().await = ChannelState::Errored;
+            inner.pending_replies.lock().await.remove(&join_ref);
+            notify_status(channel, SubscriptionStatus::TimedOut, None).await;
+            Err(RealtimeError::SubscribeTimeout(timeout_dur))
+        }
+    }
+}
+
+pub(crate) async fn notify_status(
+    channel: &RealtimeChannel,
+    status: SubscriptionStatus,
+    error: Option<RealtimeError>,
+) {
+    let status_cb = channel.inner.registry.status_callback.read().await;
+    if let Some(cb) = status_cb.as_ref() {
+        cb(status, error);
     }
 }
 
 // ── RealtimeClient ────────────────────────────────────────────────────────────
+
+/// Background tasks of the current connection.
+#[derive(Default)]
+struct Tasks {
+    reader: Option<SpawnHandle>,
+    heartbeat: Option<SpawnHandle>,
+}
+
+impl Tasks {
+    fn abort_all(&mut self) {
+        if let Some(mut h) = self.reader.take() {
+            abort_task(&mut h);
+        }
+        if let Some(mut h) = self.heartbeat.take() {
+            abort_task(&mut h);
+        }
+    }
+}
+
+/// `SpawnHandle::abort` takes `&mut self` on wasm and `&self` natively.
+fn abort_task(handle: &mut SpawnHandle) {
+    handle.abort();
+}
 
 struct RealtimeClientInner {
     config: RealtimeConfig,
@@ -220,6 +304,41 @@ struct RealtimeClientInner {
     connected: AtomicBool,
     intentional_disconnect: AtomicBool,
     shutdown_tx: broadcast::Sender<()>,
+    /// User access token set with `set_auth`, used by new channels and rejoins.
+    access_token: std::sync::RwLock<Option<String>>,
+    /// Incremented for every established WebSocket connection; a heartbeat
+    /// task exits when it no longer matches the generation it was started for.
+    conn_gen: AtomicU64,
+    /// Generation of the running reader loop (0 = none).
+    reader_gen: AtomicU64,
+    /// `ref` of the last heartbeat not yet acknowledged by the server.
+    pending_heartbeat: std::sync::Mutex<Option<String>>,
+    /// Wakes the reader loop to drop a connection that stopped answering
+    /// heartbeats, so it reconnects.
+    force_reconnect: Notify,
+    /// Handles of the background tasks, aborted on reconnect/disconnect.
+    tasks: std::sync::Mutex<Tasks>,
+    /// Serializes `connect()` and `disconnect()`.
+    connect_lock: Mutex<()>,
+}
+
+impl RealtimeClientInner {
+    fn current_access_token(&self) -> Option<String> {
+        self.access_token
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn tasks(&self) -> std::sync::MutexGuard<'_, Tasks> {
+        self.tasks.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn pending_heartbeat(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+        self.pending_heartbeat
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
 }
 
 /// Client for Supabase Realtime WebSocket connections.
@@ -232,10 +351,7 @@ pub struct RealtimeClient {
 
 impl RealtimeClient {
     /// Create a new RealtimeClient from a Supabase URL and API key.
-    pub fn new(
-        url: impl Into<String>,
-        api_key: impl Into<String>,
-    ) -> Result<Self, RealtimeError> {
+    pub fn new(url: impl Into<String>, api_key: impl Into<String>) -> Result<Self, RealtimeError> {
         let config = RealtimeConfig::new(url, api_key);
         Self::with_config(config)
     }
@@ -265,6 +381,13 @@ impl RealtimeClient {
                 connected: AtomicBool::new(false),
                 intentional_disconnect: AtomicBool::new(false),
                 shutdown_tx,
+                access_token: std::sync::RwLock::new(None),
+                conn_gen: AtomicU64::new(0),
+                reader_gen: AtomicU64::new(0),
+                pending_heartbeat: std::sync::Mutex::new(None),
+                force_reconnect: Notify::new(),
+                tasks: std::sync::Mutex::new(Tasks::default()),
+                connect_lock: Mutex::new(()),
             }),
         })
     }
@@ -272,9 +395,21 @@ impl RealtimeClient {
     /// Connect to the Supabase Realtime server via WebSocket.
     ///
     /// Establishes the WebSocket connection and starts background reader,
-    /// heartbeat, and auto-reconnect tasks.
+    /// heartbeat, and auto-reconnect tasks. Channels that are still
+    /// registered (for example after `disconnect()`) are rejoined.
+    ///
+    /// Calling `connect()` while already connected (or while the client is
+    /// reconnecting on its own) is a no-op.
     pub async fn connect(&self) -> Result<(), RealtimeError> {
-        self.inner.intentional_disconnect.store(false, Ordering::SeqCst);
+        let _guard = self.inner.connect_lock.lock().await;
+        if self.inner.reader_gen.load(Ordering::SeqCst) != 0 {
+            debug!("Already connected to Supabase Realtime");
+            return Ok(());
+        }
+
+        self.inner
+            .intentional_disconnect
+            .store(false, Ordering::SeqCst);
 
         let ws_url = build_ws_url(&self.inner.config.url, &self.inner.config.api_key)?;
         debug!(url = %redact_url_query(&ws_url), "Connecting to Supabase Realtime");
@@ -284,14 +419,19 @@ impl RealtimeClient {
         self.inner.connected.store(true, Ordering::SeqCst);
 
         // Spawn the reconnection-aware reader loop
+        let reader_gen = self.inner.conn_gen.load(Ordering::SeqCst) + 1;
+        self.inner.reader_gen.store(reader_gen, Ordering::SeqCst);
         let inner = Arc::clone(&self.inner);
-        let ws_url_owned = ws_url;
-        platform::spawn(async move {
-            run_reader_loop(inner, read, ws_url_owned).await;
+        let reader = platform::spawn(async move {
+            run_reader_loop(inner, read, ws_url, reader_gen).await;
         });
+        {
+            let mut tasks = self.inner.tasks();
+            tasks.abort_all();
+            tasks.reader = Some(reader);
+        }
 
-        // Start heartbeat task
-        spawn_heartbeat(Arc::clone(&self.inner));
+        on_connected(&self.inner);
 
         debug!("Connected to Supabase Realtime");
         Ok(())
@@ -299,11 +439,18 @@ impl RealtimeClient {
 
     /// Disconnect from the Realtime server.
     pub async fn disconnect(&self) -> Result<(), RealtimeError> {
+        let _guard = self.inner.connect_lock.lock().await;
         debug!("Disconnecting from Supabase Realtime");
-        self.inner.intentional_disconnect.store(true, Ordering::SeqCst);
-        // Signal background tasks to stop
+        self.inner
+            .intentional_disconnect
+            .store(true, Ordering::SeqCst);
+        // Signal background tasks to stop, and abort them in case they are
+        // not currently waiting on the shutdown signal.
         let _ = self.inner.shutdown_tx.send(());
+        self.inner.tasks().abort_all();
+        self.inner.reader_gen.store(0, Ordering::SeqCst);
         self.inner.connected.store(false, Ordering::SeqCst);
+        *self.inner.pending_heartbeat() = None;
 
         // Close WebSocket
         {
@@ -325,9 +472,14 @@ impl RealtimeClient {
 
     /// Create a ChannelBuilder for the given name.
     ///
-    /// The topic will be `"realtime:<name>"`.
+    /// The topic will be `"realtime:<name>"`. The channel joins with the
+    /// access token set by [`set_auth`](Self::set_auth), or the API key.
     pub fn channel(&self, name: &str) -> ChannelBuilder {
         let topic = format!("realtime:{}", name);
+        let access_token = self
+            .inner
+            .current_access_token()
+            .unwrap_or_else(|| self.inner.config.api_key.clone());
         ChannelBuilder {
             name: name.to_string(),
             topic,
@@ -338,34 +490,29 @@ impl RealtimeClient {
             bindings: Vec::new(),
             is_private: false,
             subscribe_timeout: self.inner.config.subscribe_timeout,
-            access_token: Some(self.inner.config.api_key.clone()),
+            access_token: Some(access_token),
             client_sender: ClientSender {
-                inner: Arc::clone(&self.inner),
+                inner: Arc::downgrade(&self.inner),
             },
         }
     }
 
     /// Remove a channel (unsubscribe and forget).
-    pub async fn remove_channel(
-        &self,
-        channel: &RealtimeChannel,
-    ) -> Result<(), RealtimeError> {
-        let topic = channel.topic().to_string();
+    pub async fn remove_channel(&self, channel: &RealtimeChannel) -> Result<(), RealtimeError> {
         // Send leave if joined
         let state = *channel.inner.state.read().await;
         if state == ChannelState::Joined || state == ChannelState::Joining {
             let _ = channel.unsubscribe().await;
         }
         *channel.inner.state.write().await = ChannelState::Closed;
-        self.inner.channels.write().await.remove(&topic);
+        forget_channel(&self.inner, channel).await;
         Ok(())
     }
 
     /// Remove all channels.
     pub async fn remove_all_channels(&self) -> Result<(), RealtimeError> {
-        let channels: Vec<RealtimeChannel> = {
-            self.inner.channels.read().await.values().cloned().collect()
-        };
+        let channels: Vec<RealtimeChannel> =
+            { self.inner.channels.read().await.values().cloned().collect() };
         for ch in channels {
             self.remove_channel(&ch).await?;
         }
@@ -381,32 +528,40 @@ impl RealtimeClient {
         }
     }
 
-    /// Update the auth token for the realtime connection.
+    /// Set the access token (user JWT) used for realtime authorization.
     ///
-    /// If connected, pushes the new access token to the server for each subscribed channel.
+    /// The token is stored: channels created afterwards join with it, and
+    /// every channel rejoined after a reconnect uses it. If connected, it is
+    /// also pushed to the server for each joined channel. Works while
+    /// disconnected too (it is then only stored).
     ///
     /// Mirrors `supabase.realtime.setAuth(token)`.
     pub async fn set_auth(&self, token: &str) -> Result<(), RealtimeError> {
-        if !self.is_connected() {
-            return Err(RealtimeError::ConnectionClosed);
-        }
+        *self
+            .inner
+            .access_token
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(token.to_string());
 
-        let channels: Vec<RealtimeChannel> = {
-            self.inner.channels.read().await.values().cloned().collect()
-        };
-
-        let sender = ClientSender {
-            inner: Arc::clone(&self.inner),
-        };
+        let channels: Vec<RealtimeChannel> =
+            { self.inner.channels.read().await.values().cloned().collect() };
 
         for channel in &channels {
+            channel.inner.join_payload.write().await.access_token = Some(token.to_string());
+            if !self.is_connected() {
+                continue;
+            }
             let state = *channel.inner.state.read().await;
             if state == ChannelState::Joined {
-                let join_ref = channel.inner.join_ref.read().await;
-                if let Some(ref jr) = *join_ref {
-                    sender
-                        .send_access_token(channel.topic(), token, jr)
-                        .await?;
+                let join_ref = channel.inner.join_ref.read().await.clone();
+                if let Some(jr) = join_ref {
+                    let msg = protocol::build_access_token(
+                        channel.topic(),
+                        token,
+                        &jr,
+                        &self.inner.ref_counter,
+                    );
+                    send_message(&self.inner, msg).await?;
                 }
             }
         }
@@ -468,6 +623,22 @@ pub(crate) fn redact_url_query(url: &str) -> &str {
 
 // ── Connection Helpers ────────────────────────────────────────────────────────
 
+/// Bookkeeping for a freshly established connection: bump the connection
+/// generation, reset heartbeat tracking, replace the heartbeat task and
+/// rejoin registered channels.
+fn on_connected(inner: &Arc<RealtimeClientInner>) {
+    let conn_gen = inner.conn_gen.fetch_add(1, Ordering::SeqCst) + 1;
+    *inner.pending_heartbeat() = None;
+    let heartbeat = spawn_heartbeat(Arc::clone(inner), conn_gen);
+    {
+        let mut tasks = inner.tasks();
+        if let Some(mut old) = tasks.heartbeat.replace(heartbeat) {
+            abort_task(&mut old);
+        }
+    }
+    rejoin_channels(inner);
+}
+
 /// Run the reader loop with auto-reconnect support.
 ///
 /// Reads from the WebSocket, handling messages. On disconnect (if not intentional),
@@ -476,28 +647,34 @@ async fn run_reader_loop(
     inner: Arc<RealtimeClientInner>,
     initial_read: WsRead,
     ws_url: String,
+    reader_gen: u64,
 ) {
     let mut read = initial_read;
     let mut shutdown_rx = inner.shutdown_tx.subscribe();
 
     loop {
         // Read messages until disconnect
-        let disconnected_by_shutdown = read_until_disconnect(&inner, &mut read, &mut shutdown_rx).await;
+        let disconnected_by_shutdown =
+            read_until_disconnect(&inner, &mut read, &mut shutdown_rx).await;
 
         if disconnected_by_shutdown || inner.intentional_disconnect.load(Ordering::SeqCst) {
             break;
         }
 
+        // The connection is gone: drop the dead sink and fail outstanding
+        // replies (their waiters get `ConnectionClosed`).
+        inner.connected.store(false, Ordering::SeqCst);
+        if let Some(mut sink) = inner.ws_write.lock().await.take() {
+            let _ = transport::send_close(&mut sink).await;
+        }
+        inner.pending_replies.lock().await.clear();
+        *inner.pending_heartbeat() = None;
+
         // Attempt auto-reconnect with backoff
         match attempt_reconnect(&inner, &ws_url).await {
             Some(new_read) => {
                 read = new_read;
-                // Spawn a new heartbeat for the new connection
-                spawn_heartbeat(Arc::clone(&inner));
-                // Rejoin channels
-                if let Err(e) = rejoin_channels(&inner).await {
-                    warn!(error = %e, "Failed to rejoin channels after reconnect");
-                }
+                on_connected(&inner);
             }
             None => {
                 // All reconnect attempts failed
@@ -506,6 +683,10 @@ async fn run_reader_loop(
             }
         }
     }
+
+    let _ = inner
+        .reader_gen
+        .compare_exchange(reader_gen, 0, Ordering::SeqCst, Ordering::SeqCst);
 }
 
 /// Read messages from the WebSocket until it disconnects or shutdown is signaled.
@@ -519,49 +700,58 @@ async fn read_until_disconnect(
         // Use futures_util::select instead of tokio::select! for WASM compatibility
         let recv_fut = transport::recv_message(read);
         let shutdown_fut = shutdown_rx.recv();
+        let dead_fut = inner.force_reconnect.notified();
 
         futures_util::pin_mut!(recv_fut);
         futures_util::pin_mut!(shutdown_fut);
+        futures_util::pin_mut!(dead_fut);
 
-        match select(recv_fut, shutdown_fut).await {
-            Either::Left((msg, _)) => {
-                match msg {
-                    Some(Ok(WsMessage::Text(text))) => {
-                        handle_message(inner, &text).await;
-                    }
-                    Some(Ok(WsMessage::Close)) => {
-                        debug!("WebSocket closed by server");
-                        inner.connected.store(false, Ordering::SeqCst);
-                        return false;
-                    }
-                    Some(Ok(WsMessage::Ping(data))) => {
-                        let mut ws = inner.ws_write.lock().await;
-                        if let Some(sink) = ws.as_mut() {
-                            let _ = transport::send_pong(sink, data).await;
-                        }
-                    }
-                    Some(Err(e)) => {
-                        warn!(error = %e, "WebSocket read error");
-                        inner.connected.store(false, Ordering::SeqCst);
-                        return false;
-                    }
-                    None => {
-                        debug!("WebSocket stream ended");
-                        inner.connected.store(false, Ordering::SeqCst);
-                        return false;
+        match select(recv_fut, select(shutdown_fut, dead_fut)).await {
+            Either::Left((msg, _)) => match msg {
+                Some(Ok(WsMessage::Text(text))) => {
+                    handle_message(inner, &text).await;
+                }
+                Some(Ok(WsMessage::Close)) => {
+                    debug!("WebSocket closed by server");
+                    inner.connected.store(false, Ordering::SeqCst);
+                    return false;
+                }
+                Some(Ok(WsMessage::Ping(data))) => {
+                    let mut ws = inner.ws_write.lock().await;
+                    if let Some(sink) = ws.as_mut() {
+                        let _ = transport::send_pong(sink, data).await;
                     }
                 }
-            }
-            Either::Right(_) => {
+                Some(Err(e)) => {
+                    warn!(error = %e, "WebSocket read error");
+                    inner.connected.store(false, Ordering::SeqCst);
+                    return false;
+                }
+                None => {
+                    debug!("WebSocket stream ended");
+                    inner.connected.store(false, Ordering::SeqCst);
+                    return false;
+                }
+            },
+            Either::Right((Either::Left(_), _)) => {
                 debug!("Reader task shutting down");
                 return true;
+            }
+            Either::Right((Either::Right(_), _)) => {
+                warn!("Heartbeat not acknowledged; dropping connection to reconnect");
+                inner.connected.store(false, Ordering::SeqCst);
+                return false;
             }
         }
     }
 }
 
-/// Spawn a heartbeat task that sends periodic heartbeats over the WebSocket.
-fn spawn_heartbeat(inner: Arc<RealtimeClientInner>) {
+/// Spawn a heartbeat task for connection generation `conn_gen`.
+///
+/// Every interval it checks that the previous heartbeat was acknowledged;
+/// if not, the connection is considered dead and the reader is told to
+/// reconnect. The task exits as soon as a newer connection replaces it.
+fn spawn_heartbeat(inner: Arc<RealtimeClientInner>, conn_gen: u64) -> SpawnHandle {
     let mut shutdown_rx = inner.shutdown_tx.subscribe();
     let heartbeat_interval = inner.config.heartbeat_interval;
     platform::spawn(async move {
@@ -574,24 +764,24 @@ fn spawn_heartbeat(inner: Arc<RealtimeClientInner>) {
 
             match select(sleep_fut, shutdown_fut).await {
                 Either::Left(_) => {
-                    // Time to send heartbeat
-                    if !inner.connected.load(Ordering::SeqCst) {
+                    if inner.conn_gen.load(Ordering::SeqCst) != conn_gen
+                        || !inner.connected.load(Ordering::SeqCst)
+                    {
                         break;
                     }
-                    let heartbeat = protocol::build_heartbeat(&inner.ref_counter);
-                    let text = match serde_json::to_string(&heartbeat) {
-                        Ok(t) => t,
-                        Err(_) => continue,
-                    };
-                    let mut ws = inner.ws_write.lock().await;
-                    if let Some(sink) = ws.as_mut() {
-                        if let Err(e) = transport::send_text(sink, text).await {
-                            warn!(error = %e, "Heartbeat send failed");
-                            inner.connected.store(false, Ordering::SeqCst);
-                            break;
-                        }
-                        trace!("Heartbeat sent");
+                    if inner.pending_heartbeat().is_some() {
+                        warn!("Previous heartbeat was not acknowledged");
+                        inner.force_reconnect.notify_waiters();
+                        continue;
                     }
+                    let heartbeat = protocol::build_heartbeat(&inner.ref_counter);
+                    *inner.pending_heartbeat() = heartbeat.msg_ref.clone();
+                    if let Err(e) = send_message(&inner, heartbeat).await {
+                        warn!(error = %e, "Heartbeat send failed");
+                        inner.force_reconnect.notify_waiters();
+                        continue;
+                    }
+                    trace!("Heartbeat sent");
                 }
                 Either::Right(_) => {
                     debug!("Heartbeat task shutting down");
@@ -599,19 +789,20 @@ fn spawn_heartbeat(inner: Arc<RealtimeClientInner>) {
                 }
             }
         }
-    });
+    })
 }
 
 /// Attempt to reconnect with backoff intervals from config.
 /// Returns the new read half on success, or None if all attempts failed.
-async fn attempt_reconnect(
-    inner: &Arc<RealtimeClientInner>,
-    ws_url: &str,
-) -> Option<WsRead> {
+async fn attempt_reconnect(inner: &Arc<RealtimeClientInner>, ws_url: &str) -> Option<WsRead> {
     let config = &inner.config;
 
     // Build iterator: configured intervals, then repeat fallback
-    let intervals = config.reconnect.intervals.iter().copied()
+    let intervals = config
+        .reconnect
+        .intervals
+        .iter()
+        .copied()
         .chain(std::iter::repeat(config.reconnect.fallback));
 
     let max_attempts = config.reconnect.intervals.len() + 3;
@@ -621,14 +812,18 @@ async fn attempt_reconnect(
             return None;
         }
 
-        info!(attempt = attempt + 1, delay_ms = delay.as_millis(), "Attempting reconnect");
+        info!(
+            attempt = attempt + 1,
+            delay_ms = delay.as_millis(),
+            "Attempting reconnect"
+        );
         platform::sleep(delay).await;
 
         if inner.intentional_disconnect.load(Ordering::SeqCst) {
             return None;
         }
 
-        match transport::connect_ws(&config, ws_url).await {
+        match transport::connect_ws(config, ws_url).await {
             Ok((write, read)) => {
                 *inner.ws_write.lock().await = Some(write);
                 inner.connected.store(true, Ordering::SeqCst);
@@ -645,34 +840,35 @@ async fn attempt_reconnect(
     None
 }
 
-/// Rejoin all active channels after a successful reconnect.
-async fn rejoin_channels(inner: &RealtimeClientInner) -> Result<(), RealtimeError> {
-    let channels = inner.channels.read().await;
-    for (topic, channel) in channels.iter() {
-        let state = *channel.inner.state.read().await;
-        if state == ChannelState::Joined || state == ChannelState::Joining {
-            debug!(topic = %topic, "Rejoining channel after reconnect");
-            let join_ref = inner.ref_counter.next();
-            let msg_ref = inner.ref_counter.next();
-            // Use the stored join payload from the original subscribe
-            let join_payload = channel.inner.join_payload.read().await.clone();
-            let phoenix_msg = PhoenixMessage {
-                event: "phx_join".to_string(),
-                topic: topic.clone(),
-                payload: serde_json::to_value(&join_payload).unwrap_or(json!({})),
-                msg_ref: Some(msg_ref),
-                join_ref: Some(join_ref),
-            };
-            let text = serde_json::to_string(&phoenix_msg)
-                .map_err(|e| RealtimeError::ServerError(format!("JSON error: {}", e)))?;
-            let mut ws = inner.ws_write.lock().await;
-            if let Some(sink) = ws.as_mut() {
-                transport::send_text(sink, text).await?;
+/// Rejoin every registered channel that was joined (or joining / errored) on
+/// an older connection, after a (re)connect. Channels whose join was already
+/// sent on the current connection are left alone. Each rejoin runs in its own
+/// task because it waits for a reply that the reader loop delivers.
+fn rejoin_channels(inner: &Arc<RealtimeClientInner>) {
+    let weak = Arc::downgrade(inner);
+    let timeout_dur = inner.config.subscribe_timeout;
+    platform::spawn(async move {
+        let Some(inner) = weak.upgrade() else { return };
+        let channels: Vec<RealtimeChannel> =
+            { inner.channels.read().await.values().cloned().collect() };
+        let current_gen = inner.conn_gen.load(Ordering::SeqCst);
+        for channel in channels {
+            let state = *channel.inner.state.read().await;
+            if matches!(
+                state,
+                ChannelState::Joined | ChannelState::Joining | ChannelState::Errored
+            ) && channel.inner.join_gen.load(Ordering::SeqCst) != current_gen
+            {
+                debug!(topic = %channel.topic(), "Rejoining channel after reconnect");
+                let inner = Arc::clone(&inner);
+                platform::spawn(async move {
+                    if let Err(e) = join_channel(&inner, &channel, timeout_dur).await {
+                        warn!(topic = %channel.topic(), error = %e, "Failed to rejoin channel");
+                    }
+                });
             }
-            *channel.inner.state.write().await = ChannelState::Joining;
         }
-    }
-    Ok(())
+    });
 }
 
 // ── Message Routing ───────────────────────────────────────────────────────────
@@ -708,6 +904,14 @@ async fn handle_message(inner: &RealtimeClientInner, text: &str) {
 }
 
 async fn handle_phx_reply(inner: &RealtimeClientInner, msg: PhoenixMessage) {
+    // Heartbeat acknowledgement
+    if msg.topic == "phoenix" {
+        let mut pending = inner.pending_heartbeat();
+        if pending.is_some() && *pending == msg.msg_ref {
+            *pending = None;
+        }
+        return;
+    }
     // Check if this is a reply to a join (ref matches join_ref)
     if let Some(ref ref_id) = msg.msg_ref {
         let mut pending = inner.pending_replies.lock().await;
@@ -721,7 +925,6 @@ async fn handle_phx_reply(inner: &RealtimeClientInner, msg: PhoenixMessage) {
         let mut pending = inner.pending_replies.lock().await;
         if let Some(tx) = pending.remove(join_ref) {
             let _ = tx.send(msg);
-            return;
         }
     }
 }
@@ -756,8 +959,11 @@ async fn handle_postgres_changes(inner: &RealtimeClientInner, msg: PhoenixMessag
         }
     };
 
-    // Resolve server IDs to filter indices
+    // Resolve server IDs to filter indices. When the join reply listed
+    // server IDs, an event only reaches the bindings whose IDs it carries;
+    // without known IDs, fall back to matching on the event type alone.
     let id_map = channel.inner.pg_change_id_map.read().await;
+    let filter_by_id = ids_val.is_some() && !id_map.is_empty();
     let matched_indices: Vec<usize> = match ids_val {
         Some(ids) => ids
             .iter()
@@ -778,7 +984,7 @@ async fn handle_postgres_changes(inner: &RealtimeClientInner, msg: PhoenixMessag
         } = binding
         {
             // Check if this binding's filter_index matches
-            let matches_id = matched_indices.is_empty() || matched_indices.contains(filter_index);
+            let matches_id = !filter_by_id || matched_indices.contains(filter_index);
 
             // Check event type matches
             let event_matches = match event {
@@ -807,11 +1013,7 @@ async fn handle_broadcast(inner: &RealtimeClientInner, msg: PhoenixMessage) {
         .get("event")
         .and_then(|e| e.as_str())
         .unwrap_or("");
-    let payload = msg
-        .payload
-        .get("payload")
-        .cloned()
-        .unwrap_or(json!({}));
+    let payload = msg.payload.get("payload").cloned().unwrap_or(json!({}));
 
     let bindings = channel.inner.registry.bindings.read().await;
     for binding in bindings.iter() {
@@ -894,10 +1096,7 @@ async fn handle_phx_close(inner: &RealtimeClientInner, msg: PhoenixMessage) {
     let channels = inner.channels.read().await;
     if let Some(channel) = channels.get(&msg.topic) {
         *channel.inner.state.write().await = ChannelState::Closed;
-        let status_cb = channel.inner.registry.status_callback.read().await;
-        if let Some(cb) = status_cb.as_ref() {
-            cb(SubscriptionStatus::Closed, None);
-        }
+        notify_status(channel, SubscriptionStatus::Closed, None).await;
     }
 }
 
@@ -989,25 +1188,49 @@ mod tests {
     }
 
     #[test]
-    fn test_set_auth_requires_connection() {
+    fn test_set_auth_stores_token_while_disconnected() {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
         let client = RealtimeClient::new("http://localhost:54321", "test-key").unwrap();
-        // Not connected → should error
-        let result = rt.block_on(client.set_auth("new-token"));
-        assert!(result.is_err());
+        // Before set_auth, new channels join with the API key.
+        assert_eq!(
+            client.channel("a").access_token.as_deref(),
+            Some("test-key")
+        );
+        rt.block_on(client.set_auth("user-jwt")).unwrap();
+        assert_eq!(
+            client.inner.current_access_token().as_deref(),
+            Some("user-jwt")
+        );
+        assert_eq!(
+            client.channel("b").access_token.as_deref(),
+            Some("user-jwt")
+        );
+    }
+
+    #[test]
+    fn test_channel_sender_does_not_keep_client_alive() {
+        let client = RealtimeClient::new("http://localhost:54321", "test-key").unwrap();
+        let builder = client.channel("room");
+        let weak = Arc::downgrade(&client.inner);
+        drop(client);
+        assert!(weak.upgrade().is_none(), "channel must not own the client");
+        drop(builder);
     }
 
     #[test]
     fn test_custom_headers_stored() {
         let mut headers = HashMap::new();
         headers.insert("X-Custom-Header".to_string(), "custom-value".to_string());
-        let config = RealtimeConfig::new("http://localhost:54321", "test-key")
-            .with_headers(headers);
+        let config =
+            RealtimeConfig::new("http://localhost:54321", "test-key").with_headers(headers);
         assert_eq!(config.headers.len(), 1);
-        assert_eq!(config.headers.get("X-Custom-Header").unwrap(), "custom-value");
+        assert_eq!(
+            config.headers.get("X-Custom-Header").unwrap(),
+            "custom-value"
+        );
     }
 
     #[test]

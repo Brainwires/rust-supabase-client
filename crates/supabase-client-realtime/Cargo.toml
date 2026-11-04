@@ -12,6 +12,13 @@ readme = "README.md"
 keywords = ["supabase", "realtime", "websocket", "phoenix-channels", "pubsub"]
 categories = ["network-programming", "web-programming::websocket"]
 
+[features]
+default = ["rustls"]
+## wss:// via rustls (aws-lc-rs crypto, OS trust store). No OpenSSL needed.
+rustls = ["tokio-tungstenite/rustls-tls-native-roots", "supabase-client-core/rustls"]
+## wss:// via the platform library (OpenSSL on Linux, SChannel, Secure Transport).
+native-tls = ["tokio-tungstenite/native-tls", "supabase-client-core/native-tls"]
+
 [dependencies]
 supabase-client-core.workspace = true
 serde.workspace = true
@@ -26,6 +33,10 @@ chrono.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["rt", "time", "net", "macros"] }
 tokio-tungstenite.workspace = true
+# Used to build the TLS config with an explicit crypto provider. The rustls
+# version must match the one tokio-tungstenite uses (Connector::Rustls).
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+webpki-roots = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { workspace = true, features = ["WebSocket", "MessageEvent", "ErrorEvent", "CloseEvent", "BinaryType"] }
@@ -38,3 +49,9 @@ js-sys.workspace = true
 tokio = { workspace = true, features = ["full"] }
 sqlx = { workspace = true }
 supabase-client-core.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Compile both rustls backends in tests, as reqwest 0.13 (aws-lc-rs) + sqlx
+# (ring) do, to check the realtime TLS config does not depend on rustls
+# picking a process-level provider.
+rustls = { version = "0.23", default-features = false, features = ["std", "ring", "aws_lc_rs"] }

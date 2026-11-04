@@ -64,9 +64,21 @@ mod tests {
 
     #[test]
     fn graphql_literal_values() {
-        assert_eq!(OrderByDirection::AscNullsFirst.as_graphql_literal(), "AscNullsFirst");
-        assert_eq!(OrderByDirection::AscNullsLast.as_graphql_literal(), "AscNullsLast");
-        assert_eq!(OrderByDirection::DescNullsFirst.as_graphql_literal(), "DescNullsFirst");
-        assert_eq!(OrderByDirection::DescNullsLast.as_graphql_literal(), "DescNullsLast");
+        assert_eq!(
+            OrderByDirection::AscNullsFirst.as_graphql_literal(),
+            "AscNullsFirst"
+        );
+        assert_eq!(
+            OrderByDirection::AscNullsLast.as_graphql_literal(),
+            "AscNullsLast"
+        );
+        assert_eq!(
+            OrderByDirection::DescNullsFirst.as_graphql_literal(),
+            "DescNullsFirst"
+        );
+        assert_eq!(
+            OrderByDirection::DescNullsLast.as_graphql_literal(),
+            "DescNullsLast"
+        );
     }
 }

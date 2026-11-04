@@ -41,6 +41,11 @@ pub enum GraphqlError {
     #[error("GraphQL HTTP error ({status}): {message}")]
     HttpError { status: u16, message: String },
 
+    /// Invalid builder input, such as a collection, field or object key that
+    /// is not a valid GraphQL name. Nothing was sent.
+    #[error("Invalid GraphQL input: {0}")]
+    InvalidInput(String),
+
     /// Invalid configuration (missing URL or key).
     #[error("Invalid GraphQL configuration: {0}")]
     InvalidConfig(String),

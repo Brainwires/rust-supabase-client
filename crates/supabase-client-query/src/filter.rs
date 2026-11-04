@@ -1,6 +1,6 @@
 use crate::sql::{
-    ArrayRangeOperator, FilterCondition, FilterOperator, IntoSqlParam, IsValue, ParamStore,
-    PatternOperator, TextSearchType, validate_column_name,
+    validate_column_name, validate_text_search_config, ArrayRangeOperator, FilterCondition,
+    FilterOperator, IntoSqlParam, IsValue, ParamStore, PatternOperator, TextSearchType,
 };
 /// Trait providing all filter methods for query builders.
 ///
@@ -14,7 +14,9 @@ pub trait Filterable: Sized {
     /// Filter: column = value
     fn eq(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in eq filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in eq filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -29,7 +31,9 @@ pub trait Filterable: Sized {
     /// Filter: column != value
     fn neq(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in neq filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in neq filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -44,7 +48,9 @@ pub trait Filterable: Sized {
     /// Filter: column > value
     fn gt(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in gt filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in gt filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -59,7 +65,9 @@ pub trait Filterable: Sized {
     /// Filter: column >= value
     fn gte(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in gte filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in gte filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -74,7 +82,9 @@ pub trait Filterable: Sized {
     /// Filter: column < value
     fn lt(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in lt filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in lt filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -89,7 +99,9 @@ pub trait Filterable: Sized {
     /// Filter: column <= value
     fn lte(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in lte filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in lte filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -104,7 +116,9 @@ pub trait Filterable: Sized {
     /// Filter: column LIKE pattern
     fn like(mut self, column: &str, pattern: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in like filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in like filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(pattern);
@@ -119,7 +133,9 @@ pub trait Filterable: Sized {
     /// Filter: column ILIKE pattern (case-insensitive)
     fn ilike(mut self, column: &str, pattern: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in ilike filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in ilike filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(pattern);
@@ -134,7 +150,9 @@ pub trait Filterable: Sized {
     /// Filter: column IS NULL / IS NOT NULL / IS TRUE / IS FALSE
     fn is(mut self, column: &str, value: IsValue) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in is filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in is filter: {e}"
+            )));
             return self;
         }
         self.filters_mut().push(FilterCondition::Is {
@@ -147,7 +165,9 @@ pub trait Filterable: Sized {
     /// Filter: column IN (val1, val2, ...)
     fn in_<V: IntoSqlParam>(mut self, column: &str, values: Vec<V>) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in in_ filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in in_ filter: {e}"
+            )));
             return self;
         }
         let indices: Vec<usize> = values
@@ -164,7 +184,9 @@ pub trait Filterable: Sized {
     /// Filter: column @> value (contains)
     fn contains(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in contains filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in contains filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -179,7 +201,9 @@ pub trait Filterable: Sized {
     /// Filter: column <@ value (contained by)
     fn contained_by(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in contained_by filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in contained_by filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -194,7 +218,9 @@ pub trait Filterable: Sized {
     /// Filter: column && value (overlaps)
     fn overlaps(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in overlaps filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in overlaps filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -209,7 +235,9 @@ pub trait Filterable: Sized {
     /// Filter: column >> value (range strictly greater than)
     fn range_gt(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in range_gt filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in range_gt filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -224,7 +252,9 @@ pub trait Filterable: Sized {
     /// Filter: column &> value (range greater than or equal)
     fn range_gte(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in range_gte filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in range_gte filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -239,7 +269,9 @@ pub trait Filterable: Sized {
     /// Filter: column << value (range strictly less than)
     fn range_lt(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in range_lt filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in range_lt filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -254,7 +286,9 @@ pub trait Filterable: Sized {
     /// Filter: column &< value (range less than or equal)
     fn range_lte(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in range_lte filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in range_lte filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -269,7 +303,9 @@ pub trait Filterable: Sized {
     /// Filter: column -|- value (range adjacent)
     fn range_adjacent(mut self, column: &str, value: impl IntoSqlParam) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in range_adjacent filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in range_adjacent filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(value);
@@ -290,7 +326,15 @@ pub trait Filterable: Sized {
         config: Option<&str>,
     ) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in text_search filter: {e}");
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid column name in text_search filter: {e}"
+            )));
+            return self;
+        }
+        if let Some(Err(e)) = config.map(validate_text_search_config) {
+            self.filters_mut().push(FilterCondition::Invalid(format!(
+                "Invalid config in text_search filter: {e}"
+            )));
             return self;
         }
         let idx = self.params_mut().push_value(query);
@@ -307,7 +351,8 @@ pub trait Filterable: Sized {
     fn not(mut self, f: impl FnOnce(FilterCollector) -> FilterCollector) -> Self {
         let collector = f(FilterCollector::new(self.params_mut()));
         if let Some(condition) = collector.into_single_condition() {
-            self.filters_mut().push(FilterCondition::Not(Box::new(condition)));
+            self.filters_mut()
+                .push(FilterCondition::Not(Box::new(condition)));
         }
         self
     }
@@ -324,19 +369,20 @@ pub trait Filterable: Sized {
 
     /// Match multiple column=value pairs (all must match).
     fn match_filter(mut self, pairs: Vec<(&str, impl IntoSqlParam + Clone)>) -> Self {
-        let conditions: Vec<(String, usize)> = pairs
-            .into_iter()
-            .filter_map(|(col, val)| {
-                if let Err(e) = validate_column_name(col) {
-                    tracing::error!("Invalid column name in match_filter: {e}");
-                    return None;
-                }
-                let idx = self.params_mut().push_value(val);
-                Some((col.to_string(), idx))
-            })
-            .collect();
+        let mut conditions: Vec<(String, usize)> = Vec::with_capacity(pairs.len());
+        for (col, val) in pairs {
+            if let Err(e) = validate_column_name(col) {
+                self.filters_mut().push(FilterCondition::Invalid(format!(
+                    "Invalid column name in match_filter: {e}"
+                )));
+                return self;
+            }
+            let idx = self.params_mut().push_value(val);
+            conditions.push((col.to_string(), idx));
+        }
         if !conditions.is_empty() {
-            self.filters_mut().push(FilterCondition::Match { conditions });
+            self.filters_mut()
+                .push(FilterCondition::Match { conditions });
         }
         self
     }
@@ -364,7 +410,11 @@ impl<'a> FilterCollector<'a> {
     }
 
     pub fn eq(mut self, column: &str, value: impl IntoSqlParam) -> Self {
-        if validate_column_name(column).is_ok() {
+        if let Err(e) = validate_column_name(column) {
+            self.filters.push(FilterCondition::Invalid(format!(
+                "Invalid column name in filter: {e}"
+            )));
+        } else {
             let idx = self.params.push_value(value);
             self.filters.push(FilterCondition::Comparison {
                 column: column.to_string(),
@@ -376,7 +426,11 @@ impl<'a> FilterCollector<'a> {
     }
 
     pub fn neq(mut self, column: &str, value: impl IntoSqlParam) -> Self {
-        if validate_column_name(column).is_ok() {
+        if let Err(e) = validate_column_name(column) {
+            self.filters.push(FilterCondition::Invalid(format!(
+                "Invalid column name in filter: {e}"
+            )));
+        } else {
             let idx = self.params.push_value(value);
             self.filters.push(FilterCondition::Comparison {
                 column: column.to_string(),
@@ -388,7 +442,11 @@ impl<'a> FilterCollector<'a> {
     }
 
     pub fn gt(mut self, column: &str, value: impl IntoSqlParam) -> Self {
-        if validate_column_name(column).is_ok() {
+        if let Err(e) = validate_column_name(column) {
+            self.filters.push(FilterCondition::Invalid(format!(
+                "Invalid column name in filter: {e}"
+            )));
+        } else {
             let idx = self.params.push_value(value);
             self.filters.push(FilterCondition::Comparison {
                 column: column.to_string(),
@@ -400,7 +458,11 @@ impl<'a> FilterCollector<'a> {
     }
 
     pub fn gte(mut self, column: &str, value: impl IntoSqlParam) -> Self {
-        if validate_column_name(column).is_ok() {
+        if let Err(e) = validate_column_name(column) {
+            self.filters.push(FilterCondition::Invalid(format!(
+                "Invalid column name in filter: {e}"
+            )));
+        } else {
             let idx = self.params.push_value(value);
             self.filters.push(FilterCondition::Comparison {
                 column: column.to_string(),
@@ -412,7 +474,11 @@ impl<'a> FilterCollector<'a> {
     }
 
     pub fn lt(mut self, column: &str, value: impl IntoSqlParam) -> Self {
-        if validate_column_name(column).is_ok() {
+        if let Err(e) = validate_column_name(column) {
+            self.filters.push(FilterCondition::Invalid(format!(
+                "Invalid column name in filter: {e}"
+            )));
+        } else {
             let idx = self.params.push_value(value);
             self.filters.push(FilterCondition::Comparison {
                 column: column.to_string(),
@@ -424,7 +490,11 @@ impl<'a> FilterCollector<'a> {
     }
 
     pub fn lte(mut self, column: &str, value: impl IntoSqlParam) -> Self {
-        if validate_column_name(column).is_ok() {
+        if let Err(e) = validate_column_name(column) {
+            self.filters.push(FilterCondition::Invalid(format!(
+                "Invalid column name in filter: {e}"
+            )));
+        } else {
             let idx = self.params.push_value(value);
             self.filters.push(FilterCondition::Comparison {
                 column: column.to_string(),
@@ -436,7 +506,11 @@ impl<'a> FilterCollector<'a> {
     }
 
     pub fn like(mut self, column: &str, pattern: impl IntoSqlParam) -> Self {
-        if validate_column_name(column).is_ok() {
+        if let Err(e) = validate_column_name(column) {
+            self.filters.push(FilterCondition::Invalid(format!(
+                "Invalid column name in filter: {e}"
+            )));
+        } else {
             let idx = self.params.push_value(pattern);
             self.filters.push(FilterCondition::Pattern {
                 column: column.to_string(),
@@ -448,7 +522,11 @@ impl<'a> FilterCollector<'a> {
     }
 
     pub fn ilike(mut self, column: &str, pattern: impl IntoSqlParam) -> Self {
-        if validate_column_name(column).is_ok() {
+        if let Err(e) = validate_column_name(column) {
+            self.filters.push(FilterCondition::Invalid(format!(
+                "Invalid column name in filter: {e}"
+            )));
+        } else {
             let idx = self.params.push_value(pattern);
             self.filters.push(FilterCondition::Pattern {
                 column: column.to_string(),
@@ -460,7 +538,11 @@ impl<'a> FilterCollector<'a> {
     }
 
     pub fn is(mut self, column: &str, value: IsValue) -> Self {
-        if validate_column_name(column).is_ok() {
+        if let Err(e) = validate_column_name(column) {
+            self.filters.push(FilterCondition::Invalid(format!(
+                "Invalid column name in filter: {e}"
+            )));
+        } else {
             self.filters.push(FilterCondition::Is {
                 column: column.to_string(),
                 value,
@@ -500,6 +582,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from("http://localhost"),
                 api_key: Arc::from("key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "test"),
@@ -513,7 +596,11 @@ mod tests {
         let builder = make_select().eq("name", "Alice");
         assert_eq!(builder.parts.filters.len(), 1);
         match &builder.parts.filters[0] {
-            FilterCondition::Comparison { column, operator, param_index } => {
+            FilterCondition::Comparison {
+                column,
+                operator,
+                param_index,
+            } => {
                 assert_eq!(column, "name");
                 assert_eq!(*operator, FilterOperator::Eq);
                 assert_eq!(*param_index, 1);
@@ -527,7 +614,9 @@ mod tests {
         let builder = make_select().neq("status", "inactive");
         assert_eq!(builder.parts.filters.len(), 1);
         match &builder.parts.filters[0] {
-            FilterCondition::Comparison { column, operator, .. } => {
+            FilterCondition::Comparison {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "status");
                 assert_eq!(*operator, FilterOperator::Neq);
             }
@@ -539,7 +628,9 @@ mod tests {
     fn test_gt_adds_comparison_filter() {
         let builder = make_select().gt("age", 18i32);
         match &builder.parts.filters[0] {
-            FilterCondition::Comparison { column, operator, .. } => {
+            FilterCondition::Comparison {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "age");
                 assert_eq!(*operator, FilterOperator::Gt);
             }
@@ -551,7 +642,9 @@ mod tests {
     fn test_gte_adds_comparison_filter() {
         let builder = make_select().gte("score", 90i32);
         match &builder.parts.filters[0] {
-            FilterCondition::Comparison { column, operator, .. } => {
+            FilterCondition::Comparison {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "score");
                 assert_eq!(*operator, FilterOperator::Gte);
             }
@@ -563,7 +656,9 @@ mod tests {
     fn test_lt_adds_comparison_filter() {
         let builder = make_select().lt("price", 100i32);
         match &builder.parts.filters[0] {
-            FilterCondition::Comparison { column, operator, .. } => {
+            FilterCondition::Comparison {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "price");
                 assert_eq!(*operator, FilterOperator::Lt);
             }
@@ -575,7 +670,9 @@ mod tests {
     fn test_lte_adds_comparison_filter() {
         let builder = make_select().lte("count", 50i32);
         match &builder.parts.filters[0] {
-            FilterCondition::Comparison { column, operator, .. } => {
+            FilterCondition::Comparison {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "count");
                 assert_eq!(*operator, FilterOperator::Lte);
             }
@@ -588,7 +685,9 @@ mod tests {
         let builder = make_select().like("name", "%test%");
         assert_eq!(builder.parts.filters.len(), 1);
         match &builder.parts.filters[0] {
-            FilterCondition::Pattern { column, operator, .. } => {
+            FilterCondition::Pattern {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "name");
                 assert_eq!(*operator, PatternOperator::Like);
             }
@@ -600,7 +699,9 @@ mod tests {
     fn test_ilike_adds_pattern_filter() {
         let builder = make_select().ilike("name", "%TEST%");
         match &builder.parts.filters[0] {
-            FilterCondition::Pattern { column, operator, .. } => {
+            FilterCondition::Pattern {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "name");
                 assert_eq!(*operator, PatternOperator::ILike);
             }
@@ -652,7 +753,10 @@ mod tests {
         let builder = make_select().in_("id", vec![1i32, 2, 3]);
         assert_eq!(builder.parts.filters.len(), 1);
         match &builder.parts.filters[0] {
-            FilterCondition::In { column, param_indices } => {
+            FilterCondition::In {
+                column,
+                param_indices,
+            } => {
                 assert_eq!(column, "id");
                 assert_eq!(param_indices.len(), 3);
                 assert_eq!(param_indices[0], 1);
@@ -667,7 +771,9 @@ mod tests {
     fn test_contains_adds_array_range_filter() {
         let builder = make_select().contains("tags", "rust");
         match &builder.parts.filters[0] {
-            FilterCondition::ArrayRange { column, operator, .. } => {
+            FilterCondition::ArrayRange {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "tags");
                 assert_eq!(*operator, ArrayRangeOperator::Contains);
             }
@@ -679,7 +785,9 @@ mod tests {
     fn test_contained_by_adds_array_range_filter() {
         let builder = make_select().contained_by("tags", "all_tags");
         match &builder.parts.filters[0] {
-            FilterCondition::ArrayRange { column, operator, .. } => {
+            FilterCondition::ArrayRange {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "tags");
                 assert_eq!(*operator, ArrayRangeOperator::ContainedBy);
             }
@@ -691,7 +799,9 @@ mod tests {
     fn test_overlaps_adds_array_range_filter() {
         let builder = make_select().overlaps("tags", "some_tags");
         match &builder.parts.filters[0] {
-            FilterCondition::ArrayRange { column, operator, .. } => {
+            FilterCondition::ArrayRange {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "tags");
                 assert_eq!(*operator, ArrayRangeOperator::Overlaps);
             }
@@ -758,7 +868,12 @@ mod tests {
     fn test_text_search_without_config() {
         let builder = make_select().text_search("body", "hello world", TextSearchType::Plain, None);
         match &builder.parts.filters[0] {
-            FilterCondition::TextSearch { column, config, search_type, .. } => {
+            FilterCondition::TextSearch {
+                column,
+                config,
+                search_type,
+                ..
+            } => {
                 assert_eq!(column, "body");
                 assert!(config.is_none());
                 assert_eq!(*search_type, TextSearchType::Plain);
@@ -776,7 +891,11 @@ mod tests {
             Some("english"),
         );
         match &builder.parts.filters[0] {
-            FilterCondition::TextSearch { config, search_type, .. } => {
+            FilterCondition::TextSearch {
+                config,
+                search_type,
+                ..
+            } => {
                 assert_eq!(config.as_deref(), Some("english"));
                 assert_eq!(*search_type, TextSearchType::Websearch);
             }
@@ -833,28 +952,80 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_invalid_column_name_silently_ignored() {
-        let builder = make_select().eq("bad;col", "value");
-        assert!(builder.parts.filters.is_empty());
+    fn assert_rejected<T>(builder: SelectBuilder<T>) {
+        assert_eq!(builder.parts.filters.len(), 1);
+        assert!(matches!(
+            builder.parts.filters[0],
+            FilterCondition::Invalid(_)
+        ));
+        assert!(builder.parts.check_valid().is_err());
     }
 
     #[test]
-    fn test_invalid_column_name_in_neq_silently_ignored() {
-        let builder = make_select().neq("bad\"col", "value");
-        assert!(builder.parts.filters.is_empty());
+    fn test_invalid_column_name_is_recorded_not_dropped() {
+        assert_rejected(make_select().eq("bad;col", "value"));
     }
 
     #[test]
-    fn test_invalid_column_name_in_like_silently_ignored() {
-        let builder = make_select().like("bad--col", "%test%");
-        assert!(builder.parts.filters.is_empty());
+    fn test_invalid_column_name_in_neq_is_recorded() {
+        assert_rejected(make_select().neq("bad\"col", "value"));
     }
 
     #[test]
-    fn test_invalid_column_name_in_is_silently_ignored() {
-        let builder = make_select().is("", IsValue::Null);
-        assert!(builder.parts.filters.is_empty());
+    fn test_invalid_column_name_in_like_is_recorded() {
+        assert_rejected(make_select().like("bad--col", "%test%"));
+    }
+
+    #[test]
+    fn test_invalid_column_name_in_is_is_recorded() {
+        assert_rejected(make_select().is("", IsValue::Null));
+    }
+
+    #[test]
+    fn test_every_filter_method_records_invalid_column() {
+        let bad = "id\"";
+        assert_rejected(make_select().eq(bad, 1));
+        assert_rejected(make_select().gt(bad, 1));
+        assert_rejected(make_select().gte(bad, 1));
+        assert_rejected(make_select().lt(bad, 1));
+        assert_rejected(make_select().lte(bad, 1));
+        assert_rejected(make_select().ilike(bad, "x"));
+        assert_rejected(make_select().in_(bad, vec![1, 2]));
+        assert_rejected(make_select().contains(bad, "x"));
+        assert_rejected(make_select().contained_by(bad, "x"));
+        assert_rejected(make_select().overlaps(bad, "x"));
+        assert_rejected(make_select().range_gt(bad, "x"));
+        assert_rejected(make_select().range_gte(bad, "x"));
+        assert_rejected(make_select().range_lt(bad, "x"));
+        assert_rejected(make_select().range_lte(bad, "x"));
+        assert_rejected(make_select().range_adjacent(bad, "x"));
+        assert_rejected(make_select().text_search(bad, "x", TextSearchType::Plain, None));
+        assert_rejected(make_select().match_filter(vec![("ok", 1), (bad, 2)]));
+    }
+
+    #[test]
+    fn test_invalid_text_search_config_is_recorded() {
+        assert_rejected(make_select().text_search(
+            "body",
+            "x",
+            TextSearchType::Plain,
+            Some("english', $1) OR true OR to_tsquery('english"),
+        ));
+        let ok = make_select().text_search(
+            "body",
+            "x",
+            TextSearchType::Plain,
+            Some("pg_catalog.english"),
+        );
+        assert!(ok.parts.check_valid().is_ok());
+    }
+
+    #[test]
+    fn test_invalid_column_inside_not_and_or_is_recorded() {
+        let b = make_select().not(|f| f.eq("bad\"", 1));
+        assert!(b.parts.check_valid().is_err());
+        let b = make_select().or_filter(|f| f.eq("ok", 1).eq("bad\"", 2));
+        assert!(b.parts.check_valid().is_err());
     }
 
     // ---- FilterCollector ----
@@ -875,7 +1046,10 @@ mod tests {
         let collector = FilterCollector::new(&mut params).eq("a", 1i32);
         let condition = collector.into_single_condition();
         assert!(condition.is_some());
-        assert!(matches!(condition.unwrap(), FilterCondition::Comparison { .. }));
+        assert!(matches!(
+            condition.unwrap(),
+            FilterCondition::Comparison { .. }
+        ));
     }
 
     #[test]
@@ -913,12 +1087,13 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_collector_invalid_column_skipped() {
+    fn test_filter_collector_invalid_column_recorded() {
         let mut params = ParamStore::new();
         let collector = FilterCollector::new(&mut params)
             .eq("good_col", 1i32)
             .eq("bad;col", 2i32);
         let conditions = collector.into_conditions();
-        assert_eq!(conditions.len(), 1);
+        assert_eq!(conditions.len(), 2);
+        assert!(matches!(conditions[1], FilterCondition::Invalid(_)));
     }
 }

@@ -208,37 +208,24 @@ pub struct JoinConfig {
     pub broadcast: BroadcastConfig,
     pub presence: PresenceConfig,
     pub postgres_changes: Vec<PostgresChangesFilter>,
+    /// Private channel: Realtime authorizes the join with RLS policies on
+    /// `realtime.messages` instead of allowing every client.
+    #[serde(default)]
+    pub private: bool,
 }
 
 /// Broadcast feature configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BroadcastConfig {
     pub ack: bool,
     #[serde(rename = "self")]
     pub self_send: bool,
 }
 
-impl Default for BroadcastConfig {
-    fn default() -> Self {
-        Self {
-            ack: false,
-            self_send: false,
-        }
-    }
-}
-
 /// Presence feature configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PresenceConfig {
     pub key: String,
-}
-
-impl Default for PresenceConfig {
-    fn default() -> Self {
-        Self {
-            key: String::new(),
-        }
-    }
 }
 
 // ── Realtime Client Config ────────────────────────────────────────────────────
@@ -260,6 +247,8 @@ pub struct RealtimeConfig {
     pub reconnect: ReconnectConfig,
     /// Custom headers to include in the WebSocket handshake request.
     pub headers: HashMap<String, String>,
+    /// Timeout for establishing the WebSocket connection (default: 10s).
+    pub connect_timeout: Duration,
 }
 
 impl RealtimeConfig {
@@ -271,7 +260,14 @@ impl RealtimeConfig {
             subscribe_timeout: Duration::from_secs(10),
             reconnect: ReconnectConfig::default(),
             headers: HashMap::new(),
+            connect_timeout: Duration::from_secs(10),
         }
+    }
+
+    /// Set the WebSocket connect timeout.
+    pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
+        self.connect_timeout = timeout;
+        self
     }
 
     /// Set custom headers for the WebSocket handshake.
@@ -290,6 +286,7 @@ impl fmt::Debug for RealtimeConfig {
             .field("subscribe_timeout", &self.subscribe_timeout)
             .field("reconnect", &self.reconnect)
             .field("headers", &RedactedHeaders(&self.headers))
+            .field("connect_timeout", &self.connect_timeout)
             .finish()
     }
 }

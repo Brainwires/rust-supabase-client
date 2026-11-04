@@ -13,12 +13,15 @@ keywords = ["supabase", "query-builder", "postgrest", "rest", "sql"]
 categories = ["database", "web-programming::http-client"]
 
 [features]
-default = []
+default = ["rustls"]
+## TLS via rustls (aws-lc-rs crypto, OS trust store). No OpenSSL needed.
+rustls = ["reqwest/rustls", "supabase-client-core/rustls"]
+## TLS via the platform library (OpenSSL on Linux, SChannel, Secure Transport).
+native-tls = ["reqwest/native-tls", "supabase-client-core/native-tls"]
 direct-sql = ["dep:sqlx", "supabase-client-core/direct-sql"]
 
 [dependencies]
 supabase-client-core.workspace = true
-sqlx = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -30,10 +33,11 @@ url.workspace = true
 percent-encoding.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-reqwest = { workspace = true, features = ["rustls-tls"] }
+# Native only: `direct-sql` is rejected with a compile_error! on wasm32.
+sqlx = { workspace = true, optional = true }
 
 [dev-dependencies]
-serial_test = "3.3.1"
+serial_test = "4"
 tokio = { workspace = true, features = ["rt", "macros"] }
 wiremock.workspace = true
 serde_json.workspace = true
