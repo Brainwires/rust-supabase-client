@@ -17,6 +17,8 @@ use syn::{parse_macro_input, DeriveInput};
 /// ## Field-level: `#[primary_key]` / `#[primary_key(auto_generate)]`
 /// - Marks a field as part of the primary key
 /// - `auto_generate` excludes it from inserts (e.g., serial/identity columns)
+/// - Typed `update()` matches rows on these columns; on a struct without a
+///   primary key it returns an error instead of updating every row
 ///
 /// ## Field-level: `#[column(...)]`
 /// - `name = "col_name"` - Database column name (defaults to field name)

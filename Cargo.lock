@@ -2249,7 +2249,11 @@ version = "0.2.2"
 dependencies = [
  "proc-macro2",
  "quote",
+ "reqwest",
+ "serde",
+ "supabase-client-query",
  "syn 2.0.119",
+ "tokio",
 ]
 
 [[package]]
