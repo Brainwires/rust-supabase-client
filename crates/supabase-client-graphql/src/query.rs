@@ -113,13 +113,15 @@ impl QueryBuilder {
 
     /// Build the query string and variables without executing.
     ///
-    /// Returns `(query_string, variables)` for inspection or debugging.
-    pub fn build(&self) -> (String, Value) {
-        let filter_value = self.filter.as_ref().map(|f| f.to_value());
+    /// Returns `(query_string, variables)` for inspection or debugging, or
+    /// [`GraphqlError::InvalidInput`] when the collection name, a selected
+    /// field, a filter column, an orderBy column or an object key is not a
+    /// valid GraphQL name.
+    pub fn build(&self) -> Result<(String, Value), GraphqlError> {
         render::render_collection_query(
             &self.collection,
             &self.select_fields,
-            filter_value.as_ref(),
+            self.filter.as_ref(),
             &self.order_by,
             self.first,
             self.last,
@@ -135,13 +137,18 @@ impl QueryBuilder {
     /// The response `data` field is expected to have the shape:
     /// `{ "collectionName": { "edges": [...], "pageInfo": {...}, "totalCount": ... } }`
     pub async fn execute<T: DeserializeOwned>(self) -> Result<Connection<T>, GraphqlError> {
-        let (query, variables) = self.build();
+        let (query, variables) = self.build()?;
         let collection_name = self.collection.clone();
 
         let response = self
             .client
             .execute::<Value>(&query, Some(variables), None)
             .await?;
+
+        // Partial errors alongside data still mean the request failed.
+        if !response.errors.is_empty() {
+            return Err(GraphqlError::GraphqlErrors(response.errors));
+        }
 
         let data = response.data.ok_or_else(|| {
             GraphqlError::InvalidConfig("No data in GraphQL response".to_string())
@@ -174,7 +181,7 @@ mod tests {
             .select(&["id", "title"])
             .first(10);
 
-        let (query, vars) = builder.build();
+        let (query, vars) = builder.build().unwrap();
         assert!(query.contains("blogCollection"));
         assert!(query.contains("node { id title }"));
         assert!(query.contains("$first: Int"));
@@ -187,7 +194,7 @@ mod tests {
             .select(&["id"])
             .filter(GqlFilter::eq("status", json!("published")));
 
-        let (query, _) = builder.build();
+        let (query, _) = builder.build().unwrap();
         assert!(query.contains("filter: {status: {eq: \"published\"}}"));
     }
 
@@ -197,7 +204,7 @@ mod tests {
             .select(&["id"])
             .order_by("createdAt", OrderByDirection::DescNullsLast);
 
-        let (query, _) = builder.build();
+        let (query, _) = builder.build().unwrap();
         assert!(query.contains("orderBy: [{createdAt: DescNullsLast}]"));
     }
 
@@ -207,7 +214,7 @@ mod tests {
             .select(&["id"])
             .total_count();
 
-        let (query, _) = builder.build();
+        let (query, _) = builder.build().unwrap();
         assert!(query.contains("totalCount"));
     }
 
@@ -218,7 +225,7 @@ mod tests {
             .first(5)
             .after("abc123");
 
-        let (query, vars) = builder.build();
+        let (query, vars) = builder.build().unwrap();
         assert!(query.contains("$after: Cursor"));
         assert!(query.contains("after: $after"));
         assert_eq!(vars["after"], "abc123");
@@ -231,7 +238,7 @@ mod tests {
             .last(5)
             .before("xyz789");
 
-        let (query, vars) = builder.build();
+        let (query, vars) = builder.build().unwrap();
         assert!(query.contains("$last: Int"));
         assert!(query.contains("$before: Cursor"));
         assert_eq!(vars["last"], 5);
@@ -251,7 +258,7 @@ mod tests {
             .after("cursor123")
             .total_count();
 
-        let (query, vars) = builder.build();
+        let (query, vars) = builder.build().unwrap();
         assert!(query.contains("blogCollection"));
         assert!(query.contains("node { id title createdAt }"));
         assert!(query.contains("filter:"));

@@ -113,14 +113,15 @@ impl MutationBuilder {
 
     /// Build the mutation string and variables without executing.
     ///
-    /// Returns `(query_string, variables)` for inspection or debugging.
-    pub fn build(&self) -> (String, Value) {
-        let filter_value = self.filter.as_ref().map(|f| f.to_value());
+    /// Returns `(query_string, variables)` for inspection or debugging, or
+    /// [`GraphqlError::InvalidInput`] when the collection name, a returning
+    /// field, a filter column or an object key is not a valid GraphQL name.
+    pub fn build(&self) -> Result<(String, Value), GraphqlError> {
         render::render_mutation(
             &self.collection,
             self.kind.into(),
             &self.returning_fields,
-            filter_value.as_ref(),
+            self.filter.as_ref(),
             self.set.as_ref(),
             self.objects.as_ref(),
             self.at_most,
@@ -132,31 +133,20 @@ impl MutationBuilder {
     /// The response is expected to have the shape:
     /// `{ "mutationField": { "affectedCount": N, "records": [...] } }`
     pub async fn execute<T: DeserializeOwned>(self) -> Result<MutationResult<T>, GraphqlError> {
-        let (query, variables) = self.build();
+        let (query, variables) = self.build()?;
 
-        // Derive the expected mutation field name to extract from response
-        let mutation_field = match self.kind {
-            MutationKind::Insert => format!(
-                "insertInto{}{}",
-                self.collection[..1].to_uppercase(),
-                &self.collection[1..]
-            ),
-            MutationKind::Update => format!(
-                "update{}{}",
-                self.collection[..1].to_uppercase(),
-                &self.collection[1..]
-            ),
-            MutationKind::Delete => format!(
-                "deleteFrom{}{}",
-                self.collection[..1].to_uppercase(),
-                &self.collection[1..]
-            ),
-        };
+        // The mutation field name to extract from the response
+        let mutation_field = render::mutation_field_name(&self.collection, self.kind.into())?;
 
         let response = self
             .client
             .execute::<Value>(&query, Some(variables), None)
             .await?;
+
+        // Partial errors alongside data still mean the mutation failed.
+        if !response.errors.is_empty() {
+            return Err(GraphqlError::GraphqlErrors(response.errors));
+        }
 
         let data = response.data.ok_or_else(|| {
             GraphqlError::InvalidConfig("No data in GraphQL response".to_string())
@@ -190,7 +180,7 @@ mod tests {
                 .objects(vec![json!({"title": "New", "body": "Content"})])
                 .returning(&["id", "title"]);
 
-        let (query, _) = builder.build();
+        let (query, _) = builder.build().unwrap();
         assert!(query.contains("insertIntoBlogCollection"));
         assert!(query.contains("objects:"));
         assert!(query.contains("records { id title }"));
@@ -206,7 +196,7 @@ mod tests {
                 .at_most(1)
                 .returning(&["id", "title"]);
 
-        let (query, _) = builder.build();
+        let (query, _) = builder.build().unwrap();
         assert!(query.contains("updateBlogCollection"));
         assert!(query.contains("set: {title: \"Updated\"}"));
         assert!(query.contains("filter: {id: {eq: 1}}"));
@@ -221,7 +211,7 @@ mod tests {
                 .at_most(1)
                 .returning(&["id"]);
 
-        let (query, _) = builder.build();
+        let (query, _) = builder.build().unwrap();
         assert!(query.contains("deleteFromBlogCollection"));
         assert!(query.contains("filter: {id: {eq: 1}}"));
         assert!(query.contains("atMost: 1"));
@@ -234,7 +224,7 @@ mod tests {
             MutationBuilder::new(test_client(), "blogCollection".into(), MutationKind::Delete)
                 .filter(GqlFilter::eq("id", json!(1)));
 
-        let (query, _) = builder.build();
+        let (query, _) = builder.build().unwrap();
         assert!(query.contains("records { __typename }"));
     }
 
@@ -245,7 +235,7 @@ mod tests {
                 .objects(vec![json!({"title": "Post 1"}), json!({"title": "Post 2"})])
                 .returning(&["id"]);
 
-        let (query, _) = builder.build();
+        let (query, _) = builder.build().unwrap();
         assert!(query.contains("insertIntoBlogCollection"));
         assert!(query.contains("objects: ["));
     }

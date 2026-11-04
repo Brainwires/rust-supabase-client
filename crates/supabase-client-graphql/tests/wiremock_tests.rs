@@ -316,7 +316,7 @@ fn client_collection_returns_query_builder() {
     let client = GraphqlClient::new("https://example.supabase.co", "test-key").unwrap();
     let builder = client.collection("usersCollection");
     // Verify we can chain builder methods without error.
-    let (query, _) = builder.select(&["id", "name"]).first(10).build();
+    let (query, _) = builder.select(&["id", "name"]).first(10).build().unwrap();
     assert!(query.contains("usersCollection"));
 }
 
@@ -327,7 +327,8 @@ fn client_insert_into_returns_mutation_builder() {
     let (query, _) = builder
         .objects(vec![json!({"title": "test"})])
         .returning(&["id"])
-        .build();
+        .build()
+        .unwrap();
     assert!(query.contains("insertIntoBlogCollection"));
 }
 
@@ -338,7 +339,8 @@ fn client_update_returns_mutation_builder() {
     let (query, _) = builder
         .set(json!({"title": "updated"}))
         .returning(&["id"])
-        .build();
+        .build()
+        .unwrap();
     assert!(query.contains("updateBlogCollection"));
 }
 
@@ -349,7 +351,8 @@ fn client_delete_from_returns_mutation_builder() {
     let (query, _) = builder
         .filter(GqlFilter::eq("id", json!(1)))
         .returning(&["id"])
-        .build();
+        .build()
+        .unwrap();
     assert!(query.contains("deleteFromBlogCollection"));
 }
 
@@ -807,7 +810,7 @@ async fn extension_trait_graphql_client_can_execute() {
         .mount(&server)
         .await;
 
-    let config = SupabaseConfig::new(&server.uri(), "my-anon-key");
+    let config = SupabaseConfig::new(server.uri(), "my-anon-key");
     let supa = SupabaseClient::new(config).unwrap();
     let graphql = supa.graphql().expect("graphql() should succeed");
 
@@ -820,4 +823,136 @@ async fn extension_trait_graphql_client_can_execute() {
         .expect("execute via extension trait client should succeed");
 
     assert_eq!(resp.data.unwrap()["ping"], "pong");
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Security audit regressions
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// H3: a crafted object key used to inject a second `deleteFrom...` mutation.
+#[tokio::test]
+async fn object_key_injection_is_rejected_and_nothing_is_sent() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": {}})))
+        .mount(&server)
+        .await;
+    let client = mock_client(&server);
+    let evil_key = "title: \"x\"}]) { affectedCount } evil: deleteFromBlogCollection(filter: {}, atMost: 1000) { affectedCount } y: insertIntoBlogCollection(objects: [{title";
+
+    let builder = client
+        .insert_into("blogCollection")
+        .objects(vec![json!({ evil_key: "z" })]);
+    assert!(matches!(
+        builder.build(),
+        Err(GraphqlError::InvalidInput(_))
+    ));
+    let result = builder.execute::<Value>().await;
+    assert!(matches!(result, Err(GraphqlError::InvalidInput(_))));
+
+    let result = client
+        .update("blogCollection")
+        .set(json!({ evil_key: 1 }))
+        .filter(GqlFilter::eq("id", 1))
+        .execute::<Value>()
+        .await;
+    assert!(matches!(result, Err(GraphqlError::InvalidInput(_))));
+
+    let result = client
+        .collection("blogCollection")
+        .filter(GqlFilter::eq(evil_key, 1))
+        .execute::<Value>()
+        .await;
+    assert!(matches!(result, Err(GraphqlError::InvalidInput(_))));
+
+    let result = client
+        .collection("blogCollection")
+        .order_by(
+            evil_key,
+            supabase_client_graphql::OrderByDirection::AscNullsLast,
+        )
+        .execute::<Value>()
+        .await;
+    assert!(matches!(result, Err(GraphqlError::InvalidInput(_))));
+
+    let result = client
+        .collection("blogCollection")
+        .select(&["id } evil: deleteFromBlogCollection { affectedCount"])
+        .execute::<Value>()
+        .await;
+    assert!(matches!(result, Err(GraphqlError::InvalidInput(_))));
+
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+/// M7: user strings equal to enum names were emitted unquoted.
+#[test]
+fn enum_like_user_strings_are_quoted() {
+    let client = GraphqlClient::new("http://x", "k").unwrap();
+    let (q, _) = client
+        .collection("userCollection")
+        .filter(GqlFilter::eq("last_name", "NULL"))
+        .build()
+        .unwrap();
+    assert!(q.contains("eq: \"NULL\""), "{q}");
+    let (q, _) = client
+        .collection("userCollection")
+        .filter(GqlFilter::is_null("last_name"))
+        .build()
+        .unwrap();
+    assert!(q.contains("is: NULL"), "{q}");
+}
+
+/// G3: collection name slicing panicked on empty / non-ASCII-initial names.
+#[test]
+fn bad_collection_names_error_instead_of_panicking() {
+    let client = GraphqlClient::new("http://x", "k").unwrap();
+    for name in ["", "éventCollection"] {
+        let c = client.clone();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            c.insert_into(name).objects(vec![json!({"a": 1})]).build()
+        }));
+        assert!(
+            matches!(r, Ok(Err(GraphqlError::InvalidInput(_)))),
+            "{name:?}"
+        );
+    }
+}
+
+/// Partial `errors` next to `data` must not be dropped by the builders.
+#[tokio::test]
+async fn builder_execute_reports_partial_errors() {
+    let server = MockServer::start().await;
+    let mut payload = connection_payload("blogCollection");
+    payload["errors"] = json!([{"message": "column masked"}]);
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(payload))
+        .mount(&server)
+        .await;
+    let client = mock_client(&server);
+    let result = client
+        .collection("blogCollection")
+        .select(&["id", "name"])
+        .execute::<TestRow>()
+        .await;
+    match result {
+        Err(GraphqlError::GraphqlErrors(errors)) => assert_eq!(errors[0].message, "column masked"),
+        other => panic!("expected GraphqlErrors, got {other:?}"),
+    }
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {"deleteFromBlogCollection": {"affectedCount": 0, "records": []}},
+            "errors": [{"message": "partial failure"}]
+        })))
+        .mount(&server)
+        .await;
+    let client = mock_client(&server);
+    let result = client
+        .delete_from("blogCollection")
+        .filter(GqlFilter::eq("id", 1))
+        .execute::<TestRow>()
+        .await;
+    assert!(matches!(result, Err(GraphqlError::GraphqlErrors(_))));
 }

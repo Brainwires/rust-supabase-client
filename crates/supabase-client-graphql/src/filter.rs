@@ -210,11 +210,16 @@ impl GqlFilter {
     }
 
     /// Logical NOT of a filter.
+    #[allow(clippy::should_implement_trait)]
     pub fn not(filter: GqlFilter) -> Self {
         GqlFilter::Not(Box::new(filter))
     }
 
-    /// Convert this filter to a `serde_json::Value` for inlining into the query.
+    /// Convert this filter to a `serde_json::Value`.
+    ///
+    /// The `is` values appear as plain strings here; query rendering does not
+    /// use this method (it renders them as GraphQL enum values and validates
+    /// column names), so this is for inspection only.
     pub fn to_value(&self) -> Value {
         match self {
             GqlFilter::Field { column, op, value } => {
