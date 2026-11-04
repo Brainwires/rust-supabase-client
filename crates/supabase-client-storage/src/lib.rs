@@ -21,6 +21,8 @@
 //! let bytes = file_api.download("photo.png").await?;
 //! ```
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 pub mod bucket_api;
 pub mod client;
 pub mod error;

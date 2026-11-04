@@ -25,6 +25,8 @@
 //! let users = admin.list_users(None, None).await?;
 //! ```
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 pub mod admin;
 pub mod client;
 pub mod error;

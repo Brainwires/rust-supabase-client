@@ -16,6 +16,15 @@
 //! - `direct-sql` — Enables a direct PostgreSQL connection pool via sqlx,
 //!   bypassing PostgREST for queries.
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
+#[cfg(all(feature = "direct-sql", target_arch = "wasm32"))]
+compile_error!(
+    "the `direct-sql` feature is not supported on wasm32: it opens PostgreSQL \
+     connections with sqlx, which needs a native TCP stack. Disable `direct-sql` \
+     for wasm32 builds and use the REST query builder."
+);
+
 pub mod auth_token;
 pub mod client;
 pub mod config;

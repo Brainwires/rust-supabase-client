@@ -1,0 +1,85 @@
+//! Issue #6: the auth session's JWT is used by the other clients created
+//! from the same `SupabaseClient`. Runs against a wiremock server, no
+//! Supabase stack needed.
+
+#![cfg(all(feature = "auth", feature = "storage", feature = "functions"))]
+
+use serde_json::json;
+use supabase_client_sdk::prelude::*;
+use wiremock::matchers::{any, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+fn session_body() -> serde_json::Value {
+    json!({
+        "access_token": "USER-JWT",
+        "refresh_token": "rt",
+        "expires_in": 3600,
+        "expires_at": 9999999999i64,
+        "token_type": "bearer",
+        "user": {"id": "u1"}
+    })
+}
+
+#[tokio::test]
+async fn auth_session_token_flows_to_storage_and_functions() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/auth/v1/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(session_body()))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/auth/v1/logout"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&server)
+        .await;
+
+    let client = SupabaseClient::new(SupabaseConfig::new(server.uri(), "ANON-KEY")).unwrap();
+    // Created before sign-in on purpose: they follow the shared slot.
+    let storage = client.storage().unwrap();
+    let functions = client.functions().unwrap();
+    let auth = client.auth().unwrap();
+
+    storage.list_buckets().await.unwrap();
+    auth.sign_in_with_password_email("a@b.c", "pw").await.unwrap();
+    assert_eq!(client.access_token().as_deref(), Some("USER-JWT"));
+    storage.list_buckets().await.unwrap();
+    functions.invoke("hello", InvokeOptions::new()).await.unwrap();
+    auth.sign_out_current().await.unwrap();
+    storage.list_buckets().await.unwrap();
+
+    let reqs = server.received_requests().await.unwrap();
+    let seen: Vec<(String, String, String)> = reqs
+        .iter()
+        .filter(|r| !r.url.path().starts_with("/auth/"))
+        .map(|r| {
+            (
+                r.url.path().to_string(),
+                r.headers["authorization"].to_str().unwrap().to_string(),
+                r.headers["apikey"].to_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            ("/storage/v1/bucket".into(), "Bearer ANON-KEY".into(), "ANON-KEY".into()),
+            ("/storage/v1/bucket".into(), "Bearer USER-JWT".into(), "ANON-KEY".into()),
+            ("/functions/v1/hello".into(), "Bearer USER-JWT".into(), "ANON-KEY".into()),
+            ("/storage/v1/bucket".into(), "Bearer ANON-KEY".into(), "ANON-KEY".into()),
+        ]
+    );
+}
+
+#[test]
+fn derive_path_is_reexported() {
+    // `#[derive(Table)]` output refers to these paths when only the sdk is a
+    // dependency.
+    #[allow(unused_imports)]
+    use supabase_client_sdk::__query::{IntoSqlParam, SqlParam, Table};
+    let _: SqlParam = IntoSqlParam::into_sql_param(1i32);
+}
