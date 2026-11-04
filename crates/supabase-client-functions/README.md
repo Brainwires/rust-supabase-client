@@ -10,16 +10,18 @@ Edge Functions client for supabase-client.
 - **`FunctionsClient`** — HTTP client for invoking Supabase Edge Functions (Deno/TypeScript)
 - JSON, binary, and text request/response bodies
 - Custom headers, authorization override, and region routing
-- `set_auth()` to update default token for subsequent invocations
+- `set_auth()` to update default token for subsequent invocations; clients from `client.functions()` follow the signed-in session
 - Full HTTP method support (GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD)
 
 ## Usage
 
 ```rust
+use supabase_client_core::{SupabaseClient, SupabaseConfig};
 use supabase_client_functions::SupabaseClientFunctionsExt;
 use supabase_client_functions::InvokeOptions;
 use serde_json::json;
 
+let client = SupabaseClient::new(SupabaseConfig::new("https://your-project.supabase.co", "your-anon-key"))?;
 let functions = client.functions()?;
 
 let response = functions.invoke("hello", InvokeOptions::new()
