@@ -4,8 +4,32 @@ use syn::DeriveInput;
 
 use crate::parse::{parse_fields, ParsedField, TableAttrs};
 
+/// Path to the `supabase-client-query` crate as seen from the crate using
+/// the derive: the query crate itself when it is a direct dependency
+/// (possibly renamed), otherwise `supabase_client_sdk::__query`.
+fn query_crate() -> TokenStream {
+    use proc_macro_crate::{FoundCrate, crate_name};
+    let ident = |name: &str| proc_macro2::Ident::new(name, proc_macro2::Span::call_site());
+    match crate_name("supabase-client-query") {
+        Ok(FoundCrate::Itself) => quote!(crate),
+        Ok(FoundCrate::Name(name)) => {
+            let name = ident(&name);
+            quote!(::#name)
+        }
+        Err(_) => match crate_name("supabase-client-sdk") {
+            Ok(FoundCrate::Itself) => quote!(crate::__query),
+            Ok(FoundCrate::Name(name)) => {
+                let name = ident(&name);
+                quote!(::#name::__query)
+            }
+            Err(_) => quote!(::supabase_client_query),
+        },
+    }
+}
+
 pub fn expand_table_derive(input: &DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &input.ident;
+    let q = query_crate();
     let table_attrs = TableAttrs::from_derive_input(input)?;
 
     let data_struct = match &input.data {
@@ -74,7 +98,7 @@ pub fn expand_table_derive(input: &DeriveInput) -> syn::Result<TokenStream> {
         .map(|f| {
             let ident = &f.ident;
             quote! {
-                supabase_client_query::IntoSqlParam::into_sql_param(self.#ident.clone())
+                #q::IntoSqlParam::into_sql_param(self.#ident.clone())
             }
         })
         .collect();
@@ -85,7 +109,7 @@ pub fn expand_table_derive(input: &DeriveInput) -> syn::Result<TokenStream> {
         .map(|f| {
             let ident = &f.ident;
             quote! {
-                supabase_client_query::IntoSqlParam::into_sql_param(self.#ident.clone())
+                #q::IntoSqlParam::into_sql_param(self.#ident.clone())
             }
         })
         .collect();
@@ -96,7 +120,7 @@ pub fn expand_table_derive(input: &DeriveInput) -> syn::Result<TokenStream> {
         .map(|f| {
             let ident = &f.ident;
             quote! {
-                supabase_client_query::IntoSqlParam::into_sql_param(self.#ident.clone())
+                #q::IntoSqlParam::into_sql_param(self.#ident.clone())
             }
         })
         .collect();
@@ -106,7 +130,7 @@ pub fn expand_table_derive(input: &DeriveInput) -> syn::Result<TokenStream> {
     let insertable_count = insertable_column_names.len();
 
     Ok(quote! {
-        impl supabase_client_query::Table for #struct_name {
+        impl #q::Table for #struct_name {
             fn table_name() -> &'static str {
                 #table_name
             }
@@ -144,15 +168,15 @@ pub fn expand_table_derive(input: &DeriveInput) -> syn::Result<TokenStream> {
                 }
             }
 
-            fn bind_insert(&self) -> ::std::vec::Vec<supabase_client_query::SqlParam> {
+            fn bind_insert(&self) -> ::std::vec::Vec<#q::SqlParam> {
                 ::std::vec![#(#bind_insert_exprs),*]
             }
 
-            fn bind_update(&self) -> ::std::vec::Vec<supabase_client_query::SqlParam> {
+            fn bind_update(&self) -> ::std::vec::Vec<#q::SqlParam> {
                 ::std::vec![#(#bind_update_exprs),*]
             }
 
-            fn bind_primary_key(&self) -> ::std::vec::Vec<supabase_client_query::SqlParam> {
+            fn bind_primary_key(&self) -> ::std::vec::Vec<#q::SqlParam> {
                 ::std::vec![#(#bind_pk_exprs),*]
             }
         }
