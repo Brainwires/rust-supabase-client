@@ -70,6 +70,7 @@ let result = graphql.insert_into("blogCollection")
 
 ```rust
 use supabase_client_graphql::{SupabaseClientGraphqlExt, GqlFilter};
+use serde_json::json;
 
 let graphql = client.graphql()?;
 
