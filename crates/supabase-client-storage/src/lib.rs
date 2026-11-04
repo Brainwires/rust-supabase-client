@@ -24,6 +24,7 @@
 pub mod bucket_api;
 pub mod client;
 pub mod error;
+mod path;
 pub mod types;
 
 // Re-exports for convenient access
@@ -53,8 +54,12 @@ pub trait SupabaseClientStorageExt {
 }
 
 impl SupabaseClientStorageExt for SupabaseClient {
+    /// The returned client follows the `SupabaseClient`'s access token, so
+    /// once the auth client from `client.auth()` has a session, storage
+    /// requests carry the user's JWT.
     fn storage(&self) -> Result<StorageClient, StorageError> {
-        StorageClient::new(self.supabase_url(), self.api_key())
+        Ok(StorageClient::new(self.supabase_url(), self.api_key())?
+            .with_session_token(self.access_token_handle()))
     }
 }
 
