@@ -17,15 +17,15 @@ pub(crate) fn apply_state(raw: Value) -> PresenceState {
     state
 }
 
+/// `(key, metas)` pairs that joined or left.
+type PresenceChanges = Vec<(String, Vec<PresenceMeta>)>;
+
 /// Apply a presence_diff to the current state.
 /// Returns (joins, leaves) as vectors of (key, metas) for callback dispatch.
 pub(crate) fn apply_diff(
     current: &mut PresenceState,
     diff: PresenceDiff,
-) -> (
-    Vec<(String, Vec<PresenceMeta>)>,
-    Vec<(String, Vec<PresenceMeta>)>,
-) {
+) -> (PresenceChanges, PresenceChanges) {
     let mut joins = Vec::new();
     let mut leaves = Vec::new();
 

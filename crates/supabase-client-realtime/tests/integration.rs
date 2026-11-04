@@ -70,6 +70,7 @@ mod unit {
                         .event(PostgresChangesEvent::All)
                         .with_filter("id=eq.1"),
                 ],
+                private: true,
             },
             access_token: Some("test-token".to_string()),
         };
@@ -98,6 +99,7 @@ mod unit {
             "id=eq.1"
         );
         assert_eq!(json_val["access_token"], "test-token");
+        assert_eq!(json_val["config"]["private"], true);
     }
 
     #[test]

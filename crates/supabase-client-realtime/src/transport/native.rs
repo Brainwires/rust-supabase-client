@@ -1,5 +1,7 @@
 //! Native WebSocket transport using tokio-tungstenite.
 
+use std::sync::Arc;
+
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -41,9 +43,46 @@ pub(crate) async fn connect_ws(
         );
     }
 
-    let (ws_stream, _) = tokio_tungstenite::connect_async(request).await?;
+    let connector = tokio_tungstenite::Connector::Rustls(Arc::new(rustls_client_config()?));
+    let connect =
+        tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector));
+    let (ws_stream, _) = tokio::time::timeout(config.connect_timeout, connect)
+        .await
+        .map_err(|_| {
+            RealtimeError::WebSocket(tokio_tungstenite::tungstenite::Error::Io(
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "WebSocket connection timed out after {:?}",
+                        config.connect_timeout
+                    ),
+                ),
+            ))
+        })??;
     let (write, read) = ws_stream.split();
     Ok((write, read))
+}
+
+/// Build the rustls client config for `wss://` connections with an explicit
+/// crypto provider.
+///
+/// `ClientConfig::builder()` (what tokio-tungstenite uses by default) panics
+/// with "Could not automatically determine the process-level CryptoProvider"
+/// when more than one rustls backend is compiled in, e.g. reqwest 0.13
+/// (aws-lc-rs) next to sqlx (ring). Use the process default provider when
+/// the application installed one, otherwise ring.
+fn rustls_client_config() -> Result<rustls::ClientConfig, RealtimeError> {
+    let provider = rustls::crypto::CryptoProvider::get_default()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(rustls::crypto::ring::default_provider()));
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| RealtimeError::InvalidConfig(format!("TLS configuration error: {}", e)))?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(config)
 }
 
 /// Send a text message over the WebSocket sink.
@@ -61,15 +100,16 @@ pub(crate) async fn send_close(sink: &mut WsSink) -> Result<(), RealtimeError> {
 /// Receive the next message from the WebSocket stream.
 ///
 /// Returns `None` when the stream ends.
+/// Pong, binary and raw frames are skipped: they are not end of stream.
 pub(crate) async fn recv_message(read: &mut WsRead) -> Option<Result<WsMessage, RealtimeError>> {
-    match read.next().await {
-        Some(Ok(Message::Text(text))) => Some(Ok(WsMessage::Text(text.to_string()))),
-        Some(Ok(Message::Close(_))) => Some(Ok(WsMessage::Close)),
-        Some(Ok(Message::Ping(data))) => Some(Ok(WsMessage::Ping(data.to_vec()))),
-        Some(Ok(Message::Pong(_))) => None, // Ignore pong
-        Some(Err(e)) => Some(Err(RealtimeError::WebSocket(e))),
-        None => None,
-        _ => None, // Binary, Frame — ignore
+    loop {
+        return match read.next().await? {
+            Ok(Message::Text(text)) => Some(Ok(WsMessage::Text(text.to_string()))),
+            Ok(Message::Close(_)) => Some(Ok(WsMessage::Close)),
+            Ok(Message::Ping(data)) => Some(Ok(WsMessage::Ping(data.to_vec()))),
+            Ok(Message::Pong(_)) | Ok(Message::Binary(_)) | Ok(Message::Frame(_)) => continue,
+            Err(e) => Some(Err(RealtimeError::WebSocket(e))),
+        };
     }
 }
 
@@ -84,4 +124,25 @@ pub(crate) enum WsMessage {
     Text(String),
     Close,
     Ping(Vec<u8>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tls_config_builds_with_several_crypto_providers_compiled_in() {
+        // Tests compile rustls with both ring and aws-lc-rs and install no
+        // process default, the setup in which `ClientConfig::builder()`
+        // panics.
+        assert!(rustls::crypto::CryptoProvider::get_default().is_none());
+        rustls_client_config().unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "CryptoProvider")]
+    fn default_builder_panics_in_the_same_setup() {
+        // Documents the failure mode the explicit provider avoids.
+        let _ = rustls::ClientConfig::builder();
+    }
 }

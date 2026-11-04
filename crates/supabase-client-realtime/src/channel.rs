@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -119,7 +120,11 @@ impl ChannelBuilder {
         self
     }
 
-    /// Mark this channel as private (requires RLS).
+    /// Mark this channel as private: the join sends `config.private = true`
+    /// and Realtime authorizes it with RLS policies on `realtime.messages`
+    /// for the access token (see [`RealtimeClient::set_auth`]).
+    ///
+    /// [`RealtimeClient::set_auth`]: crate::RealtimeClient::set_auth
     pub fn private(mut self) -> Self {
         self.is_private = true;
         self
@@ -145,6 +150,7 @@ impl ChannelBuilder {
                     key: self.presence_key.clone(),
                 },
                 postgres_changes: self.postgres_changes.clone(),
+                private: self.is_private,
             },
             access_token: self.access_token.clone(),
         };
@@ -166,10 +172,11 @@ impl ChannelBuilder {
             topic: self.topic.clone(),
             state: RwLock::new(ChannelState::Joining),
             join_ref: RwLock::new(None),
-            join_payload: RwLock::new(join_payload.clone()),
+            join_payload: RwLock::new(join_payload),
             registry,
             presence_state: RwLock::new(PresenceState::new()),
             pg_change_id_map: RwLock::new(HashMap::new()),
+            join_gen: AtomicU64::new(0),
             client_sender: self.client_sender.clone(),
         });
 
@@ -179,7 +186,7 @@ impl ChannelBuilder {
 
         // Register channel with the client and send phx_join
         self.client_sender
-            .subscribe_channel(channel.clone(), join_payload, self.subscribe_timeout)
+            .subscribe_channel(channel.clone(), self.subscribe_timeout)
             .await?;
 
         Ok(channel)
@@ -206,6 +213,9 @@ pub(crate) struct ChannelInner {
     pub(crate) presence_state: RwLock<PresenceState>,
     /// Maps server-assigned postgres_changes subscription IDs → filter_index
     pub(crate) pg_change_id_map: RwLock<HashMap<u64, usize>>,
+    /// Connection generation on which the last `phx_join` was sent, so a
+    /// reconnect only rejoins channels joined on an older connection.
+    pub(crate) join_gen: AtomicU64,
     pub(crate) client_sender: crate::client::ClientSender,
 }
 
@@ -287,22 +297,37 @@ impl RealtimeChannel {
         self.inner.presence_state.read().await.clone()
     }
 
-    /// Unsubscribe from this channel. Sends `phx_leave`.
+    /// Unsubscribe from this channel. Sends `phx_leave`, marks the channel
+    /// `Closed` and removes it from the client, so the same topic can be
+    /// subscribed again.
+    ///
+    /// If the connection is already gone the channel is still closed and
+    /// removed, and `Ok(())` is returned.
     pub async fn unsubscribe(&self) -> Result<(), RealtimeError> {
-        let state = *self.inner.state.read().await;
-        if state == ChannelState::Closed || state == ChannelState::Leaving {
-            return Ok(());
+        {
+            let mut state = self.inner.state.write().await;
+            if *state == ChannelState::Closed || *state == ChannelState::Leaving {
+                return Ok(());
+            }
+            *state = ChannelState::Leaving;
         }
-        let join_ref = self.inner.join_ref.read().await;
-        let join_ref = join_ref
-            .as_deref()
-            .ok_or_else(|| RealtimeError::Internal("No join_ref for leave".to_string()))?;
-        self.inner
-            .client_sender
-            .send_leave(&self.inner.topic, join_ref)
-            .await?;
-        *self.inner.state.write().await = ChannelState::Leaving;
-        Ok(())
+        let join_ref = self.inner.join_ref.read().await.clone();
+        let sent = match join_ref {
+            Some(jr) => {
+                self.inner
+                    .client_sender
+                    .send_leave(&self.inner.topic, &jr)
+                    .await
+            }
+            None => Ok(()),
+        };
+        *self.inner.state.write().await = ChannelState::Closed;
+        self.inner.client_sender.forget_channel(self).await;
+        crate::client::notify_status(self, SubscriptionStatus::Closed, None).await;
+        match sent {
+            Err(RealtimeError::ConnectionClosed) => Ok(()),
+            other => other,
+        }
     }
 
     /// Update the access token for this channel (e.g., after token refresh).
