@@ -105,24 +105,21 @@ where
                     }
                 }
                 let mut resp = build_response(data, parts);
-                if resp.error.is_none() && parts.count == CountOption::Exact {
+                let counted_select = parts.count == CountOption::Exact
+                    && parts.operation == crate::sql::SqlOperation::Select
+                    && !parts.head
+                    && parts.explain.is_none();
+                if resp.error.is_none() && counted_select {
                     resp.count = match window_count {
                         Some(n) => Some(n),
                         // No rows and no offset: nothing matches.
-                        None if parts.operation == crate::sql::SqlOperation::Select
-                            && parts.offset.unwrap_or(0) <= 0 =>
-                        {
-                            Some(0)
-                        }
+                        None if parts.offset.unwrap_or(0) <= 0 => Some(0),
                         // No rows past an offset: the window count is unknown,
                         // so count the matching rows separately.
-                        None if parts.operation == crate::sql::SqlOperation::Select => {
-                            match count_matching_rows(pool, parts, params).await {
-                                Ok(n) => Some(n),
-                                Err(e) => return SupabaseResponse::error(e),
-                            }
-                        }
-                        None => resp.count,
+                        None => match count_matching_rows(pool, parts, params).await {
+                            Ok(n) => Some(n),
+                            Err(e) => return SupabaseResponse::error(e),
+                        },
                     };
                 }
                 resp
@@ -167,6 +164,7 @@ async fn count_matching_rows(
 ) -> Result<i64, SupabaseError> {
     let mut head = parts.clone();
     head.head = true;
+    head.explain = None;
     head.orders.clear();
     head.limit = None;
     head.offset = None;
