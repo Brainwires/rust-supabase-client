@@ -13,7 +13,11 @@ keywords = ["supabase", "client", "rest", "postgrest", "database"]
 categories = ["database", "web-programming::http-client"]
 
 [features]
-default = []
+default = ["rustls"]
+## TLS via rustls (aws-lc-rs crypto, OS trust store). No OpenSSL needed.
+rustls = ["reqwest/rustls", "sqlx?/tls-rustls-aws-lc-rs"]
+## TLS via the platform library (OpenSSL on Linux, SChannel, Secure Transport).
+native-tls = ["reqwest/native-tls", "sqlx?/tls-native-tls"]
 direct-sql = ["dep:sqlx"]
 
 [dependencies]
@@ -30,7 +34,6 @@ url.workspace = true
 base64.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-reqwest = { workspace = true, features = ["rustls-tls"] }
 tokio = { workspace = true, features = ["rt", "time", "macros"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

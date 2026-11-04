@@ -622,7 +622,7 @@ mod integration {
 
     #[tokio::test]
     async fn mfa_full_totp_flow() {
-        use totp_rs::{Algorithm, TOTP, Secret};
+        use totp_rs::{Algorithm, Builder, Secret};
 
         let auth = auth_client();
         let admin = admin_auth_client();
@@ -646,9 +646,16 @@ mod integration {
             .unwrap();
 
         // 3. Generate TOTP code from the secret
-        let secret_bytes = Secret::Encoded(secret).to_bytes().unwrap();
-        let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret_bytes).unwrap();
-        let code = totp.generate_current().unwrap();
+        let secret_bytes = Secret::try_from_base32(&secret).unwrap();
+        let totp = Builder::new()
+            .with_algorithm(Algorithm::SHA1)
+            .with_digits(6)
+            .with_skew(1)
+            .with_step_duration(30)
+            .with_secret(secret_bytes)
+            .build()
+            .unwrap();
+        let code = totp.generate_current().to_string();
 
         // 4. Verify
         let new_session = auth
@@ -670,7 +677,7 @@ mod integration {
 
     #[tokio::test]
     async fn mfa_challenge_and_verify() {
-        use totp_rs::{Algorithm, TOTP, Secret};
+        use totp_rs::{Algorithm, Builder, Secret};
 
         let auth = auth_client();
         let admin = admin_auth_client();
@@ -688,9 +695,16 @@ mod integration {
 
         // First verify to make factor "verified" status
         let challenge = auth.mfa_challenge(&session.access_token, &factor.id).await.unwrap();
-        let secret_bytes = Secret::Encoded(secret.clone()).to_bytes().unwrap();
-        let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret_bytes).unwrap();
-        let code = totp.generate_current().unwrap();
+        let secret_bytes = Secret::try_from_base32(&secret).unwrap();
+        let totp = Builder::new()
+            .with_algorithm(Algorithm::SHA1)
+            .with_digits(6)
+            .with_skew(1)
+            .with_step_duration(30)
+            .with_secret(secret_bytes)
+            .build()
+            .unwrap();
+        let code = totp.generate_current().to_string();
         let aal2_session = auth
             .mfa_verify(
                 &session.access_token,
@@ -703,7 +717,7 @@ mod integration {
         // Now use the convenience method with the AAL2 session
         // Need to wait a moment for TOTP time window to potentially rotate
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        let code2 = totp.generate_current().unwrap();
+        let code2 = totp.generate_current().to_string();
         let result = auth
             .mfa_challenge_and_verify(&aal2_session.access_token, &factor.id, &code2)
             .await;
@@ -768,7 +782,7 @@ mod integration {
 
     #[tokio::test]
     async fn mfa_get_aal_before_and_after() {
-        use totp_rs::{Algorithm, TOTP, Secret};
+        use totp_rs::{Algorithm, Builder, Secret};
 
         let auth = auth_client();
         let admin = admin_auth_client();
@@ -794,9 +808,16 @@ mod integration {
             .unwrap();
         let secret = factor.totp.as_ref().unwrap().secret.clone();
         let challenge = auth.mfa_challenge(&session.access_token, &factor.id).await.unwrap();
-        let secret_bytes = Secret::Encoded(secret).to_bytes().unwrap();
-        let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret_bytes).unwrap();
-        let code = totp.generate_current().unwrap();
+        let secret_bytes = Secret::try_from_base32(&secret).unwrap();
+        let totp = Builder::new()
+            .with_algorithm(Algorithm::SHA1)
+            .with_digits(6)
+            .with_skew(1)
+            .with_step_duration(30)
+            .with_secret(secret_bytes)
+            .build()
+            .unwrap();
+        let code = totp.generate_current().to_string();
         let aal2_session = auth
             .mfa_verify(
                 &session.access_token,

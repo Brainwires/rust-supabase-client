@@ -12,6 +12,13 @@ readme = "README.md"
 keywords = ["supabase", "auth", "gotrue", "authentication", "oauth"]
 categories = ["authentication", "web-programming::http-client"]
 
+[features]
+default = ["rustls"]
+## TLS via rustls (aws-lc-rs crypto, OS trust store). No OpenSSL needed.
+rustls = ["reqwest/rustls", "supabase-client-core/rustls"]
+## TLS via the platform library (OpenSSL on Linux, SChannel, Secure Transport).
+native-tls = ["reqwest/native-tls", "supabase-client-core/native-tls"]
+
 [dependencies]
 supabase-client-core.workspace = true
 serde.workspace = true
@@ -28,11 +35,10 @@ sha2.workspace = true
 rand.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-reqwest = { workspace = true, features = ["rustls-tls"] }
 tokio = { workspace = true, features = ["rt", "time"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
-totp-rs = { version = "5", features = ["gen_secret"] }
+totp-rs = "6"
 wiremock.workspace = true
 serde_json.workspace = true

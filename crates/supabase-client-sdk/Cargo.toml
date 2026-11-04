@@ -13,7 +13,28 @@ keywords = ["supabase", "client", "database", "rest", "baas"]
 categories = ["database", "web-programming::http-client"]
 
 [features]
-default = ["query", "derive"]
+default = ["query", "derive", "rustls"]
+## TLS via rustls (aws-lc-rs crypto, OS trust store). No OpenSSL needed.
+rustls = [
+    "supabase-client-core/rustls",
+    "supabase-client-query?/rustls",
+    "supabase-client-auth?/rustls",
+    "supabase-client-realtime?/rustls",
+    "supabase-client-storage?/rustls",
+    "supabase-client-functions?/rustls",
+    "supabase-client-graphql?/rustls",
+]
+## TLS via the platform library (OpenSSL on Linux, SChannel, Secure Transport).
+## Use with `default-features = false` to build without rustls/aws-lc-rs.
+native-tls = [
+    "supabase-client-core/native-tls",
+    "supabase-client-query?/native-tls",
+    "supabase-client-auth?/native-tls",
+    "supabase-client-realtime?/native-tls",
+    "supabase-client-storage?/native-tls",
+    "supabase-client-functions?/native-tls",
+    "supabase-client-graphql?/native-tls",
+]
 query = ["dep:supabase-client-query"]
 derive = ["dep:supabase-client-derive"]
 auth = ["dep:supabase-client-auth"]
