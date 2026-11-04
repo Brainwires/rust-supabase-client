@@ -36,7 +36,8 @@ Security and correctness release. It contains breaking changes; see
   be capped (`with_max_download_size`, `with_max_response_size`) and given a
   total timeout (`with_timeout`).
 - wasm32: `SupabaseClient::new` refuses a `service_role` JWT or `sb_secret_`
-  key unless `SupabaseConfig::allow_privileged_key_on_wasm(true)` is set;
+  key; `SupabaseClient::new_allowing_privileged_key` opts out (for wasm32
+  builds that never run in a browser);
   sub-clients built directly log a warning.
 
 ### Fixed
@@ -129,7 +130,6 @@ Security and correctness release. It contains breaking changes; see
 - Storage object paths and bucket ids, auth ids and function names with
   empty, `.` or `..` segments are rejected; `/` inside an auth id is
   encoded instead of creating new path segments.
-- `SupabaseConfig` has a new public field, `allow_privileged_key_on_wasm`.
 - wasm32: a privileged key is refused by `SupabaseClient::new`.
 - Internal crates depend on each other with `default-features = false`;
   crates that make HTTP requests gained a default `rustls` feature. If you

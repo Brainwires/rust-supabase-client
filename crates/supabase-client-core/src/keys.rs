@@ -51,8 +51,8 @@ pub fn jwt_role(token: &str) -> Option<String> {
 /// Error message used when a privileged key is refused on wasm32.
 pub const PRIVILEGED_KEY_ON_WASM: &str =
     "refusing to use a service_role/secret key in a wasm32 build: it would be readable by \
-     anyone who loads the page. Use the anon/publishable key, or call \
-     SupabaseConfig::allow_privileged_key_on_wasm(true) if this build never runs in a browser";
+     anyone who loads the page. Use the anon/publishable key, or construct the client with \
+     SupabaseClient::new_allowing_privileged_key if this build never runs in a browser";
 
 /// On wasm32, log a warning when `key` is privileged. Sub-clients constructed
 /// directly (not through `SupabaseClient`) call this, since they have no

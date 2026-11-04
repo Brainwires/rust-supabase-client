@@ -23,12 +23,6 @@ pub struct SupabaseConfig {
     /// Connection pool configuration (only used with direct-sql)
     #[cfg(feature = "direct-sql")]
     pub pool: PoolConfig,
-    /// Allow a `service_role`/secret key in a wasm32 build (default `false`).
-    ///
-    /// On wasm32, [`SupabaseClient::new`](crate::SupabaseClient::new) refuses a
-    /// privileged key unless this is set, because code shipped to a browser is
-    /// readable by anyone. Ignored on native targets.
-    pub allow_privileged_key_on_wasm: bool,
 }
 
 impl fmt::Debug for SupabaseConfig {
@@ -44,10 +38,6 @@ impl fmt::Debug for SupabaseConfig {
         s.field("schema", &self.schema);
         #[cfg(feature = "direct-sql")]
         s.field("pool", &self.pool);
-        s.field(
-            "allow_privileged_key_on_wasm",
-            &self.allow_privileged_key_on_wasm,
-        );
         s.finish()
     }
 }
@@ -89,17 +79,7 @@ impl SupabaseConfig {
             schema: "public".to_string(),
             #[cfg(feature = "direct-sql")]
             pool: PoolConfig::default(),
-            allow_privileged_key_on_wasm: false,
         }
-    }
-
-    /// Allow a `service_role`/secret key in a wasm32 build.
-    ///
-    /// Only set this for wasm32 builds that never run in a browser (for example
-    /// a server-side wasm runtime). Ignored on native targets.
-    pub fn allow_privileged_key_on_wasm(mut self, allow: bool) -> Self {
-        self.allow_privileged_key_on_wasm = allow;
-        self
     }
 
     /// Set the default schema.

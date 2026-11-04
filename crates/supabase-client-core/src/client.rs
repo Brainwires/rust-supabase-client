@@ -29,7 +29,21 @@ impl SupabaseClient {
     /// Create a new REST-only client (no database connection needed).
     ///
     /// This is the primary constructor. Queries go through PostgREST.
+    ///
+    /// On wasm32 this refuses a privileged key (a `service_role` JWT or an
+    /// `sb_secret_...` key), because code shipped to a browser is readable by
+    /// anyone; see [`new_allowing_privileged_key`](Self::new_allowing_privileged_key).
     pub fn new(config: SupabaseConfig) -> SupabaseResult<Self> {
+        check_privileged_key(&config, cfg!(target_arch = "wasm32"))?;
+        Self::new_allowing_privileged_key(config)
+    }
+
+    /// Like [`new`](Self::new), but accepts a privileged key on wasm32.
+    ///
+    /// Only use this for wasm32 builds that never run in a browser (for
+    /// example a server-side wasm runtime). On native targets it is the same
+    /// as `new`.
+    pub fn new_allowing_privileged_key(config: SupabaseConfig) -> SupabaseResult<Self> {
         validate_config(&config)?;
         let http = build_http_client()?;
         Ok(Self {
@@ -47,6 +61,7 @@ impl SupabaseClient {
     #[cfg(feature = "direct-sql")]
     pub async fn with_database(config: SupabaseConfig) -> SupabaseResult<Self> {
         validate_config(&config)?;
+        check_privileged_key(&config, cfg!(target_arch = "wasm32"))?;
         let db_url = config.database_url.as_ref().ok_or_else(|| {
             crate::error::SupabaseError::Config(
                 "database_url is required for direct-sql mode".into(),
@@ -171,7 +186,7 @@ impl SupabaseClient {
     /// Check if the pool is closed (if available).
     #[cfg(feature = "direct-sql")]
     pub fn is_closed(&self) -> bool {
-        self.pool.as_ref().map_or(true, |p| p.is_closed())
+        self.pool.as_ref().is_none_or(|p| p.is_closed())
     }
 }
 
@@ -185,16 +200,13 @@ fn validate_config(config: &SupabaseConfig) -> SupabaseResult<()> {
             err
         ))
     })?;
-    check_privileged_key(config, cfg!(target_arch = "wasm32"))
+    Ok(())
 }
 
-/// Refuse a service_role/secret key on wasm32 unless explicitly allowed.
+/// Refuse a service_role/secret key on wasm32.
 fn check_privileged_key(config: &SupabaseConfig, is_wasm: bool) -> SupabaseResult<()> {
     use crate::keys::{classify_key, KeyKind, PRIVILEGED_KEY_ON_WASM};
-    if is_wasm
-        && !config.allow_privileged_key_on_wasm
-        && classify_key(&config.supabase_key) == KeyKind::Privileged
-    {
+    if is_wasm && classify_key(&config.supabase_key) == KeyKind::Privileged {
         return Err(SupabaseError::Config(PRIVILEGED_KEY_ON_WASM.into()));
     }
     Ok(())
@@ -311,8 +323,9 @@ mod tests {
             Err(SupabaseError::Config(_))
         ));
         assert!(check_privileged_key(&config, false).is_ok());
-        let allowed = config.allow_privileged_key_on_wasm(true);
-        assert!(check_privileged_key(&allowed, true).is_ok());
+        // Native: both constructors accept it.
+        assert!(SupabaseClient::new(config.clone()).is_ok());
+        assert!(SupabaseClient::new_allowing_privileged_key(config).is_ok());
         let secret = SupabaseConfig::new("http://localhost:54321", "sb_secret_x");
         assert!(check_privileged_key(&secret, true).is_err());
         let anon = SupabaseConfig::new("http://localhost:54321", "sb_publishable_x");
