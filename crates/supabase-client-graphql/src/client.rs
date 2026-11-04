@@ -1,8 +1,10 @@
-use std::sync::{Arc, RwLock};
+use std::fmt;
 
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use supabase_client_core::http::{bearer_header, sensitive_header};
+use supabase_client_core::AccessToken;
 use tracing::debug;
 use url::Url;
 
@@ -31,13 +33,28 @@ use crate::types::GraphqlResponse;
 ///     .first(10)
 ///     .execute::<BlogRow>().await?;
 /// ```
-#[derive(Debug, Clone)]
+///
+/// `Debug` output never includes the API key or tokens.
+#[derive(Clone)]
 pub struct GraphqlClient {
     http: reqwest::Client,
     base_url: Url,
     api_key: String,
     /// Overridden auth token (if set via `set_auth`).
-    auth_override: Arc<RwLock<Option<String>>>,
+    auth_override: AccessToken,
+    /// Shared session slot (from `SupabaseClient::access_token_handle`).
+    session_token: Option<AccessToken>,
+}
+
+impl fmt::Debug for GraphqlClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GraphqlClient")
+            .field("base_url", &self.base_url.as_str())
+            .field("api_key", &"[redacted]")
+            .field("auth_override", &self.auth_override)
+            .field("session_token", &self.session_token)
+            .finish()
+    }
 }
 
 impl GraphqlClient {
@@ -52,13 +69,13 @@ impl GraphqlClient {
         let mut default_headers = HeaderMap::new();
         default_headers.insert(
             "apikey",
-            HeaderValue::from_str(api_key).map_err(|e| {
+            sensitive_header(api_key).map_err(|e| {
                 GraphqlError::InvalidConfig(format!("Invalid API key header: {}", e))
             })?,
         );
         default_headers.insert(
             reqwest::header::AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", api_key))
+            bearer_header(api_key)
                 .map_err(|e| GraphqlError::InvalidConfig(format!("Invalid auth header: {}", e)))?,
         );
         default_headers.insert(
@@ -76,8 +93,19 @@ impl GraphqlClient {
             http,
             base_url,
             api_key: api_key.to_string(),
-            auth_override: Arc::new(RwLock::new(None)),
+            auth_override: AccessToken::new(),
+            session_token: None,
         })
+    }
+
+    /// Follow a shared session token (see `SupabaseClient::access_token_handle`).
+    ///
+    /// While the slot holds a user JWT, requests use it as the bearer token
+    /// (unless [`set_auth`](Self::set_auth) overrides it). `client.graphql()`
+    /// does this, so the signed-in user's JWT is used automatically.
+    pub fn with_session_token(mut self, token: AccessToken) -> Self {
+        self.session_token = Some(token);
+        self
     }
 
     /// Get the GraphQL endpoint URL.
@@ -92,10 +120,24 @@ impl GraphqlClient {
 
     /// Update the default auth token for GraphQL requests.
     ///
-    /// Subsequent requests will use `Bearer <token>` instead of the API key.
+    /// Subsequent requests will use `Bearer <token>` instead of the API key
+    /// (and instead of the session token, if one is followed). Clones of
+    /// this client share the setting.
     pub fn set_auth(&self, token: &str) {
-        let mut auth = self.auth_override.write().unwrap();
-        *auth = Some(token.to_string());
+        self.auth_override.set(token);
+    }
+
+    /// Remove a token set with [`set_auth`](Self::set_auth).
+    pub fn clear_auth(&self) {
+        self.auth_override.clear();
+    }
+
+    /// The token requests currently send as `Authorization: Bearer`, if it
+    /// is not the API key.
+    fn bearer_override(&self) -> Option<String> {
+        self.auth_override
+            .get()
+            .or_else(|| self.session_token.as_ref().and_then(|t| t.get()))
     }
 
     /// Execute a raw GraphQL query/mutation.
@@ -126,11 +168,12 @@ impl GraphqlClient {
 
         let mut request = self.http.post(self.base_url.as_str()).json(&body);
 
-        // Apply auth override if set
-        if let Some(ref token) = *self.auth_override.read().unwrap() {
+        // The user JWT (set_auth, or the shared session) replaces the
+        // default `Bearer <api key>`; `apikey` stays the API key.
+        if let Some(token) = self.bearer_override() {
             request = request.header(
                 reqwest::header::AUTHORIZATION,
-                HeaderValue::from_str(&format!("Bearer {}", token)).map_err(|e| {
+                bearer_header(&token).map_err(|e| {
                     GraphqlError::InvalidConfig(format!("Invalid auth override header: {}", e))
                 })?,
             );
@@ -270,12 +313,36 @@ mod tests {
     #[test]
     fn set_auth_updates_override() {
         let client = GraphqlClient::new("https://example.supabase.co", "test-key").unwrap();
-        assert!(client.auth_override.read().unwrap().is_none());
+        assert!(client.auth_override.get().is_none());
         client.set_auth("new-token");
-        assert_eq!(
-            client.auth_override.read().unwrap().as_deref(),
-            Some("new-token")
-        );
+        assert_eq!(client.auth_override.get().as_deref(), Some("new-token"));
+        client.clear_auth();
+        assert!(client.bearer_override().is_none());
+    }
+
+    #[test]
+    fn session_token_is_followed_and_set_auth_wins() {
+        let slot = AccessToken::new();
+        let client = GraphqlClient::new("https://example.supabase.co", "test-key")
+            .unwrap()
+            .with_session_token(slot.clone());
+        assert!(client.bearer_override().is_none());
+        slot.set("session-jwt");
+        assert_eq!(client.bearer_override().as_deref(), Some("session-jwt"));
+        client.set_auth("explicit");
+        assert_eq!(client.bearer_override().as_deref(), Some("explicit"));
+        client.clear_auth();
+        slot.clear();
+        assert!(client.bearer_override().is_none());
+    }
+
+    #[test]
+    fn debug_redacts_keys_and_tokens() {
+        let client = GraphqlClient::new("https://example.supabase.co", "secret-key").unwrap();
+        client.set_auth("secret-jwt");
+        let out = format!("{:?}", client);
+        assert!(!out.contains("secret-key"), "{out}");
+        assert!(!out.contains("secret-jwt"), "{out}");
     }
 
     #[test]
@@ -283,9 +350,6 @@ mod tests {
         let client = GraphqlClient::new("https://example.supabase.co", "test-key").unwrap();
         let clone = client.clone();
         client.set_auth("shared-token");
-        assert_eq!(
-            clone.auth_override.read().unwrap().as_deref(),
-            Some("shared-token")
-        );
+        assert_eq!(clone.auth_override.get().as_deref(), Some("shared-token"));
     }
 }

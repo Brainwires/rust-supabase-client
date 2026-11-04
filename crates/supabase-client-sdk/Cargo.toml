@@ -70,7 +70,7 @@ wiremock.workspace = true
 
 [[test]]
 name = "session_token"
-required-features = ["auth", "storage", "functions"]
+required-features = ["auth", "query", "storage", "functions", "graphql"]
 
 [[example]]
 name = "query_basics"

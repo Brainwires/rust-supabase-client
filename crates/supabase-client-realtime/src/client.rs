@@ -6,6 +6,7 @@ use std::time::Duration;
 use futures_util::future::{select, Either};
 use serde_json::{json, Value};
 use supabase_client_core::platform::{self, SpawnHandle};
+use supabase_client_core::AccessToken;
 use tokio::sync::{broadcast, oneshot, Mutex, Notify, RwLock};
 use tracing::{debug, info, trace, warn};
 
@@ -156,7 +157,8 @@ async fn forget_channel(inner: &RealtimeClientInner, channel: &RealtimeChannel) 
 /// Used for the first subscribe and for every rejoin after a reconnect, so
 /// both store the new `join_ref`, register the pending reply, rebuild the
 /// postgres_changes id map and move the channel to `Joined`. The join payload
-/// carries the latest access token set with [`RealtimeClient::set_auth`].
+/// carries the client's current access token (see
+/// [`RealtimeClientInner::managed_access_token`]).
 async fn join_channel(
     inner: &RealtimeClientInner,
     channel: &RealtimeChannel,
@@ -166,7 +168,7 @@ async fn join_channel(
 
     let join_payload = {
         let mut jp = channel.inner.join_payload.write().await;
-        if let Some(token) = inner.current_access_token() {
+        if let Some(token) = inner.managed_access_token() {
             jp.access_token = Some(token);
         }
         jp.clone()
@@ -306,6 +308,11 @@ struct RealtimeClientInner {
     shutdown_tx: broadcast::Sender<()>,
     /// User access token set with `set_auth`, used by new channels and rejoins.
     access_token: std::sync::RwLock<Option<String>>,
+    /// Shared session slot followed by clients created with
+    /// `SupabaseClient::realtime()` (see `RealtimeClient::with_session_token`).
+    session_token: std::sync::RwLock<Option<AccessToken>>,
+    /// Token last applied to the registered channels by `sync_access_token`.
+    synced_token: std::sync::Mutex<Option<String>>,
     /// Incremented for every established WebSocket connection; a heartbeat
     /// task exits when it no longer matches the generation it was started for.
     conn_gen: AtomicU64,
@@ -323,11 +330,34 @@ struct RealtimeClientInner {
 }
 
 impl RealtimeClientInner {
+    /// The user JWT to use: the one set with `set_auth`, otherwise the one in
+    /// the followed session slot.
     fn current_access_token(&self) -> Option<String> {
         self.access_token
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+            .or_else(|| self.session_slot().and_then(|slot| slot.get()))
+    }
+
+    fn session_slot(&self) -> Option<AccessToken> {
+        self.session_token
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// The token the client manages for its channels, if it manages one:
+    /// the user JWT when there is one; when following a session slot, the
+    /// API key after sign-out. `None` (no `set_auth`, no session slot) leaves
+    /// each channel's join token as it is.
+    fn managed_access_token(&self) -> Option<String> {
+        self.current_access_token()
+            .or_else(|| self.session_slot().map(|_| self.config.api_key.clone()))
+    }
+
+    fn synced_token(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+        self.synced_token.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     fn tasks(&self) -> std::sync::MutexGuard<'_, Tasks> {
@@ -382,6 +412,8 @@ impl RealtimeClient {
                 intentional_disconnect: AtomicBool::new(false),
                 shutdown_tx,
                 access_token: std::sync::RwLock::new(None),
+                session_token: std::sync::RwLock::new(None),
+                synced_token: std::sync::Mutex::new(None),
                 conn_gen: AtomicU64::new(0),
                 reader_gen: AtomicU64::new(0),
                 pending_heartbeat: std::sync::Mutex::new(None),
@@ -390,6 +422,22 @@ impl RealtimeClient {
                 connect_lock: Mutex::new(()),
             }),
         })
+    }
+
+    /// Follow a shared session token (see `SupabaseClient::access_token_handle`).
+    ///
+    /// New channels and rejoins use the JWT in the slot (unless
+    /// [`set_auth`](Self::set_auth) overrides it), and while connected the
+    /// client checks the slot on every heartbeat and pushes a changed token
+    /// (refresh, sign-in, or the API key after sign-out) to joined channels,
+    /// like supabase-js does. `client.realtime()` sets this up.
+    pub fn with_session_token(self, token: AccessToken) -> Self {
+        *self
+            .inner
+            .session_token
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(token);
+        self
     }
 
     /// Connect to the Supabase Realtime server via WebSocket.
@@ -473,7 +521,8 @@ impl RealtimeClient {
     /// Create a ChannelBuilder for the given name.
     ///
     /// The topic will be `"realtime:<name>"`. The channel joins with the
-    /// access token set by [`set_auth`](Self::set_auth), or the API key.
+    /// access token set by [`set_auth`](Self::set_auth) or found in the
+    /// followed session slot, otherwise the API key.
     pub fn channel(&self, name: &str) -> ChannelBuilder {
         let topic = format!("realtime:{}", name);
         let access_token = self
@@ -542,37 +591,56 @@ impl RealtimeClient {
             .access_token
             .write()
             .unwrap_or_else(|e| e.into_inner()) = Some(token.to_string());
-
-        let channels: Vec<RealtimeChannel> =
-            { self.inner.channels.read().await.values().cloned().collect() };
-
-        for channel in &channels {
-            channel.inner.join_payload.write().await.access_token = Some(token.to_string());
-            if !self.is_connected() {
-                continue;
-            }
-            let state = *channel.inner.state.read().await;
-            if state == ChannelState::Joined {
-                let join_ref = channel.inner.join_ref.read().await.clone();
-                if let Some(jr) = join_ref {
-                    let msg = protocol::build_access_token(
-                        channel.topic(),
-                        token,
-                        &jr,
-                        &self.inner.ref_counter,
-                    );
-                    send_message(&self.inner, msg).await?;
-                }
-            }
-        }
-
-        Ok(())
+        *self.inner.synced_token() = Some(token.to_string());
+        apply_access_token(&self.inner, token).await
     }
 
     /// Check if the client is currently connected.
     pub fn is_connected(&self) -> bool {
         self.inner.connected.load(Ordering::SeqCst)
     }
+}
+
+/// Put `token` in every registered channel's join payload and, if connected,
+/// push it to the server for each joined channel.
+async fn apply_access_token(inner: &RealtimeClientInner, token: &str) -> Result<(), RealtimeError> {
+    let channels: Vec<RealtimeChannel> =
+        { inner.channels.read().await.values().cloned().collect() };
+
+    for channel in &channels {
+        channel.inner.join_payload.write().await.access_token = Some(token.to_string());
+        if !inner.connected.load(Ordering::SeqCst) {
+            continue;
+        }
+        let state = *channel.inner.state.read().await;
+        if state == ChannelState::Joined {
+            let join_ref = channel.inner.join_ref.read().await.clone();
+            if let Some(jr) = join_ref {
+                let msg =
+                    protocol::build_access_token(channel.topic(), token, &jr, &inner.ref_counter);
+                send_message(inner, msg).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Apply the managed access token to the channels if it changed since the
+/// last call (token refresh, sign-in or sign-out in the followed session).
+/// Called on every heartbeat.
+async fn sync_access_token(inner: &RealtimeClientInner) -> Result<(), RealtimeError> {
+    let Some(token) = inner.managed_access_token() else {
+        return Ok(());
+    };
+    {
+        let mut synced = inner.synced_token();
+        if synced.as_deref() == Some(token.as_str()) {
+            return Ok(());
+        }
+        *synced = Some(token.clone());
+    }
+    debug!("Access token changed; updating realtime channels");
+    apply_access_token(inner, &token).await
 }
 
 // ── WebSocket URL Construction ────────────────────────────────────────────────
@@ -782,6 +850,9 @@ fn spawn_heartbeat(inner: Arc<RealtimeClientInner>, conn_gen: u64) -> SpawnHandl
                         continue;
                     }
                     trace!("Heartbeat sent");
+                    if let Err(e) = sync_access_token(&inner).await {
+                        warn!(error = %e, "Failed to push the refreshed access token");
+                    }
                 }
                 Either::Right(_) => {
                     debug!("Heartbeat task shutting down");
@@ -1208,6 +1279,61 @@ mod tests {
             client.channel("b").access_token.as_deref(),
             Some("user-jwt")
         );
+    }
+
+    #[test]
+    fn test_session_token_is_followed() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let slot = AccessToken::new();
+        let client = RealtimeClient::new("http://localhost:54321", "test-key")
+            .unwrap()
+            .with_session_token(slot.clone());
+
+        // Signed out: channels join with the API key, which the client now
+        // manages (so a stale JWT is replaced after sign-out).
+        assert_eq!(
+            client.channel("a").access_token.as_deref(),
+            Some("test-key")
+        );
+        assert_eq!(
+            client.inner.managed_access_token().as_deref(),
+            Some("test-key")
+        );
+
+        // Signed in: the session JWT.
+        slot.set("session-jwt");
+        assert_eq!(
+            client.channel("b").access_token.as_deref(),
+            Some("session-jwt")
+        );
+
+        // The heartbeat sync records the change once.
+        rt.block_on(sync_access_token(&client.inner)).unwrap();
+        assert_eq!(client.inner.synced_token().as_deref(), Some("session-jwt"));
+
+        // Refresh: picked up by the next sync.
+        slot.set("refreshed-jwt");
+        rt.block_on(sync_access_token(&client.inner)).unwrap();
+        assert_eq!(
+            client.inner.synced_token().as_deref(),
+            Some("refreshed-jwt")
+        );
+
+        // set_auth overrides the session.
+        rt.block_on(client.set_auth("explicit")).unwrap();
+        assert_eq!(
+            client.channel("c").access_token.as_deref(),
+            Some("explicit")
+        );
+
+        // Without a session slot and set_auth, the client manages nothing.
+        let plain = RealtimeClient::new("http://localhost:54321", "test-key").unwrap();
+        assert_eq!(plain.inner.managed_access_token(), None);
+        rt.block_on(sync_access_token(&plain.inner)).unwrap();
+        assert_eq!(*plain.inner.synced_token(), None);
     }
 
     #[test]

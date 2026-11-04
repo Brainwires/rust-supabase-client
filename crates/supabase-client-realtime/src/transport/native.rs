@@ -102,7 +102,8 @@ fn rustls_client_config() -> Result<rustls::ClientConfig, RealtimeError> {
     let provider = rustls::crypto::CryptoProvider::get_default()
         .cloned()
         .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
-    let tls_err = |e: rustls::Error| RealtimeError::InvalidConfig(format!("TLS configuration error: {}", e));
+    let tls_err =
+        |e: rustls::Error| RealtimeError::InvalidConfig(format!("TLS configuration error: {}", e));
     let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(tls_err)?

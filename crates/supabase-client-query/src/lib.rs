@@ -138,7 +138,10 @@ impl SupabaseClientQueryExt for SupabaseClient {
 /// Create a QueryBackend from a SupabaseClient.
 ///
 /// If the `direct-sql` feature is enabled and a pool is available, uses DirectSql.
-/// Otherwise, uses the REST backend (PostgREST).
+/// Otherwise, uses the REST backend (PostgREST), carrying the client's user
+/// access token (set by `client.auth()` on sign-in/refresh, or by
+/// [`SupabaseClient::set_access_token`]) as of when the builder is created.
+/// A builder's own `.access_token(jwt)` overrides it.
 fn make_backend(client: &SupabaseClient) -> QueryBackend {
     #[cfg(feature = "direct-sql")]
     {
@@ -151,7 +154,7 @@ fn make_backend(client: &SupabaseClient) -> QueryBackend {
         http: client.http().clone(),
         base_url: Arc::from(client.supabase_url()),
         api_key: Arc::from(client.api_key()),
-        access_token: None,
+        access_token: client.access_token().map(Arc::from),
         schema: client.schema().to_string(),
     }
 }
@@ -172,6 +175,16 @@ mod tests {
             pool: Default::default(),
         };
         SupabaseClient::new(config).unwrap()
+    }
+
+    #[test]
+    fn test_make_backend_uses_client_access_token() {
+        let client = make_client();
+        assert_eq!(make_backend(&client).access_token(), None);
+        client.set_access_token("user-jwt");
+        assert_eq!(make_backend(&client).access_token(), Some("user-jwt"));
+        client.clear_access_token();
+        assert_eq!(make_backend(&client).access_token(), None);
     }
 
     #[test]

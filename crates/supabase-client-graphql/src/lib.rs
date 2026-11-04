@@ -66,11 +66,15 @@ pub trait SupabaseClientGraphqlExt {
     /// Create a [`GraphqlClient`] from the client's configuration.
     ///
     /// Requires `supabase_url` and `supabase_key` to be set in the config.
+    /// The GraphQL client follows the client's access token
+    /// ([`SupabaseClient::access_token_handle`]), so after signing in with
+    /// `client.auth()` requests carry the user's JWT.
     fn graphql(&self) -> Result<GraphqlClient, GraphqlError>;
 }
 
 impl SupabaseClientGraphqlExt for SupabaseClient {
     fn graphql(&self) -> Result<GraphqlClient, GraphqlError> {
-        GraphqlClient::new(self.supabase_url(), self.api_key())
+        Ok(GraphqlClient::new(self.supabase_url(), self.api_key())?
+            .with_session_token(self.access_token_handle()))
     }
 }

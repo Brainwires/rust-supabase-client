@@ -52,12 +52,17 @@ pub trait SupabaseClientRealtimeExt {
     /// Create a [`RealtimeClient`] from the client's configuration.
     ///
     /// Requires `supabase_url` and `supabase_key` to be set in the config.
+    /// The realtime client follows the client's access token
+    /// ([`SupabaseClient::access_token_handle`]): channels join with the
+    /// signed-in user's JWT, and refreshed tokens are pushed on the next
+    /// heartbeat.
     fn realtime(&self) -> Result<RealtimeClient, RealtimeError>;
 }
 
 impl SupabaseClientRealtimeExt for SupabaseClient {
     fn realtime(&self) -> Result<RealtimeClient, RealtimeError> {
-        RealtimeClient::new(self.supabase_url(), self.api_key())
+        Ok(RealtimeClient::new(self.supabase_url(), self.api_key())?
+            .with_session_token(self.access_token_handle()))
     }
 }
 
