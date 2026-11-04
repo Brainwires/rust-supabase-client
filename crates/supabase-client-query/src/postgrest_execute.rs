@@ -13,26 +13,46 @@ pub(crate) fn header_value(name: &str, value: &str) -> Result<HeaderValue, Supab
         .map_err(|e| SupabaseError::Config(format!("Invalid {} header value: {}", name, e)))
 }
 
-/// Add the `apikey` / `Authorization` headers and, when the query does not
-/// override the schema and the default schema is not `public`, the
-/// `Accept-Profile` / `Content-Profile` header.
-fn apply_standard_headers(
+/// Add the `apikey` and `Authorization` headers.
+///
+/// `apikey` is always the project API key. `Authorization` carries the
+/// signed-in user's access token when one is set, so PostgREST evaluates RLS
+/// policies as that user; otherwise it falls back to the API key (the `anon`
+/// or `service_role` role).
+pub(crate) fn apply_auth_headers(
     headers: &mut HeaderMap,
     api_key: &str,
+    access_token: Option<&str>,
+) -> Result<(), SupabaseError> {
+    headers.insert("apikey", header_value("apikey", api_key)?);
+    let bearer = access_token.unwrap_or(api_key);
+    headers.insert(
+        "Authorization",
+        header_value("Authorization", &format!("Bearer {}", bearer))?,
+    );
+    Ok(())
+}
+
+/// Add the auth headers and, when the query does not override the schema and
+/// the default schema is not `public`, the schema profile header:
+/// `Accept-Profile` for GET/HEAD and `Content-Profile` for every other method
+/// (including RPC calls, which are POST).
+fn apply_standard_headers(
+    headers: &mut HeaderMap,
+    method: &reqwest::Method,
+    api_key: &str,
+    access_token: Option<&str>,
     schema: &str,
     parts: &SqlParts,
 ) -> Result<(), SupabaseError> {
-    headers.insert("apikey", header_value("apikey", api_key)?);
-    headers.insert(
-        "Authorization",
-        header_value("Authorization", &format!("Bearer {}", api_key))?,
-    );
+    apply_auth_headers(headers, api_key, access_token)?;
 
     // Set Accept-Profile / Content-Profile for schema if not already set
     if parts.schema_override.is_none() && schema != "public" {
-        let name = match parts.operation {
-            SqlOperation::Select => "Accept-Profile",
-            _ => "Content-Profile",
+        let name = if *method == reqwest::Method::GET || *method == reqwest::Method::HEAD {
+            "Accept-Profile"
+        } else {
+            "Content-Profile"
         };
         let value = header_value(name, schema)?;
         headers.entry(name).or_insert(value);
@@ -41,19 +61,47 @@ fn apply_standard_headers(
     Ok(())
 }
 
-/// Execute a PostgREST request and parse the response.
+/// Execute a PostgREST request authenticated with the API key only, and
+/// parse the response.
+///
+/// Prefer [`execute_rest_with_token`], which can send a user access token.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_rest<T: DeserializeOwned + Send>(
+    http: &reqwest::Client,
+    method: reqwest::Method,
+    url: &str,
+    headers: HeaderMap,
+    body: Option<JsonValue>,
+    api_key: &str,
+    schema: &str,
+    parts: &SqlParts,
+) -> SupabaseResponse<T> {
+    execute_rest_with_token(
+        http, method, url, headers, body, api_key, None, schema, parts,
+    )
+    .await
+}
+
+/// Execute a PostgREST request and parse the response.
+///
+/// `access_token`, when set, is sent as `Authorization: Bearer <token>`
+/// (with `apikey: <api_key>`), so the request runs as the signed-in user.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_rest_with_token<T: DeserializeOwned + Send>(
     http: &reqwest::Client,
     method: reqwest::Method,
     url: &str,
     mut headers: HeaderMap,
     body: Option<JsonValue>,
     api_key: &str,
+    access_token: Option<&str>,
     schema: &str,
     parts: &SqlParts,
 ) -> SupabaseResponse<T> {
     // Add standard auth + schema headers
-    if let Err(e) = apply_standard_headers(&mut headers, api_key, schema, parts) {
+    if let Err(e) =
+        apply_standard_headers(&mut headers, &method, api_key, access_token, schema, parts)
+    {
         return SupabaseResponse::error(e);
     }
 
@@ -85,7 +133,7 @@ pub async fn execute_rest<T: DeserializeOwned + Send>(
     // For HEAD method (head mode), we just need the count from Content-Range
     if method == reqwest::Method::HEAD || parts.head {
         let count = parse_count_from_headers(&resp_headers);
-        if status_code >= 200 && status_code < 300 {
+        if (200..300).contains(&status_code) {
             let mut resp = SupabaseResponse::<T>::ok(Vec::new());
             if let Some(c) = count {
                 resp.count = Some(c);

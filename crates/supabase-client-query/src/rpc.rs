@@ -81,8 +81,20 @@ impl RpcBuilder {
 
     /// Run the RPC call inside a transaction that is rolled back.
     /// Useful for testing or dry-run scenarios.
+    ///
+    /// With the REST backend this sends `Prefer: tx=rollback,handling=strict`,
+    /// so PostgREST rejects the call (instead of committing it) when the
+    /// server does not allow the transaction override. With the direct-SQL
+    /// backend the call runs inside `BEGIN` ... `ROLLBACK`.
     pub fn rollback(mut self) -> Self {
         self.rollback = true;
+        self
+    }
+
+    /// Run the call as a signed-in user. See
+    /// [`QueryBuilder::access_token`](crate::QueryBuilder::access_token).
+    pub fn access_token(mut self, access_token: &str) -> Self {
+        self.backend.set_access_token(Some(access_token.into()));
         self
     }
 
@@ -122,6 +134,7 @@ impl RpcBuilder {
             ref base_url,
             ref api_key,
             ref schema,
+            ref access_token,
         } = self.backend;
         let (url, headers, body) = crate::postgrest::build_postgrest_rpc(
             base_url,
@@ -130,13 +143,14 @@ impl RpcBuilder {
             self.rollback,
         );
         let parts = SqlParts::new(SqlOperation::Select, &self.schema, &self.function);
-        crate::postgrest_execute::execute_rest(
+        crate::postgrest_execute::execute_rest_with_token(
             http,
             reqwest::Method::POST,
             &url,
             headers,
             Some(body),
             api_key,
+            access_token.as_deref(),
             schema,
             &parts,
         )
@@ -155,6 +169,7 @@ impl RpcBuilder {
                 base_url,
                 api_key,
                 schema,
+                access_token,
             } => {
                 let (url, headers, body) = crate::postgrest::build_postgrest_rpc(
                     base_url,
@@ -163,13 +178,14 @@ impl RpcBuilder {
                     self.rollback,
                 );
                 let parts = SqlParts::new(SqlOperation::Select, &self.schema, &self.function);
-                crate::postgrest_execute::execute_rest(
+                crate::postgrest_execute::execute_rest_with_token(
                     http,
                     reqwest::Method::POST,
                     &url,
                     headers,
                     Some(body),
                     api_key,
+                    access_token.as_deref(),
                     schema,
                     &parts,
                 )
@@ -188,7 +204,19 @@ impl RpcBuilder {
                     Err(e) => return SupabaseResponse::error(e),
                 };
 
-                match sqlx::query_with(&sql, args).fetch_all(pool.as_ref()).await {
+                let query = sqlx::query_with(&sql, args);
+                let result = if self.rollback {
+                    match pool.begin().await {
+                        Ok(mut tx) => {
+                            let r = query.fetch_all(&mut *tx).await;
+                            rollback_tx(tx, r).await
+                        }
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    query.fetch_all(pool.as_ref()).await
+                };
+                match result {
                     Ok(rows) => {
                         use sqlx::{Column, Row as PgRowTrait};
                         let data: Vec<Row> = rows
@@ -304,8 +332,16 @@ where
     }
 
     /// Run the RPC call inside a transaction that is rolled back.
+    /// See [`RpcBuilder::rollback`].
     pub fn rollback(mut self) -> Self {
         self.rollback = true;
+        self
+    }
+
+    /// Run the call as a signed-in user. See
+    /// [`QueryBuilder::access_token`](crate::QueryBuilder::access_token).
+    pub fn access_token(mut self, access_token: &str) -> Self {
+        self.backend.set_access_token(Some(access_token.into()));
         self
     }
 
@@ -347,6 +383,7 @@ where
                 base_url,
                 api_key,
                 schema,
+                access_token,
             } => {
                 let (url, headers, body) = crate::postgrest::build_postgrest_rpc(
                     base_url,
@@ -355,13 +392,14 @@ where
                     self.rollback,
                 );
                 let parts = SqlParts::new(SqlOperation::Select, &self.schema, &self.function);
-                crate::postgrest_execute::execute_rest(
+                crate::postgrest_execute::execute_rest_with_token(
                     http,
                     reqwest::Method::POST,
                     &url,
                     headers,
                     Some(body),
                     api_key,
+                    access_token.as_deref(),
                     schema,
                     &parts,
                 )
@@ -381,10 +419,19 @@ where
                     Err(e) => return SupabaseResponse::error(e),
                 };
 
-                match sqlx::query_as_with::<_, Row, _>(&sql, args)
-                    .fetch_all(pool.as_ref())
-                    .await
-                {
+                let query = sqlx::query_as_with::<_, Row, _>(&sql, args);
+                let result = if self.rollback {
+                    match pool.begin().await {
+                        Ok(mut tx) => {
+                            let r = query.fetch_all(&mut *tx).await;
+                            rollback_tx(tx, r).await
+                        }
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    query.fetch_all(pool.as_ref()).await
+                };
+                match result {
                     Ok(rows) => {
                         let mut data = Vec::with_capacity(rows.len());
                         for row in rows {
@@ -406,6 +453,19 @@ where
             }
         }
     }
+}
+
+/// Roll back a `rollback()` RPC transaction, keeping the call's own error
+/// when there is one.
+#[cfg(feature = "direct-sql")]
+async fn rollback_tx<R>(
+    tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    result: Result<R, sqlx::Error>,
+) -> Result<R, sqlx::Error> {
+    let rolled_back = tx.rollback().await;
+    let value = result?;
+    rolled_back?;
+    Ok(value)
 }
 
 #[cfg(feature = "direct-sql")]

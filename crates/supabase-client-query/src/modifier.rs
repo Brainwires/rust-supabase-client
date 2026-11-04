@@ -1,5 +1,6 @@
 use crate::sql::{
-    validate_column_name, CountOption, NullsPosition, OrderClause, OrderDirection, SqlParts,
+    validate_column_name, CountOption, FilterCondition, NullsPosition, OrderClause, OrderDirection,
+    SqlParts,
 };
 
 /// Trait providing modifier methods (order, limit, range, single, count).
@@ -10,7 +11,11 @@ pub trait Modifiable: Sized {
     /// Order by a column.
     fn order(mut self, column: &str, direction: OrderDirection) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in order: {e}");
+            self.parts_mut()
+                .filters
+                .push(FilterCondition::Invalid(format!(
+                    "Invalid column name in order: {e}"
+                )));
             return self;
         }
         self.parts_mut().orders.push(OrderClause {
@@ -29,7 +34,11 @@ pub trait Modifiable: Sized {
         nulls: NullsPosition,
     ) -> Self {
         if let Err(e) = validate_column_name(column) {
-            tracing::error!("Invalid column name in order_with_nulls: {e}");
+            self.parts_mut()
+                .filters
+                .push(FilterCondition::Invalid(format!(
+                    "Invalid column name in order_with_nulls: {e}"
+                )));
             return self;
         }
         self.parts_mut().orders.push(OrderClause {
@@ -95,6 +104,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from("http://localhost"),
                 api_key: Arc::from("key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "test"),
@@ -147,19 +157,21 @@ mod tests {
     }
 
     #[test]
-    fn test_order_invalid_column_ignored() {
+    fn test_order_invalid_column_is_an_error() {
         let builder = make_select().order("bad;col", OrderDirection::Ascending);
         assert!(builder.parts.orders.is_empty());
+        assert!(builder.parts.check_valid().is_err());
     }
 
     #[test]
-    fn test_order_with_nulls_invalid_column_ignored() {
+    fn test_order_with_nulls_invalid_column_is_an_error() {
         let builder = make_select().order_with_nulls(
             "bad\"col",
             OrderDirection::Ascending,
             NullsPosition::First,
         );
         assert!(builder.parts.orders.is_empty());
+        assert!(builder.parts.check_valid().is_err());
     }
 
     #[test]

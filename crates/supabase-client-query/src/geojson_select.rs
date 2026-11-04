@@ -48,6 +48,7 @@ impl GeoJsonSelectBuilder {
                 base_url,
                 api_key,
                 schema,
+                access_token,
             } => {
                 let (url, mut headers) =
                     crate::postgrest::build_postgrest_select(base_url, &self.parts, &self.params)
@@ -57,12 +58,8 @@ impl GeoJsonSelectBuilder {
                 headers.insert("Accept", HeaderValue::from_static("application/geo+json"));
 
                 // Standard auth headers
-                use crate::postgrest_execute::header_value;
-                headers.insert("apikey", header_value("apikey", api_key)?);
-                headers.insert(
-                    "Authorization",
-                    header_value("Authorization", &format!("Bearer {}", api_key))?,
-                );
+                use crate::postgrest_execute::{apply_auth_headers, header_value};
+                apply_auth_headers(&mut headers, api_key, access_token.as_deref())?;
 
                 // Schema profile
                 if let Some(ref so) = self.parts.schema_override {
@@ -113,6 +110,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: "http://localhost".into(),
                 api_key: "key".into(),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "cities"),
@@ -129,6 +127,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: "http://127.0.0.1:1".into(),
                 api_key: "bad\nkey".into(),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "cities"),
@@ -147,6 +146,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: "http://localhost".into(),
                 api_key: "key".into(),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "cities"),
@@ -175,6 +175,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: "http://localhost".into(),
                 api_key: "key".into(),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "cities"),
@@ -218,6 +219,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: mock_server.uri().into(),
                 api_key: "test-key".into(),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "cities"),
@@ -248,6 +250,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: mock_server.uri().into(),
                 api_key: "test-key".into(),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "nonexistent"),
@@ -281,6 +284,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: mock_server.uri().into(),
                 api_key: "test-key".into(),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "cities"),

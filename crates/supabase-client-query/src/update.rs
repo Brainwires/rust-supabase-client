@@ -71,6 +71,53 @@ impl<T> UpdateBuilder<T> {
     }
 }
 
+impl<T> UpdateBuilder<T>
+where
+    T: DeserializeOwned + Send,
+{
+    /// Execute the UPDATE query.
+    pub async fn execute(self) -> SupabaseResponse<T> {
+        match &self.backend {
+            QueryBackend::Rest {
+                http,
+                base_url,
+                api_key,
+                schema,
+                access_token,
+            } => {
+                let (url, headers, body) = match crate::postgrest::build_postgrest_update(
+                    base_url,
+                    &self.parts,
+                    &self.params,
+                ) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return SupabaseResponse::error(
+                            supabase_client_core::SupabaseError::QueryBuilder(e),
+                        )
+                    }
+                };
+                crate::postgrest_execute::execute_rest_with_token(
+                    http,
+                    reqwest::Method::PATCH,
+                    &url,
+                    headers,
+                    Some(body),
+                    api_key,
+                    access_token.as_deref(),
+                    schema,
+                    &self.parts,
+                )
+                .await
+            }
+            #[cfg(feature = "direct-sql")]
+            QueryBackend::DirectSql { pool } => {
+                crate::execute::execute_typed::<T>(pool, &self.parts, &self.params).await
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,6 +139,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from("http://localhost"),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts,
@@ -163,6 +211,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts,
@@ -198,6 +247,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts,
@@ -237,6 +287,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts,
@@ -247,50 +298,5 @@ mod tests {
         let resp = builder.execute().await;
         assert!(resp.is_ok());
         assert!(resp.data.is_empty());
-    }
-}
-
-impl<T> UpdateBuilder<T>
-where
-    T: DeserializeOwned + Send,
-{
-    /// Execute the UPDATE query.
-    pub async fn execute(self) -> SupabaseResponse<T> {
-        match &self.backend {
-            QueryBackend::Rest {
-                http,
-                base_url,
-                api_key,
-                schema,
-            } => {
-                let (url, headers, body) = match crate::postgrest::build_postgrest_update(
-                    base_url,
-                    &self.parts,
-                    &self.params,
-                ) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        return SupabaseResponse::error(
-                            supabase_client_core::SupabaseError::QueryBuilder(e),
-                        )
-                    }
-                };
-                crate::postgrest_execute::execute_rest(
-                    http,
-                    reqwest::Method::PATCH,
-                    &url,
-                    headers,
-                    Some(body),
-                    api_key,
-                    schema,
-                    &self.parts,
-                )
-                .await
-            }
-            #[cfg(feature = "direct-sql")]
-            QueryBackend::DirectSql { pool } => {
-                crate::execute::execute_typed::<T>(pool, &self.parts, &self.params).await
-            }
-        }
     }
 }

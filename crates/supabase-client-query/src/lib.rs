@@ -63,9 +63,11 @@ use supabase_client_core::SupabaseClient;
 /// Extension trait adding query builder methods to SupabaseClient.
 pub trait SupabaseClientQueryExt {
     /// Start a dynamic (string-based) query on a table.
+    #[allow(clippy::wrong_self_convention)]
     fn from(&self, table: &str) -> QueryBuilder;
 
     /// Start a typed query on a table using the Table trait.
+    #[allow(clippy::wrong_self_convention)]
     fn from_typed<T: Table>(&self) -> TypedQueryBuilder<T>;
 
     /// Call a stored procedure/function with dynamic return.
@@ -149,6 +151,7 @@ fn make_backend(client: &SupabaseClient) -> QueryBackend {
         http: client.http().clone(),
         base_url: Arc::from(client.supabase_url()),
         api_key: Arc::from(client.api_key()),
+        access_token: None,
         schema: client.schema().to_string(),
     }
 }

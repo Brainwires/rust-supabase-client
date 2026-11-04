@@ -249,6 +249,24 @@ pub enum FilterCondition {
     Raw(String),
     /// Match multiple column=value conditions (AND)
     Match { conditions: Vec<(String, usize)> },
+    /// A filter or modifier that failed validation (for example an invalid
+    /// column name). It is kept in the filter list so that building the query
+    /// fails with this message instead of silently running without the
+    /// filter, which for UPDATE/DELETE would hit the whole table.
+    Invalid(String),
+}
+
+impl FilterCondition {
+    /// Return the message of the first [`FilterCondition::Invalid`] in this
+    /// condition tree, if any.
+    pub fn first_invalid(&self) -> Option<&str> {
+        match self {
+            Self::Invalid(msg) => Some(msg),
+            Self::Not(inner) => inner.first_invalid(),
+            Self::Or(conds) | Self::And(conds) => conds.iter().find_map(|c| c.first_invalid()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -526,6 +544,24 @@ impl SqlParts {
         }
     }
 
+    /// The message of the first validation error recorded by a filter or
+    /// modifier, if any.
+    pub fn first_invalid(&self) -> Option<&str> {
+        self.filters.iter().find_map(|f| f.first_invalid())
+    }
+
+    /// Fail if any filter or modifier recorded a validation error.
+    ///
+    /// Every query builder (PostgREST and direct SQL) calls this before
+    /// generating a request, so a rejected filter is reported by `execute()`
+    /// rather than dropped.
+    pub fn check_valid(&self) -> Result<(), supabase_client_core::SupabaseError> {
+        match self.first_invalid() {
+            Some(msg) => Err(supabase_client_core::SupabaseError::query_builder(msg)),
+            None => Ok(()),
+        }
+    }
+
     /// Get the fully-qualified table name, using schema_override if set.
     pub fn qualified_table(&self) -> String {
         let schema = self.schema_override.as_deref().unwrap_or(&self.schema);
@@ -548,6 +584,45 @@ pub fn validate_column_name(name: &str) -> Result<(), supabase_client_core::Supa
     Ok(())
 }
 
+/// Quote an SQL identifier, doubling any embedded double quotes.
+pub fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// Whether `name` is a plain, unquoted SQL identifier
+/// (`[A-Za-z_][A-Za-z0-9_$]*`).
+pub fn is_plain_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+}
+
+/// Validate a full-text search configuration name (`english`,
+/// `pg_catalog.english`). Only plain identifiers, optionally schema-qualified,
+/// are accepted.
+pub fn validate_text_search_config(
+    config: &str,
+) -> Result<(), supabase_client_core::SupabaseError> {
+    let mut parts = config.split('.');
+    let valid = match (parts.next(), parts.next(), parts.next()) {
+        (Some(name), None, None) => is_plain_identifier(name),
+        (Some(schema), Some(name), None) => {
+            is_plain_identifier(schema) && is_plain_identifier(name)
+        }
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(supabase_client_core::SupabaseError::query_builder(format!(
+            "Invalid text search config: {config:?} (expected an identifier such as \"english\")"
+        )))
+    }
+}
+
 /// Validate a table or schema name.
 pub fn validate_identifier(
     name: &str,
@@ -567,6 +642,7 @@ pub fn validate_identifier(
 }
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
     use chrono::{NaiveDate, NaiveTime, Utc};

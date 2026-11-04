@@ -92,6 +92,7 @@ where
                 base_url,
                 api_key,
                 schema,
+                access_token,
             } => {
                 let method = if self.parts.head {
                     reqwest::Method::HEAD
@@ -110,13 +111,14 @@ where
                         )
                     }
                 };
-                crate::postgrest_execute::execute_rest(
+                crate::postgrest_execute::execute_rest_with_token(
                     http,
                     method,
                     &url,
                     headers,
                     None,
                     api_key,
+                    access_token.as_deref(),
                     schema,
                     &self.parts,
                 )
@@ -147,6 +149,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from("http://localhost"),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "users"),
@@ -228,6 +231,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "users"),
@@ -256,6 +260,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "users"),
@@ -285,6 +290,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "nonexistent"),
@@ -322,6 +328,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: {

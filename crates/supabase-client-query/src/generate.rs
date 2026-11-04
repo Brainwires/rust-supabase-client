@@ -1,11 +1,13 @@
 use crate::sql::{
-    validate_column_name, validate_identifier, CountOption, FilterCondition, SqlOperation, SqlParts,
+    is_plain_identifier, quote_ident, validate_column_name, validate_identifier,
+    validate_text_search_config, CountOption, FilterCondition, SqlOperation, SqlParts,
 };
 use supabase_client_core::SupabaseError;
 
 impl SqlParts {
     /// Build the complete SQL query string.
     pub fn build_sql(&self) -> Result<String, SupabaseError> {
+        self.check_valid()?;
         validate_identifier(&self.schema, "Schema")?;
         validate_identifier(&self.table, "Table")?;
         if let Some(ref s) = self.schema_override {
@@ -30,13 +32,14 @@ impl SqlParts {
             self.append_where_clause(&mut s)?;
             return self.maybe_wrap_explain(s);
         } else if self.count == CountOption::Exact {
-            let cols = self.select_columns.as_deref().unwrap_or("*");
+            let cols = render_column_list(self.select_columns.as_deref(), "select")?;
             format!(
-                "SELECT {cols}, COUNT(*) OVER() AS \"__count\" FROM {}",
+                "SELECT {cols}, COUNT(*) OVER() AS \"{}\" FROM {}",
+                crate::execute::COUNT_COLUMN,
                 table
             )
         } else {
-            let cols = self.select_columns.as_deref().unwrap_or("*");
+            let cols = render_column_list(self.select_columns.as_deref(), "select")?;
             format!("SELECT {cols} FROM {}", table)
         };
 
@@ -87,7 +90,7 @@ impl SqlParts {
             value_groups.join(", ")
         );
 
-        self.append_returning(&mut sql);
+        self.append_returning(&mut sql)?;
         Ok(sql)
     }
 
@@ -109,7 +112,7 @@ impl SqlParts {
         let mut sql = format!("UPDATE {} SET {}", table, set_parts.join(", "));
 
         self.append_where_clause(&mut sql)?;
-        self.append_returning(&mut sql);
+        self.append_returning(&mut sql)?;
         Ok(sql)
     }
 
@@ -117,7 +120,7 @@ impl SqlParts {
         let table = self.qualified_table();
         let mut sql = format!("DELETE FROM {}", table);
         self.append_where_clause(&mut sql)?;
-        self.append_returning(&mut sql);
+        self.append_returning(&mut sql)?;
         Ok(sql)
     }
 
@@ -162,13 +165,20 @@ impl SqlParts {
 
         // ON CONFLICT clause
         if let Some(ref constraint) = self.conflict_constraint {
-            sql.push_str(&format!(" ON CONFLICT ON CONSTRAINT \"{}\"", constraint));
+            validate_identifier(constraint, "Constraint")?;
+            sql.push_str(&format!(
+                " ON CONFLICT ON CONSTRAINT {}",
+                quote_ident(constraint)
+            ));
         } else if !self.conflict_columns.is_empty() {
-            let conflict_cols: Vec<String> = self
+            let conflict_cols = self
                 .conflict_columns
                 .iter()
-                .map(|c| format!("\"{}\"", c))
-                .collect();
+                .map(|c| {
+                    validate_column_name(c)?;
+                    Ok(quote_ident(c))
+                })
+                .collect::<Result<Vec<_>, SupabaseError>>()?;
             sql.push_str(&format!(" ON CONFLICT ({})", conflict_cols.join(", ")));
         } else {
             // Default: use primary key columns if we have them, otherwise just use all columns
@@ -194,7 +204,7 @@ impl SqlParts {
             }
         }
 
-        self.append_returning(&mut sql);
+        self.append_returning(&mut sql)?;
         Ok(sql)
     }
 
@@ -206,7 +216,7 @@ impl SqlParts {
         let conditions: Vec<String> = self
             .filters
             .iter()
-            .map(|f| build_filter_sql(f))
+            .map(build_filter_sql)
             .collect::<Result<Vec<_>, _>>()?;
 
         sql.push_str(" WHERE ");
@@ -247,10 +257,12 @@ impl SqlParts {
         }
     }
 
-    fn append_returning(&self, sql: &mut String) {
+    fn append_returning(&self, sql: &mut String) -> Result<(), SupabaseError> {
         if let Some(ref returning) = self.returning {
-            sql.push_str(&format!(" RETURNING {}", returning));
+            let cols = render_column_list(Some(returning), "returning")?;
+            sql.push_str(&format!(" RETURNING {}", cols));
         }
+        Ok(())
     }
 
     fn maybe_wrap_explain(&self, sql: String) -> Result<String, SupabaseError> {
@@ -269,6 +281,44 @@ impl SqlParts {
             None => Ok(sql),
         }
     }
+}
+
+/// Render a select / returning column list for direct SQL.
+///
+/// `None`, `""` and `"*"` mean all columns. Otherwise every comma-separated
+/// item must be `*`, a plain identifier, or a double-quoted identifier
+/// without embedded quotes (what the query builders produce). Expressions,
+/// aliases, casts and PostgREST embedded resources are rejected: they would
+/// be pasted into the SQL verbatim.
+fn render_column_list(list: Option<&str>, kind: &str) -> Result<String, SupabaseError> {
+    let list = match list.map(str::trim) {
+        None | Some("") | Some("*") => return Ok("*".to_string()),
+        Some(l) => l,
+    };
+    let cols = list
+        .split(',')
+        .map(|item| {
+            let item = item.trim();
+            if item == "*" {
+                return Ok("*".to_string());
+            }
+            if let Some(inner) = item
+                .strip_prefix('"')
+                .and_then(|rest| rest.strip_suffix('"'))
+            {
+                if !inner.is_empty() && !inner.contains('"') {
+                    return Ok(quote_ident(inner));
+                }
+            } else if is_plain_identifier(item) {
+                return Ok(quote_ident(item));
+            }
+            Err(SupabaseError::query_builder(format!(
+                "Unsupported {kind} column {item:?} for direct SQL: only `*` and plain \
+                 column names are allowed"
+            )))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(cols.join(", "))
 }
 
 /// Build SQL for a single filter condition.
@@ -326,7 +376,10 @@ fn build_filter_sql(condition: &FilterCondition) -> Result<String, SupabaseError
             validate_column_name(column)?;
             let func = search_type.function_name();
             let ts_query = if let Some(cfg) = config {
-                format!("{}('{}', ${})", func, cfg, query_param_index)
+                // Only plain (optionally schema-qualified) identifiers pass
+                // validation, so the literal cannot contain a quote.
+                validate_text_search_config(cfg)?;
+                format!("{}('{}'::regconfig, ${})", func, cfg, query_param_index)
             } else {
                 format!("{}(${})", func, query_param_index)
             };
@@ -355,7 +408,7 @@ fn build_filter_sql(condition: &FilterCondition) -> Result<String, SupabaseError
             }
             let parts: Vec<String> = conditions
                 .iter()
-                .map(|c| build_filter_sql(c))
+                .map(build_filter_sql)
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(format!("({})", parts.join(" OR ")))
         }
@@ -365,11 +418,12 @@ fn build_filter_sql(condition: &FilterCondition) -> Result<String, SupabaseError
             }
             let parts: Vec<String> = conditions
                 .iter()
-                .map(|c| build_filter_sql(c))
+                .map(build_filter_sql)
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(format!("({})", parts.join(" AND ")))
         }
         FilterCondition::Raw(sql) => Ok(sql.clone()),
+        FilterCondition::Invalid(msg) => Err(SupabaseError::query_builder(msg.clone())),
         FilterCondition::Match { conditions } => {
             let parts: Vec<String> = conditions
                 .iter()
@@ -584,7 +638,7 @@ mod tests {
         let sql = parts.build_sql().unwrap();
         assert_eq!(
             sql,
-            "SELECT * FROM \"public\".\"cities\" WHERE \"fts\" @@ plainto_tsquery('english', $1)"
+            "SELECT * FROM \"public\".\"cities\" WHERE \"fts\" @@ plainto_tsquery('english'::regconfig, $1)"
         );
     }
 

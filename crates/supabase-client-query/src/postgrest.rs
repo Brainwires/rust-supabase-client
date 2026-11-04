@@ -46,12 +46,49 @@ fn header_value(name: &str, value: &str) -> Result<HeaderValue, String> {
     HeaderValue::from_str(value).map_err(|e| format!("Invalid {} header value: {}", name, e))
 }
 
+/// Refuse to build a request when a filter or modifier failed validation,
+/// so the request is never sent without that filter.
+fn check_valid(parts: &SqlParts) -> Result<(), String> {
+    match parts.first_invalid() {
+        Some(msg) => Err(msg.to_string()),
+        None => Ok(()),
+    }
+}
+
+/// Compute the `Range` header value for an offset/limit pair.
+///
+/// Returns `None` when no header should be sent: no offset/limit, or a limit
+/// of zero (an inclusive range cannot express "no rows"; the `limit=0` query
+/// parameter already does). Negative values and ranges that overflow `i64`
+/// are errors.
+fn range_header(offset: Option<i64>, limit: Option<i64>) -> Result<Option<String>, String> {
+    if offset.is_none() && limit.is_none() {
+        return Ok(None);
+    }
+    let from = offset.unwrap_or(0);
+    if from < 0 {
+        return Err(format!("Invalid range: offset {from} is negative"));
+    }
+    match limit {
+        None => Ok(Some(format!("{from}-"))),
+        Some(l) if l < 0 => Err(format!("Invalid range: limit {l} is negative")),
+        Some(0) => Ok(None),
+        Some(l) => {
+            let to = from
+                .checked_add(l - 1)
+                .ok_or_else(|| format!("Invalid range: offset {from} + limit {l} overflows"))?;
+            Ok(Some(format!("{from}-{to}")))
+        }
+    }
+}
+
 /// Build PostgREST URL and headers for a SELECT query.
 pub fn build_postgrest_select(
     base_url: &str,
     parts: &SqlParts,
     params: &ParamStore,
 ) -> Result<(String, HeaderMap), String> {
+    check_valid(parts)?;
     let table = &parts.table;
     let mut url = format!(
         "{}/rest/v1/{}",
@@ -107,13 +144,8 @@ pub fn build_postgrest_select(
     }
 
     // Range header
-    if parts.limit.is_some() || parts.offset.is_some() {
-        let from = parts.offset.unwrap_or(0);
-        let to = match parts.limit {
-            Some(limit) => from + limit - 1,
-            None => i64::MAX,
-        };
-        headers.insert("Range", header_value("Range", &format!("{}-{}", from, to))?);
+    if let Some(range) = range_header(parts.offset, parts.limit)? {
+        headers.insert("Range", header_value("Range", &range)?);
         headers.insert("Range-Unit", HeaderValue::from_static("items"));
     }
 
@@ -164,6 +196,7 @@ pub fn build_postgrest_insert(
     parts: &SqlParts,
     params: &ParamStore,
 ) -> Result<(String, HeaderMap, JsonValue), String> {
+    check_valid(parts)?;
     let table = &parts.table;
     let url = format!(
         "{}/rest/v1/{}",
@@ -205,6 +238,7 @@ pub fn build_postgrest_update(
     parts: &SqlParts,
     params: &ParamStore,
 ) -> Result<(String, HeaderMap, JsonValue), String> {
+    check_valid(parts)?;
     let table = &parts.table;
     let mut url = format!(
         "{}/rest/v1/{}",
@@ -255,6 +289,7 @@ pub fn build_postgrest_delete(
     parts: &SqlParts,
     params: &ParamStore,
 ) -> Result<(String, HeaderMap), String> {
+    check_valid(parts)?;
     let table = &parts.table;
     let mut url = format!(
         "{}/rest/v1/{}",
@@ -300,6 +335,7 @@ pub fn build_postgrest_upsert(
     parts: &SqlParts,
     params: &ParamStore,
 ) -> Result<(String, HeaderMap, JsonValue), String> {
+    check_valid(parts)?;
     let table = &parts.table;
     let mut url = format!(
         "{}/rest/v1/{}",
@@ -375,7 +411,13 @@ pub fn build_postgrest_rpc(
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
 
     if rollback {
-        headers.insert("Prefer", HeaderValue::from_static("tx=rollback"));
+        // handling=strict makes PostgREST reject the request when it is not
+        // allowed to honour tx=rollback (db-tx-end not set to *-allow-override)
+        // instead of silently committing.
+        headers.insert(
+            "Prefer",
+            HeaderValue::from_static("tx=rollback,handling=strict"),
+        );
     }
 
     let body = if args.is_null() {
@@ -424,7 +466,7 @@ pub fn render_param_value(param: &SqlParam) -> String {
         SqlParam::TextArray(arr) => format!(
             "{{{}}}",
             arr.iter()
-                .map(|s| format!("\"{}\"", s))
+                .map(|s| backslash_quote(s))
                 .collect::<Vec<_>>()
                 .join(",")
         ),
@@ -481,6 +523,22 @@ fn param_to_json(param: &SqlParam) -> JsonValue {
     }
 }
 
+/// Wrap `s` in double quotes, backslash-escaping `\` and `"`. Used for
+/// Postgres array literal elements and PostgREST list values, so a value
+/// cannot close the quotes and add more elements.
+fn backslash_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        if c == '"' || c == '\\' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
@@ -514,16 +572,19 @@ fn quote_list_value(value: &str) -> String {
     if !value.is_empty() && !value.contains(NEEDS_QUOTING) {
         return value.to_string();
     }
-    let mut quoted = String::with_capacity(value.len() + 2);
-    quoted.push('"');
-    for c in value.chars() {
-        if c == '"' || c == '\\' {
-            quoted.push('\\');
-        }
-        quoted.push(c);
+    backslash_quote(value)
+}
+
+/// Render a column name for the given context and percent-encode it.
+///
+/// Inside `or=(...)` / `and=(...)` a column name containing list syntax
+/// (`,` `.` `:` `(` `)` `"` `\\`) is double-quoted so it cannot split the
+/// logic tree into extra conditions.
+fn render_column(column: &str, ctx: FilterContext) -> String {
+    match ctx {
+        FilterContext::TopLevel => encode_value(column),
+        FilterContext::List => encode_value(&quote_list_value(column)),
     }
-    quoted.push('"');
-    quoted
 }
 
 /// Whether a rendered filter key is a logic-tree operator (`or` / `and`,
@@ -584,7 +645,7 @@ fn render_filter(
                 .get(*param_index - 1)
                 .ok_or_else(|| format!("Missing param at index {}", param_index))?;
             let val = render_value(param, ctx);
-            output.push((encode_value(column), format!("{}.{}", op, val)));
+            output.push((render_column(column, ctx), format!("{}.{}", op, val)));
         }
         FilterCondition::Is { column, value } => {
             let rhs = match value {
@@ -593,7 +654,7 @@ fn render_filter(
                 IsValue::True => "is.true",
                 IsValue::False => "is.false",
             };
-            output.push((encode_value(column), rhs.to_string()));
+            output.push((render_column(column, ctx), rhs.to_string()));
         }
         FilterCondition::In {
             column,
@@ -609,7 +670,7 @@ fn render_filter(
                 })
                 .collect();
             let val_list = vals?.join(",");
-            output.push((encode_value(column), format!("in.({})", val_list)));
+            output.push((render_column(column, ctx), format!("in.({})", val_list)));
         }
         FilterCondition::Pattern {
             column,
@@ -624,7 +685,7 @@ fn render_filter(
                 .get(*param_index - 1)
                 .ok_or_else(|| format!("Missing param at index {}", param_index))?;
             let val = render_value(param, ctx);
-            output.push((encode_value(column), format!("{}.{}", op, val)));
+            output.push((render_column(column, ctx), format!("{}.{}", op, val)));
         }
         FilterCondition::TextSearch {
             column,
@@ -643,11 +704,11 @@ fn render_filter(
             let val = render_value(param, ctx);
             if let Some(cfg) = config {
                 output.push((
-                    encode_value(column),
+                    render_column(column, ctx),
                     format!("{}({}).{}", op, encode_value(cfg), val),
                 ));
             } else {
-                output.push((encode_value(column), format!("{}.{}", op, val)));
+                output.push((render_column(column, ctx), format!("{}.{}", op, val)));
             }
         }
         FilterCondition::ArrayRange {
@@ -669,7 +730,7 @@ fn render_filter(
                 .get(*param_index - 1)
                 .ok_or_else(|| format!("Missing param at index {}", param_index))?;
             let val = render_value(param, ctx);
-            output.push((encode_value(column), format!("{}.{}", op, val)));
+            output.push((render_column(column, ctx), format!("{}.{}", op, val)));
         }
         FilterCondition::Not(inner) => {
             // Render inner, then prefix with not.
@@ -691,6 +752,7 @@ fn render_filter(
         FilterCondition::And(conditions) => {
             output.push(("and".to_string(), render_logic_tree(conditions, params)?));
         }
+        FilterCondition::Invalid(msg) => return Err(msg.clone()),
         FilterCondition::Raw(sql) => {
             // Raw SQL cannot be directly translated to PostgREST
             return Err(format!(
@@ -704,7 +766,7 @@ fn render_filter(
                     .get(*idx - 1)
                     .ok_or_else(|| format!("Missing param at index {}", idx))?;
                 let val = render_value(param, ctx);
-                output.push((encode_value(col), format!("eq.{}", val)));
+                output.push((render_column(col, ctx), format!("eq.{}", val)));
             }
         }
     }
@@ -785,6 +847,7 @@ fn build_explain_accept(opts: &ExplainOptions) -> HeaderValue {
 }
 
 #[cfg(test)]
+#[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
     use crate::sql::*;
@@ -1224,7 +1287,10 @@ mod tests {
         let args = serde_json::json!({"name": "Auckland"});
         let (_, headers, _) =
             build_postgrest_rpc("http://localhost:64321", "get_city", &args, true);
-        assert_eq!(headers.get("Prefer").unwrap(), "tx=rollback");
+        assert_eq!(
+            headers.get("Prefer").unwrap(),
+            "tx=rollback,handling=strict"
+        );
     }
 
     #[test]
@@ -1822,5 +1888,132 @@ mod tests {
         assert_eq!(quote_list_value("say \"hi\""), "\"say \\\"hi\\\"\"");
         assert_eq!(quote_list_value("back\\slash"), "\"back\\\\slash\"");
         assert_eq!(quote_list_value(""), "\"\"");
+    }
+
+    // ─── Regression tests (security audit) ──────────────────
+
+    fn decoded(url: &str) -> String {
+        percent_encoding::percent_decode_str(url)
+            .decode_utf8_lossy()
+            .to_string()
+    }
+
+    #[test]
+    fn test_text_array_elements_are_escaped() {
+        // Audit Q1: `a","admin` used to become two elements.
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "posts");
+        parts.filters.push(FilterCondition::ArrayRange {
+            column: "tags".into(),
+            operator: ArrayRangeOperator::Contains,
+            param_index: 1,
+        });
+        let params = make_params(vec![SqlParam::TextArray(vec![
+            "a\",\"admin".into(),
+            "back\\slash".into(),
+        ])]);
+        let (url, _) = build_postgrest_select("http://x", &parts, &params).unwrap();
+        assert!(
+            decoded(&url).ends_with(r#"tags=cs.{"a\",\"admin","back\\slash"}"#),
+            "{}",
+            decoded(&url)
+        );
+    }
+
+    #[test]
+    fn test_invalid_filter_fails_every_builder() {
+        // Audit Q2 / H1: an invalid filter must never be dropped.
+        let params = make_params(vec![SqlParam::I32(1)]);
+        for op in [
+            SqlOperation::Select,
+            SqlOperation::Update,
+            SqlOperation::Delete,
+            SqlOperation::Insert,
+            SqlOperation::Upsert,
+        ] {
+            let mut parts = SqlParts::new(op, "public", "orders");
+            parts.set_clauses.push(("status".into(), 1));
+            parts
+                .filters
+                .push(FilterCondition::Invalid("bad column".into()));
+            let err = match op {
+                SqlOperation::Select => build_postgrest_select("http://x", &parts, &params).err(),
+                SqlOperation::Update => build_postgrest_update("http://x", &parts, &params).err(),
+                SqlOperation::Delete => build_postgrest_delete("http://x", &parts, &params).err(),
+                SqlOperation::Insert => build_postgrest_insert("http://x", &parts, &params).err(),
+                SqlOperation::Upsert => build_postgrest_upsert("http://x", &parts, &params).err(),
+            };
+            assert_eq!(err.as_deref(), Some("bad column"), "{op:?}");
+        }
+    }
+
+    #[test]
+    fn test_invalid_filter_nested_in_or_fails() {
+        let mut parts = SqlParts::new(SqlOperation::Delete, "public", "orders");
+        parts
+            .filters
+            .push(FilterCondition::Or(vec![FilterCondition::Invalid(
+                "bad column".into(),
+            )]));
+        assert!(build_postgrest_delete("http://x", &parts, &ParamStore::new()).is_err());
+    }
+
+    #[test]
+    fn test_range_header_limit_zero_is_omitted() {
+        // Audit Q5: limit(0) used to send `Range: 0--1`.
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "t");
+        parts.limit = Some(0);
+        let (url, h) = build_postgrest_select("http://x", &parts, &ParamStore::new()).unwrap();
+        assert!(url.contains("limit=0"));
+        assert!(h.get("Range").is_none());
+    }
+
+    #[test]
+    fn test_range_header_overflow_is_an_error() {
+        // Audit Q5b: offset i64::MAX + limit used to overflow (panic in debug).
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "t");
+        parts.offset = Some(i64::MAX);
+        parts.limit = Some(2);
+        assert!(build_postgrest_select("http://x", &parts, &ParamStore::new()).is_err());
+    }
+
+    #[test]
+    fn test_range_header_negative_values_are_errors() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "t");
+        parts.limit = Some(-1);
+        assert!(build_postgrest_select("http://x", &parts, &ParamStore::new()).is_err());
+        parts.limit = None;
+        parts.offset = Some(-5);
+        assert!(build_postgrest_select("http://x", &parts, &ParamStore::new()).is_err());
+    }
+
+    #[test]
+    fn test_range_header_offset_only_is_open_ended() {
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "t");
+        parts.offset = Some(i64::MAX);
+        let (_, h) = build_postgrest_select("http://x", &parts, &ParamStore::new()).unwrap();
+        assert_eq!(h.get("Range").unwrap(), &format!("{}-", i64::MAX));
+    }
+
+    #[test]
+    fn test_or_tree_column_names_are_quoted() {
+        // A column name containing list syntax must not split the or=() tree.
+        let mut parts = SqlParts::new(SqlOperation::Select, "public", "t");
+        parts.filters.push(FilterCondition::Or(vec![
+            FilterCondition::Comparison {
+                column: "a,b.eq.1,c".into(),
+                operator: FilterOperator::Eq,
+                param_index: 1,
+            },
+            FilterCondition::Is {
+                column: "plain".into(),
+                value: IsValue::Null,
+            },
+        ]));
+        let params = make_params(vec![SqlParam::I32(2)]);
+        let (url, _) = build_postgrest_select("http://x", &parts, &params).unwrap();
+        assert_eq!(
+            decoded(&url),
+            r#"http://x/rest/v1/t?or=("a,b.eq.1,c".eq.2,plain.is.null)"#
+        );
     }
 }
