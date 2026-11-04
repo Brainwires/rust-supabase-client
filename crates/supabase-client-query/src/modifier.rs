@@ -1,4 +1,6 @@
-use crate::sql::{CountOption, NullsPosition, OrderClause, OrderDirection, SqlParts, validate_column_name};
+use crate::sql::{
+    validate_column_name, CountOption, NullsPosition, OrderClause, OrderDirection, SqlParts,
+};
 
 /// Trait providing modifier methods (order, limit, range, single, count).
 pub trait Modifiable: Sized {
@@ -115,7 +117,10 @@ mod tests {
         let builder = make_select().order("created_at", OrderDirection::Descending);
         assert_eq!(builder.parts.orders.len(), 1);
         assert_eq!(builder.parts.orders[0].column, "created_at");
-        assert_eq!(builder.parts.orders[0].direction, OrderDirection::Descending);
+        assert_eq!(
+            builder.parts.orders[0].direction,
+            OrderDirection::Descending
+        );
     }
 
     #[test]
@@ -127,17 +132,17 @@ mod tests {
         );
         assert_eq!(builder.parts.orders.len(), 1);
         assert_eq!(builder.parts.orders[0].column, "score");
-        assert_eq!(builder.parts.orders[0].direction, OrderDirection::Descending);
+        assert_eq!(
+            builder.parts.orders[0].direction,
+            OrderDirection::Descending
+        );
         assert_eq!(builder.parts.orders[0].nulls, Some(NullsPosition::First));
     }
 
     #[test]
     fn test_order_with_nulls_last() {
-        let builder = make_select().order_with_nulls(
-            "score",
-            OrderDirection::Ascending,
-            NullsPosition::Last,
-        );
+        let builder =
+            make_select().order_with_nulls("score", OrderDirection::Ascending, NullsPosition::Last);
         assert_eq!(builder.parts.orders[0].nulls, Some(NullsPosition::Last));
     }
 

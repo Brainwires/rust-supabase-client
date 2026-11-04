@@ -42,11 +42,15 @@ impl CsvSelectBuilder {
     /// Execute the SELECT query and return the response as a CSV string.
     pub async fn execute(self) -> Result<String, SupabaseError> {
         match &self.backend {
-            QueryBackend::Rest { http, base_url, api_key, schema } => {
-                let (url, mut headers) = crate::postgrest::build_postgrest_select(
-                    base_url, &self.parts, &self.params,
-                )
-                .map_err(SupabaseError::QueryBuilder)?;
+            QueryBackend::Rest {
+                http,
+                base_url,
+                api_key,
+                schema,
+            } => {
+                let (url, mut headers) =
+                    crate::postgrest::build_postgrest_select(base_url, &self.parts, &self.params)
+                        .map_err(SupabaseError::QueryBuilder)?;
 
                 // Override Accept to text/csv
                 headers.insert("Accept", HeaderValue::from_static("text/csv"));
@@ -87,11 +91,9 @@ impl CsvSelectBuilder {
                 Ok(body)
             }
             #[cfg(feature = "direct-sql")]
-            QueryBackend::DirectSql { .. } => {
-                Err(SupabaseError::query_builder(
-                    "CSV output is only supported with the REST (PostgREST) backend",
-                ))
-            }
+            QueryBackend::DirectSql { .. } => Err(SupabaseError::query_builder(
+                "CSV output is only supported with the REST (PostgREST) backend",
+            )),
         }
     }
 }
@@ -99,7 +101,7 @@ impl CsvSelectBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sql::{SqlOperation, SqlParts, ParamStore};
+    use crate::sql::{ParamStore, SqlOperation, SqlParts};
 
     #[test]
     fn test_csv_builder_modifiable() {
@@ -155,9 +157,9 @@ mod tests {
     fn test_csv_accept_header() {
         let parts = SqlParts::new(SqlOperation::Select, "public", "cities");
         let params = ParamStore::new();
-        let (_, mut headers) = crate::postgrest::build_postgrest_select(
-            "http://localhost:64321", &parts, &params,
-        ).unwrap();
+        let (_, mut headers) =
+            crate::postgrest::build_postgrest_select("http://localhost:64321", &parts, &params)
+                .unwrap();
         // Simulate what CsvSelectBuilder does
         headers.insert("Accept", HeaderValue::from_static("text/csv"));
         assert_eq!(headers.get("Accept").unwrap(), "text/csv");
@@ -190,10 +192,7 @@ mod tests {
         let csv_body = "id,name\n1,Alice\n2,Bob\n";
         Mock::given(method("GET"))
             .and(path("/rest/v1/users"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(csv_body),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_string(csv_body))
             .mount(&mock_server)
             .await;
 
@@ -224,10 +223,7 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/rest/v1/nonexistent"))
-            .respond_with(
-                ResponseTemplate::new(404)
-                    .set_body_string("Relation not found"),
-            )
+            .respond_with(ResponseTemplate::new(404).set_body_string("Relation not found"))
             .mount(&mock_server)
             .await;
 
@@ -260,10 +256,7 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/rest/v1/users"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string("id,name\n"),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_string("id,name\n"))
             .mount(&mock_server)
             .await;
 

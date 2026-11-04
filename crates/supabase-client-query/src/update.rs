@@ -181,13 +181,10 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("PATCH"))
             .and(path("/rest/v1/users"))
-            .respond_with(
-                ResponseTemplate::new(400)
-                    .set_body_json(serde_json::json!({
-                        "message": "Column not found",
-                        "code": "42703"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "message": "Column not found",
+                "code": "42703"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -211,7 +208,9 @@ mod tests {
         let resp = builder.execute().await;
         assert!(resp.is_err());
         match resp.error.as_ref().unwrap() {
-            supabase_client_core::SupabaseError::PostgRest { status, message, .. } => {
+            supabase_client_core::SupabaseError::PostgRest {
+                status, message, ..
+            } => {
                 assert_eq!(*status, 400);
                 assert_eq!(message, "Column not found");
             }
@@ -258,18 +257,35 @@ where
     /// Execute the UPDATE query.
     pub async fn execute(self) -> SupabaseResponse<T> {
         match &self.backend {
-            QueryBackend::Rest { http, base_url, api_key, schema } => {
+            QueryBackend::Rest {
+                http,
+                base_url,
+                api_key,
+                schema,
+            } => {
                 let (url, headers, body) = match crate::postgrest::build_postgrest_update(
-                    base_url, &self.parts, &self.params,
+                    base_url,
+                    &self.parts,
+                    &self.params,
                 ) {
                     Ok(r) => r,
-                    Err(e) => return SupabaseResponse::error(
-                        supabase_client_core::SupabaseError::QueryBuilder(e),
-                    ),
+                    Err(e) => {
+                        return SupabaseResponse::error(
+                            supabase_client_core::SupabaseError::QueryBuilder(e),
+                        )
+                    }
                 };
                 crate::postgrest_execute::execute_rest(
-                    http, reqwest::Method::PATCH, &url, headers, Some(body), api_key, schema, &self.parts,
-                ).await
+                    http,
+                    reqwest::Method::PATCH,
+                    &url,
+                    headers,
+                    Some(body),
+                    api_key,
+                    schema,
+                    &self.parts,
+                )
+                .await
             }
             #[cfg(feature = "direct-sql")]
             QueryBackend::DirectSql { pool } => {

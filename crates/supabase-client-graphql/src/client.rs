@@ -58,9 +58,8 @@ impl GraphqlClient {
         );
         default_headers.insert(
             reqwest::header::AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", api_key)).map_err(|e| {
-                GraphqlError::InvalidConfig(format!("Invalid auth header: {}", e))
-            })?,
+            HeaderValue::from_str(&format!("Bearer {}", api_key))
+                .map_err(|e| GraphqlError::InvalidConfig(format!("Invalid auth header: {}", e)))?,
         );
         default_headers.insert(
             reqwest::header::CONTENT_TYPE,

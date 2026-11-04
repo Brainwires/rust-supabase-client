@@ -10,16 +10,12 @@ use crate::error::RealtimeError;
 use crate::types::RealtimeConfig;
 
 pub(crate) type WsSink = SplitSink<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     Message,
 >;
 
 pub(crate) type WsRead = SplitStream<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
 >;
 
 /// Connect to a WebSocket URL and return split (sink, stream).
@@ -39,8 +35,9 @@ pub(crate) async fn connect_ws(
         request.headers_mut().insert(
             http::header::HeaderName::from_bytes(key.as_bytes())
                 .map_err(|e| RealtimeError::InvalidConfig(format!("Invalid header name: {}", e)))?,
-            http::header::HeaderValue::from_str(value.as_str())
-                .map_err(|e| RealtimeError::InvalidConfig(format!("Invalid header value: {}", e)))?,
+            http::header::HeaderValue::from_str(value.as_str()).map_err(|e| {
+                RealtimeError::InvalidConfig(format!("Invalid header value: {}", e))
+            })?,
         );
     }
 

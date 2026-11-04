@@ -241,10 +241,7 @@ pub(crate) fn render_mutation(
                 args.push(format!("set: {}", value_to_graphql_literal(set_val)));
             }
             if let Some(filter_val) = filter {
-                args.push(format!(
-                    "filter: {}",
-                    value_to_graphql_literal(filter_val)
-                ));
+                args.push(format!("filter: {}", value_to_graphql_literal(filter_val)));
             }
             if let Some(n) = at_most {
                 args.push(format!("atMost: {}", n));
@@ -252,10 +249,7 @@ pub(crate) fn render_mutation(
         }
         MutationKind::Delete => {
             if let Some(filter_val) = filter {
-                args.push(format!(
-                    "filter: {}",
-                    value_to_graphql_literal(filter_val)
-                ));
+                args.push(format!("filter: {}", value_to_graphql_literal(filter_val)));
             }
             if let Some(n) = at_most {
                 args.push(format!("atMost: {}", n));
@@ -295,10 +289,7 @@ mod tests {
 
     #[test]
     fn value_to_literal_string() {
-        assert_eq!(
-            value_to_graphql_literal(&json!("hello")),
-            "\"hello\""
-        );
+        assert_eq!(value_to_graphql_literal(&json!("hello")), "\"hello\"");
     }
 
     #[test]

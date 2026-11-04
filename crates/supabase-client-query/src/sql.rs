@@ -214,10 +214,7 @@ pub enum FilterCondition {
         param_index: usize,
     },
     /// column IS NULL / IS NOT NULL / IS TRUE / IS FALSE
-    Is {
-        column: String,
-        value: IsValue,
-    },
+    Is { column: String, value: IsValue },
     /// column IN ($1, $2, ...)
     In {
         column: String,
@@ -251,9 +248,7 @@ pub enum FilterCondition {
     /// Raw SQL fragment (escape hatch)
     Raw(String),
     /// Match multiple column=value conditions (AND)
-    Match {
-        conditions: Vec<(String, usize)>,
-    },
+    Match { conditions: Vec<(String, usize)> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,7 +344,7 @@ impl ArrayRangeOperator {
             Self::ContainedBy => "<@",
             Self::Overlaps => "&&",
             Self::RangeGt => ">>",
-            Self::RangeGte => "&>",   // in PostGIS/range context
+            Self::RangeGte => "&>", // in PostGIS/range context
             Self::RangeLt => "<<",
             Self::RangeLte => "&<",
             Self::RangeAdjacent => "-|-",
@@ -502,7 +497,11 @@ impl ExplainFormat {
 }
 
 impl SqlParts {
-    pub fn new(operation: SqlOperation, schema: impl Into<String>, table: impl Into<String>) -> Self {
+    pub fn new(
+        operation: SqlOperation,
+        schema: impl Into<String>,
+        table: impl Into<String>,
+    ) -> Self {
         Self {
             operation,
             schema: schema.into(),
@@ -550,7 +549,10 @@ pub fn validate_column_name(name: &str) -> Result<(), supabase_client_core::Supa
 }
 
 /// Validate a table or schema name.
-pub fn validate_identifier(name: &str, kind: &str) -> Result<(), supabase_client_core::SupabaseError> {
+pub fn validate_identifier(
+    name: &str,
+    kind: &str,
+) -> Result<(), supabase_client_core::SupabaseError> {
     if name.is_empty() {
         return Err(supabase_client_core::SupabaseError::query_builder(format!(
             "{kind} name cannot be empty"
@@ -842,7 +844,10 @@ mod tests {
     fn test_text_search_type_function_name() {
         assert_eq!(TextSearchType::Plain.function_name(), "plainto_tsquery");
         assert_eq!(TextSearchType::Phrase.function_name(), "phraseto_tsquery");
-        assert_eq!(TextSearchType::Websearch.function_name(), "websearch_to_tsquery");
+        assert_eq!(
+            TextSearchType::Websearch.function_name(),
+            "websearch_to_tsquery"
+        );
     }
 
     // ---- ArrayRangeOperator ----

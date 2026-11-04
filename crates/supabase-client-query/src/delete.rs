@@ -202,13 +202,10 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("DELETE"))
             .and(path("/rest/v1/users"))
-            .respond_with(
-                ResponseTemplate::new(403)
-                    .set_body_json(serde_json::json!({
-                        "message": "Permission denied",
-                        "code": "42501"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "message": "Permission denied",
+                "code": "42501"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -229,7 +226,11 @@ mod tests {
         let resp = builder.execute().await;
         assert!(resp.is_err());
         match resp.error.as_ref().unwrap() {
-            supabase_client_core::SupabaseError::PostgRest { status, message, code } => {
+            supabase_client_core::SupabaseError::PostgRest {
+                status,
+                message,
+                code,
+            } => {
                 assert_eq!(*status, 403);
                 assert_eq!(message, "Permission denied");
                 assert_eq!(code.as_deref(), Some("42501"));
@@ -246,18 +247,35 @@ where
     /// Execute the DELETE query.
     pub async fn execute(self) -> SupabaseResponse<T> {
         match &self.backend {
-            QueryBackend::Rest { http, base_url, api_key, schema } => {
+            QueryBackend::Rest {
+                http,
+                base_url,
+                api_key,
+                schema,
+            } => {
                 let (url, headers) = match crate::postgrest::build_postgrest_delete(
-                    base_url, &self.parts, &self.params,
+                    base_url,
+                    &self.parts,
+                    &self.params,
                 ) {
                     Ok(r) => r,
-                    Err(e) => return SupabaseResponse::error(
-                        supabase_client_core::SupabaseError::QueryBuilder(e),
-                    ),
+                    Err(e) => {
+                        return SupabaseResponse::error(
+                            supabase_client_core::SupabaseError::QueryBuilder(e),
+                        )
+                    }
                 };
                 crate::postgrest_execute::execute_rest(
-                    http, reqwest::Method::DELETE, &url, headers, None, api_key, schema, &self.parts,
-                ).await
+                    http,
+                    reqwest::Method::DELETE,
+                    &url,
+                    headers,
+                    None,
+                    api_key,
+                    schema,
+                    &self.parts,
+                )
+                .await
             }
             #[cfg(feature = "direct-sql")]
             QueryBackend::DirectSql { pool } => {

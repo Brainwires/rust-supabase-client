@@ -6,9 +6,9 @@ use serde_json::Value as JsonValue;
 use supabase_client_core::{Row, SupabaseError, SupabaseResponse};
 
 use crate::backend::QueryBackend;
+use crate::sql::{validate_identifier, SqlOperation, SqlParts};
 #[cfg(feature = "direct-sql")]
 use crate::sql::{ParamStore, SqlParam};
-use crate::sql::{SqlParts, SqlOperation, validate_identifier};
 
 /// Builder for RPC (function call) queries.
 pub struct RpcBuilder {
@@ -117,14 +117,30 @@ impl RpcBuilder {
 impl RpcBuilder {
     /// Execute the RPC call and return dynamic rows.
     pub async fn execute(self) -> SupabaseResponse<Row> {
-        let QueryBackend::Rest { ref http, ref base_url, ref api_key, ref schema } = self.backend;
+        let QueryBackend::Rest {
+            ref http,
+            ref base_url,
+            ref api_key,
+            ref schema,
+        } = self.backend;
         let (url, headers, body) = crate::postgrest::build_postgrest_rpc(
-            base_url, &self.function, &self.args, self.rollback,
+            base_url,
+            &self.function,
+            &self.args,
+            self.rollback,
         );
         let parts = SqlParts::new(SqlOperation::Select, &self.schema, &self.function);
         crate::postgrest_execute::execute_rest(
-            http, reqwest::Method::POST, &url, headers, Some(body), api_key, schema, &parts,
-        ).await
+            http,
+            reqwest::Method::POST,
+            &url,
+            headers,
+            Some(body),
+            api_key,
+            schema,
+            &parts,
+        )
+        .await
     }
 }
 
@@ -134,14 +150,30 @@ impl RpcBuilder {
     /// Execute the RPC call and return dynamic rows.
     pub async fn execute(self) -> SupabaseResponse<Row> {
         match &self.backend {
-            QueryBackend::Rest { http, base_url, api_key, schema } => {
+            QueryBackend::Rest {
+                http,
+                base_url,
+                api_key,
+                schema,
+            } => {
                 let (url, headers, body) = crate::postgrest::build_postgrest_rpc(
-                    base_url, &self.function, &self.args, self.rollback,
+                    base_url,
+                    &self.function,
+                    &self.args,
+                    self.rollback,
                 );
                 let parts = SqlParts::new(SqlOperation::Select, &self.schema, &self.function);
                 crate::postgrest_execute::execute_rest(
-                    http, reqwest::Method::POST, &url, headers, Some(body), api_key, schema, &parts,
-                ).await
+                    http,
+                    reqwest::Method::POST,
+                    &url,
+                    headers,
+                    Some(body),
+                    api_key,
+                    schema,
+                    &parts,
+                )
+                .await
             }
             QueryBackend::DirectSql { pool } => {
                 let sql = match self.build_sql() {
@@ -310,14 +342,30 @@ where
     /// Execute the typed RPC call.
     pub async fn execute(self) -> SupabaseResponse<T> {
         match &self.backend {
-            QueryBackend::Rest { http, base_url, api_key, schema } => {
+            QueryBackend::Rest {
+                http,
+                base_url,
+                api_key,
+                schema,
+            } => {
                 let (url, headers, body) = crate::postgrest::build_postgrest_rpc(
-                    base_url, &self.function, &self.args, self.rollback,
+                    base_url,
+                    &self.function,
+                    &self.args,
+                    self.rollback,
                 );
                 let parts = SqlParts::new(SqlOperation::Select, &self.schema, &self.function);
                 crate::postgrest_execute::execute_rest(
-                    http, reqwest::Method::POST, &url, headers, Some(body), api_key, schema, &parts,
-                ).await
+                    http,
+                    reqwest::Method::POST,
+                    &url,
+                    headers,
+                    Some(body),
+                    api_key,
+                    schema,
+                    &parts,
+                )
+                .await
             }
             #[cfg(feature = "direct-sql")]
             QueryBackend::DirectSql { pool } => {
@@ -340,9 +388,8 @@ where
                     Ok(rows) => {
                         let mut data = Vec::with_capacity(rows.len());
                         for row in rows {
-                            let json_obj = serde_json::Value::Object(
-                                row.into_inner().into_iter().collect(),
-                            );
+                            let json_obj =
+                                serde_json::Value::Object(row.into_inner().into_iter().collect());
                             match serde_json::from_value::<T>(json_obj) {
                                 Ok(val) => data.push(val),
                                 Err(e) => {

@@ -1,6 +1,6 @@
 use crate::sql::{
-    ArrayRangeOperator, FilterCondition, FilterOperator, IntoSqlParam, IsValue, ParamStore,
-    PatternOperator, TextSearchType, validate_column_name,
+    validate_column_name, ArrayRangeOperator, FilterCondition, FilterOperator, IntoSqlParam,
+    IsValue, ParamStore, PatternOperator, TextSearchType,
 };
 /// Trait providing all filter methods for query builders.
 ///
@@ -307,7 +307,8 @@ pub trait Filterable: Sized {
     fn not(mut self, f: impl FnOnce(FilterCollector) -> FilterCollector) -> Self {
         let collector = f(FilterCollector::new(self.params_mut()));
         if let Some(condition) = collector.into_single_condition() {
-            self.filters_mut().push(FilterCondition::Not(Box::new(condition)));
+            self.filters_mut()
+                .push(FilterCondition::Not(Box::new(condition)));
         }
         self
     }
@@ -336,7 +337,8 @@ pub trait Filterable: Sized {
             })
             .collect();
         if !conditions.is_empty() {
-            self.filters_mut().push(FilterCondition::Match { conditions });
+            self.filters_mut()
+                .push(FilterCondition::Match { conditions });
         }
         self
     }
@@ -513,7 +515,11 @@ mod tests {
         let builder = make_select().eq("name", "Alice");
         assert_eq!(builder.parts.filters.len(), 1);
         match &builder.parts.filters[0] {
-            FilterCondition::Comparison { column, operator, param_index } => {
+            FilterCondition::Comparison {
+                column,
+                operator,
+                param_index,
+            } => {
                 assert_eq!(column, "name");
                 assert_eq!(*operator, FilterOperator::Eq);
                 assert_eq!(*param_index, 1);
@@ -527,7 +533,9 @@ mod tests {
         let builder = make_select().neq("status", "inactive");
         assert_eq!(builder.parts.filters.len(), 1);
         match &builder.parts.filters[0] {
-            FilterCondition::Comparison { column, operator, .. } => {
+            FilterCondition::Comparison {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "status");
                 assert_eq!(*operator, FilterOperator::Neq);
             }
@@ -539,7 +547,9 @@ mod tests {
     fn test_gt_adds_comparison_filter() {
         let builder = make_select().gt("age", 18i32);
         match &builder.parts.filters[0] {
-            FilterCondition::Comparison { column, operator, .. } => {
+            FilterCondition::Comparison {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "age");
                 assert_eq!(*operator, FilterOperator::Gt);
             }
@@ -551,7 +561,9 @@ mod tests {
     fn test_gte_adds_comparison_filter() {
         let builder = make_select().gte("score", 90i32);
         match &builder.parts.filters[0] {
-            FilterCondition::Comparison { column, operator, .. } => {
+            FilterCondition::Comparison {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "score");
                 assert_eq!(*operator, FilterOperator::Gte);
             }
@@ -563,7 +575,9 @@ mod tests {
     fn test_lt_adds_comparison_filter() {
         let builder = make_select().lt("price", 100i32);
         match &builder.parts.filters[0] {
-            FilterCondition::Comparison { column, operator, .. } => {
+            FilterCondition::Comparison {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "price");
                 assert_eq!(*operator, FilterOperator::Lt);
             }
@@ -575,7 +589,9 @@ mod tests {
     fn test_lte_adds_comparison_filter() {
         let builder = make_select().lte("count", 50i32);
         match &builder.parts.filters[0] {
-            FilterCondition::Comparison { column, operator, .. } => {
+            FilterCondition::Comparison {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "count");
                 assert_eq!(*operator, FilterOperator::Lte);
             }
@@ -588,7 +604,9 @@ mod tests {
         let builder = make_select().like("name", "%test%");
         assert_eq!(builder.parts.filters.len(), 1);
         match &builder.parts.filters[0] {
-            FilterCondition::Pattern { column, operator, .. } => {
+            FilterCondition::Pattern {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "name");
                 assert_eq!(*operator, PatternOperator::Like);
             }
@@ -600,7 +618,9 @@ mod tests {
     fn test_ilike_adds_pattern_filter() {
         let builder = make_select().ilike("name", "%TEST%");
         match &builder.parts.filters[0] {
-            FilterCondition::Pattern { column, operator, .. } => {
+            FilterCondition::Pattern {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "name");
                 assert_eq!(*operator, PatternOperator::ILike);
             }
@@ -652,7 +672,10 @@ mod tests {
         let builder = make_select().in_("id", vec![1i32, 2, 3]);
         assert_eq!(builder.parts.filters.len(), 1);
         match &builder.parts.filters[0] {
-            FilterCondition::In { column, param_indices } => {
+            FilterCondition::In {
+                column,
+                param_indices,
+            } => {
                 assert_eq!(column, "id");
                 assert_eq!(param_indices.len(), 3);
                 assert_eq!(param_indices[0], 1);
@@ -667,7 +690,9 @@ mod tests {
     fn test_contains_adds_array_range_filter() {
         let builder = make_select().contains("tags", "rust");
         match &builder.parts.filters[0] {
-            FilterCondition::ArrayRange { column, operator, .. } => {
+            FilterCondition::ArrayRange {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "tags");
                 assert_eq!(*operator, ArrayRangeOperator::Contains);
             }
@@ -679,7 +704,9 @@ mod tests {
     fn test_contained_by_adds_array_range_filter() {
         let builder = make_select().contained_by("tags", "all_tags");
         match &builder.parts.filters[0] {
-            FilterCondition::ArrayRange { column, operator, .. } => {
+            FilterCondition::ArrayRange {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "tags");
                 assert_eq!(*operator, ArrayRangeOperator::ContainedBy);
             }
@@ -691,7 +718,9 @@ mod tests {
     fn test_overlaps_adds_array_range_filter() {
         let builder = make_select().overlaps("tags", "some_tags");
         match &builder.parts.filters[0] {
-            FilterCondition::ArrayRange { column, operator, .. } => {
+            FilterCondition::ArrayRange {
+                column, operator, ..
+            } => {
                 assert_eq!(column, "tags");
                 assert_eq!(*operator, ArrayRangeOperator::Overlaps);
             }
@@ -758,7 +787,12 @@ mod tests {
     fn test_text_search_without_config() {
         let builder = make_select().text_search("body", "hello world", TextSearchType::Plain, None);
         match &builder.parts.filters[0] {
-            FilterCondition::TextSearch { column, config, search_type, .. } => {
+            FilterCondition::TextSearch {
+                column,
+                config,
+                search_type,
+                ..
+            } => {
                 assert_eq!(column, "body");
                 assert!(config.is_none());
                 assert_eq!(*search_type, TextSearchType::Plain);
@@ -776,7 +810,11 @@ mod tests {
             Some("english"),
         );
         match &builder.parts.filters[0] {
-            FilterCondition::TextSearch { config, search_type, .. } => {
+            FilterCondition::TextSearch {
+                config,
+                search_type,
+                ..
+            } => {
                 assert_eq!(config.as_deref(), Some("english"));
                 assert_eq!(*search_type, TextSearchType::Websearch);
             }
@@ -875,7 +913,10 @@ mod tests {
         let collector = FilterCollector::new(&mut params).eq("a", 1i32);
         let condition = collector.into_single_condition();
         assert!(condition.is_some());
-        assert!(matches!(condition.unwrap(), FilterCondition::Comparison { .. }));
+        assert!(matches!(
+            condition.unwrap(),
+            FilterCondition::Comparison { .. }
+        ));
     }
 
     #[test]

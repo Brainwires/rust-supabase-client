@@ -82,17 +82,22 @@ pub(crate) async fn connect_ws(
     ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
     // Await open with timeout
-    let open_result = supabase_client_core::platform::timeout(
-        std::time::Duration::from_secs(10),
-        async {
-            open_rx.await.unwrap_or(Err(RealtimeError::ConnectionClosed))
-        },
-    ).await;
+    let open_result =
+        supabase_client_core::platform::timeout(std::time::Duration::from_secs(10), async {
+            open_rx
+                .await
+                .unwrap_or(Err(RealtimeError::ConnectionClosed))
+        })
+        .await;
 
     match open_result {
         Ok(Ok(())) => {}
         Ok(Err(e)) => return Err(e),
-        Err(_) => return Err(RealtimeError::WebSocket("WebSocket connection timed out".to_string())),
+        Err(_) => {
+            return Err(RealtimeError::WebSocket(
+                "WebSocket connection timed out".to_string(),
+            ))
+        }
     }
 
     // Keep closures alive
@@ -104,7 +109,10 @@ pub(crate) async fn connect_ws(
 
     Ok((
         WsSink { ws },
-        WsRead { rx, _closures: closures },
+        WsRead {
+            rx,
+            _closures: closures,
+        },
     ))
 }
 

@@ -235,9 +235,7 @@ pub struct PresenceConfig {
 
 impl Default for PresenceConfig {
     fn default() -> Self {
-        Self {
-            key: String::new(),
-        }
+        Self { key: String::new() }
     }
 }
 

@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::DeriveInput;
 
-use crate::parse::{ParsedField, TableAttrs, parse_fields};
+use crate::parse::{parse_fields, ParsedField, TableAttrs};
 
 pub fn expand_table_derive(input: &DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &input.ident;
@@ -10,7 +10,12 @@ pub fn expand_table_derive(input: &DeriveInput) -> syn::Result<TokenStream> {
 
     let data_struct = match &input.data {
         syn::Data::Struct(s) => s,
-        _ => return Err(syn::Error::new_spanned(struct_name, "Table can only be derived for structs")),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                struct_name,
+                "Table can only be derived for structs",
+            ))
+        }
     };
     let fields = parse_fields(&data_struct.fields)?;
 
@@ -19,14 +24,29 @@ pub fn expand_table_derive(input: &DeriveInput) -> syn::Result<TokenStream> {
 
     // Collect the different field categories
     let all_fields: Vec<&ParsedField> = fields.iter().filter(|f| !f.skip).collect();
-    let pk_fields: Vec<&ParsedField> = all_fields.iter().filter(|f| f.is_primary_key).copied().collect();
-    let insertable_fields: Vec<&ParsedField> = all_fields.iter().filter(|f| !f.auto_generate).copied().collect();
-    let non_pk_fields: Vec<&ParsedField> = all_fields.iter().filter(|f| !f.is_primary_key).copied().collect();
+    let pk_fields: Vec<&ParsedField> = all_fields
+        .iter()
+        .filter(|f| f.is_primary_key)
+        .copied()
+        .collect();
+    let insertable_fields: Vec<&ParsedField> = all_fields
+        .iter()
+        .filter(|f| !f.auto_generate)
+        .copied()
+        .collect();
+    let non_pk_fields: Vec<&ParsedField> = all_fields
+        .iter()
+        .filter(|f| !f.is_primary_key)
+        .copied()
+        .collect();
 
     // Generate static arrays for column names
     let all_column_names: Vec<&str> = all_fields.iter().map(|f| f.column_name.as_str()).collect();
     let pk_column_names: Vec<&str> = pk_fields.iter().map(|f| f.column_name.as_str()).collect();
-    let insertable_column_names: Vec<&str> = insertable_fields.iter().map(|f| f.column_name.as_str()).collect();
+    let insertable_column_names: Vec<&str> = insertable_fields
+        .iter()
+        .map(|f| f.column_name.as_str())
+        .collect();
 
     // Generate field_to_column match arms
     let field_to_column_arms: Vec<TokenStream> = all_fields

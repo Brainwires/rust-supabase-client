@@ -63,8 +63,8 @@ pub(crate) fn apply_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn test_apply_state_from_raw() {

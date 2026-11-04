@@ -172,13 +172,10 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/rest/v1/users"))
-            .respond_with(
-                ResponseTemplate::new(409)
-                    .set_body_json(serde_json::json!({
-                        "message": "Duplicate key",
-                        "code": "23505"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "message": "Duplicate key",
+                "code": "23505"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -202,7 +199,11 @@ mod tests {
         let resp = builder.execute().await;
         assert!(resp.is_err());
         match resp.error.as_ref().unwrap() {
-            supabase_client_core::SupabaseError::PostgRest { status, message, code } => {
+            supabase_client_core::SupabaseError::PostgRest {
+                status,
+                message,
+                code,
+            } => {
                 assert_eq!(*status, 409);
                 assert_eq!(message, "Duplicate key");
                 assert_eq!(code.as_deref(), Some("23505"));
@@ -251,18 +252,35 @@ where
     /// Execute the INSERT query.
     pub async fn execute(self) -> SupabaseResponse<T> {
         match &self.backend {
-            QueryBackend::Rest { http, base_url, api_key, schema } => {
+            QueryBackend::Rest {
+                http,
+                base_url,
+                api_key,
+                schema,
+            } => {
                 let (url, headers, body) = match crate::postgrest::build_postgrest_insert(
-                    base_url, &self.parts, &self.params,
+                    base_url,
+                    &self.parts,
+                    &self.params,
                 ) {
                     Ok(r) => r,
-                    Err(e) => return SupabaseResponse::error(
-                        supabase_client_core::SupabaseError::QueryBuilder(e),
-                    ),
+                    Err(e) => {
+                        return SupabaseResponse::error(
+                            supabase_client_core::SupabaseError::QueryBuilder(e),
+                        )
+                    }
                 };
                 crate::postgrest_execute::execute_rest(
-                    http, reqwest::Method::POST, &url, headers, Some(body), api_key, schema, &self.parts,
-                ).await
+                    http,
+                    reqwest::Method::POST,
+                    &url,
+                    headers,
+                    Some(body),
+                    api_key,
+                    schema,
+                    &self.parts,
+                )
+                .await
             }
             #[cfg(feature = "direct-sql")]
             QueryBackend::DirectSql { pool } => {

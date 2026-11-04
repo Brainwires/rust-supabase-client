@@ -83,10 +83,7 @@ pub enum GqlFilter {
         value: Value,
     },
     /// An `is` filter for null/boolean checks: `{ column: { is: NULL } }`.
-    Is {
-        column: String,
-        value: IsValue,
-    },
+    Is { column: String, value: IsValue },
     /// Logical AND of multiple filters.
     And(Vec<GqlFilter>),
     /// Logical OR of multiple filters.

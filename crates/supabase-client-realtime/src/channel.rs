@@ -73,7 +73,8 @@ impl ChannelBuilder {
         F: Fn(&PresenceState) + Send + Sync + 'static,
     {
         self.presence_enabled = true;
-        self.bindings.push(Binding::PresenceSync(Arc::new(callback)));
+        self.bindings
+            .push(Binding::PresenceSync(Arc::new(callback)));
         self
     }
 
@@ -133,10 +134,7 @@ impl ChannelBuilder {
     /// Subscribe to the channel. Sends `phx_join` and waits for acknowledgement.
     ///
     /// The `status_callback` is called when subscription status changes.
-    pub async fn subscribe<F>(
-        self,
-        status_callback: F,
-    ) -> Result<RealtimeChannel, RealtimeError>
+    pub async fn subscribe<F>(self, status_callback: F) -> Result<RealtimeChannel, RealtimeError>
     where
         F: Fn(SubscriptionStatus, Option<RealtimeError>) + Send + Sync + 'static,
     {
@@ -228,11 +226,7 @@ impl RealtimeChannel {
     }
 
     /// Send a broadcast message on this channel.
-    pub async fn send_broadcast(
-        &self,
-        event: &str,
-        payload: Value,
-    ) -> Result<(), RealtimeError> {
+    pub async fn send_broadcast(&self, event: &str, payload: Value) -> Result<(), RealtimeError> {
         let state = *self.inner.state.read().await;
         if state != ChannelState::Joined {
             return Err(RealtimeError::InvalidChannelState {

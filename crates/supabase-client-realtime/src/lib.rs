@@ -36,10 +36,9 @@ pub use channel::{ChannelBuilder, RealtimeChannel};
 pub use client::RealtimeClient;
 pub use error::RealtimeError;
 pub use types::{
-    BroadcastConfig, ChannelState, ColumnInfo, JoinConfig, JoinPayload,
-    PostgresChangePayload, PostgresChangesEvent, PostgresChangesFilter, PresenceConfig,
-    PresenceDiff, PresenceEntry, PresenceMeta, PresenceState, RealtimeConfig,
-    ReconnectConfig, SubscriptionStatus,
+    BroadcastConfig, ChannelState, ColumnInfo, JoinConfig, JoinPayload, PostgresChangePayload,
+    PostgresChangesEvent, PostgresChangesFilter, PresenceConfig, PresenceDiff, PresenceEntry,
+    PresenceMeta, PresenceState, RealtimeConfig, ReconnectConfig, SubscriptionStatus,
 };
 
 use supabase_client_core::SupabaseClient;

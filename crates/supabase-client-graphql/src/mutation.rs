@@ -185,13 +185,10 @@ mod tests {
 
     #[test]
     fn build_insert_mutation() {
-        let builder = MutationBuilder::new(
-            test_client(),
-            "blogCollection".into(),
-            MutationKind::Insert,
-        )
-        .objects(vec![json!({"title": "New", "body": "Content"})])
-        .returning(&["id", "title"]);
+        let builder =
+            MutationBuilder::new(test_client(), "blogCollection".into(), MutationKind::Insert)
+                .objects(vec![json!({"title": "New", "body": "Content"})])
+                .returning(&["id", "title"]);
 
         let (query, _) = builder.build();
         assert!(query.contains("insertIntoBlogCollection"));
@@ -202,15 +199,12 @@ mod tests {
 
     #[test]
     fn build_update_mutation() {
-        let builder = MutationBuilder::new(
-            test_client(),
-            "blogCollection".into(),
-            MutationKind::Update,
-        )
-        .set(json!({"title": "Updated"}))
-        .filter(GqlFilter::eq("id", json!(1)))
-        .at_most(1)
-        .returning(&["id", "title"]);
+        let builder =
+            MutationBuilder::new(test_client(), "blogCollection".into(), MutationKind::Update)
+                .set(json!({"title": "Updated"}))
+                .filter(GqlFilter::eq("id", json!(1)))
+                .at_most(1)
+                .returning(&["id", "title"]);
 
         let (query, _) = builder.build();
         assert!(query.contains("updateBlogCollection"));
@@ -221,14 +215,11 @@ mod tests {
 
     #[test]
     fn build_delete_mutation() {
-        let builder = MutationBuilder::new(
-            test_client(),
-            "blogCollection".into(),
-            MutationKind::Delete,
-        )
-        .filter(GqlFilter::eq("id", json!(1)))
-        .at_most(1)
-        .returning(&["id"]);
+        let builder =
+            MutationBuilder::new(test_client(), "blogCollection".into(), MutationKind::Delete)
+                .filter(GqlFilter::eq("id", json!(1)))
+                .at_most(1)
+                .returning(&["id"]);
 
         let (query, _) = builder.build();
         assert!(query.contains("deleteFromBlogCollection"));
@@ -239,12 +230,9 @@ mod tests {
 
     #[test]
     fn build_mutation_no_returning_uses_typename() {
-        let builder = MutationBuilder::new(
-            test_client(),
-            "blogCollection".into(),
-            MutationKind::Delete,
-        )
-        .filter(GqlFilter::eq("id", json!(1)));
+        let builder =
+            MutationBuilder::new(test_client(), "blogCollection".into(), MutationKind::Delete)
+                .filter(GqlFilter::eq("id", json!(1)));
 
         let (query, _) = builder.build();
         assert!(query.contains("records { __typename }"));
@@ -252,16 +240,10 @@ mod tests {
 
     #[test]
     fn build_insert_multiple_objects() {
-        let builder = MutationBuilder::new(
-            test_client(),
-            "blogCollection".into(),
-            MutationKind::Insert,
-        )
-        .objects(vec![
-            json!({"title": "Post 1"}),
-            json!({"title": "Post 2"}),
-        ])
-        .returning(&["id"]);
+        let builder =
+            MutationBuilder::new(test_client(), "blogCollection".into(), MutationKind::Insert)
+                .objects(vec![json!({"title": "Post 1"}), json!({"title": "Post 2"})])
+                .returning(&["id"]);
 
         let (query, _) = builder.build();
         assert!(query.contains("insertIntoBlogCollection"));

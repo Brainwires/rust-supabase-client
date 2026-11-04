@@ -9,13 +9,12 @@ use std::time::Duration;
 use serde_json::json;
 use tokio::sync::mpsc;
 
-use supabase_client_realtime::{
-    ChannelState, PostgresChangesEvent, PostgresChangesFilter, RealtimeClient,
-    RealtimeConfig, RealtimeError, SubscriptionStatus,
-};
 use supabase_client_realtime::types::{
-    BroadcastConfig, JoinConfig, JoinPayload, PhoenixMessage, PresenceConfig,
-    PresenceDiff,
+    BroadcastConfig, JoinConfig, JoinPayload, PhoenixMessage, PresenceConfig, PresenceDiff,
+};
+use supabase_client_realtime::{
+    ChannelState, PostgresChangesEvent, PostgresChangesFilter, RealtimeClient, RealtimeConfig,
+    RealtimeError, SubscriptionStatus,
 };
 
 // ── Test Configuration ────────────────────────────────────────────────────────
@@ -78,11 +77,26 @@ mod unit {
         assert_eq!(json_val["config"]["broadcast"]["self"], true);
         assert_eq!(json_val["config"]["broadcast"]["ack"], false);
         assert_eq!(json_val["config"]["presence"]["key"], "user-1");
-        assert_eq!(json_val["config"]["postgres_changes"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            json_val["config"]["postgres_changes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
         assert_eq!(json_val["config"]["postgres_changes"][0]["event"], "INSERT");
-        assert_eq!(json_val["config"]["postgres_changes"][0]["schema"], "public");
-        assert_eq!(json_val["config"]["postgres_changes"][0]["table"], "messages");
-        assert_eq!(json_val["config"]["postgres_changes"][1]["filter"], "id=eq.1");
+        assert_eq!(
+            json_val["config"]["postgres_changes"][0]["schema"],
+            "public"
+        );
+        assert_eq!(
+            json_val["config"]["postgres_changes"][0]["table"],
+            "messages"
+        );
+        assert_eq!(
+            json_val["config"]["postgres_changes"][1]["filter"],
+            "id=eq.1"
+        );
         assert_eq!(json_val["access_token"], "test-token");
     }
 
@@ -162,7 +176,10 @@ mod unit {
         assert_eq!(SubscriptionStatus::Subscribed.to_string(), "SUBSCRIBED");
         assert_eq!(SubscriptionStatus::TimedOut.to_string(), "TIMED_OUT");
         assert_eq!(SubscriptionStatus::Closed.to_string(), "CLOSED");
-        assert_eq!(SubscriptionStatus::ChannelError.to_string(), "CHANNEL_ERROR");
+        assert_eq!(
+            SubscriptionStatus::ChannelError.to_string(),
+            "CHANNEL_ERROR"
+        );
     }
 
     #[test]
@@ -190,10 +207,22 @@ mod unit {
 
     #[test]
     fn postgres_changes_event_serialization() {
-        assert_eq!(serde_json::to_string(&PostgresChangesEvent::All).unwrap(), "\"*\"");
-        assert_eq!(serde_json::to_string(&PostgresChangesEvent::Insert).unwrap(), "\"INSERT\"");
-        assert_eq!(serde_json::to_string(&PostgresChangesEvent::Update).unwrap(), "\"UPDATE\"");
-        assert_eq!(serde_json::to_string(&PostgresChangesEvent::Delete).unwrap(), "\"DELETE\"");
+        assert_eq!(
+            serde_json::to_string(&PostgresChangesEvent::All).unwrap(),
+            "\"*\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PostgresChangesEvent::Insert).unwrap(),
+            "\"INSERT\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PostgresChangesEvent::Update).unwrap(),
+            "\"UPDATE\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PostgresChangesEvent::Delete).unwrap(),
+            "\"DELETE\""
+        );
     }
 
     #[test]
@@ -263,7 +292,9 @@ mod integration {
 
     #[tokio::test]
     async fn connect_and_disconnect() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         assert!(!client.is_connected());
@@ -279,7 +310,9 @@ mod integration {
 
     #[tokio::test]
     async fn channel_subscribe_unsubscribe() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
@@ -310,7 +343,9 @@ mod integration {
 
     #[tokio::test]
     async fn broadcast_send_receive_self() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
@@ -349,7 +384,9 @@ mod integration {
 
     #[tokio::test]
     async fn broadcast_between_two_channels() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
@@ -398,7 +435,9 @@ mod integration {
 
     #[tokio::test]
     async fn presence_track_and_sync() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
@@ -452,7 +491,9 @@ mod integration {
 
     #[tokio::test]
     async fn presence_join_leave_callbacks() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
@@ -506,7 +547,9 @@ mod integration {
 
     #[tokio::test]
     async fn postgres_changes_insert() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
@@ -558,7 +601,9 @@ mod integration {
 
     #[tokio::test]
     async fn postgres_changes_update() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
@@ -614,7 +659,9 @@ mod integration {
 
     #[tokio::test]
     async fn postgres_changes_delete() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
@@ -664,7 +711,9 @@ mod integration {
 
     #[tokio::test]
     async fn postgres_changes_all_events() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         // Ensure the Realtime server's WAL listener is active before subscribing
         warm_up_postgres_listener().await;
@@ -732,7 +781,9 @@ mod integration {
 
     #[tokio::test]
     async fn multiple_channels() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
@@ -777,7 +828,9 @@ mod integration {
 
     #[tokio::test]
     async fn channel_names_and_topics() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
@@ -797,7 +850,9 @@ mod integration {
 
     #[tokio::test]
     async fn send_broadcast_after_unsubscribe_fails() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
@@ -811,9 +866,7 @@ mod integration {
         // Unsubscribe puts channel in Leaving state
         channel.unsubscribe().await.unwrap();
 
-        let result = channel
-            .send_broadcast("test", json!({"hi": true}))
-            .await;
+        let result = channel.send_broadcast("test", json!({"hi": true})).await;
         assert!(result.is_err());
 
         client.disconnect().await.unwrap();
@@ -821,7 +874,9 @@ mod integration {
 
     #[tokio::test]
     async fn duplicate_channel_name_errors() {
-        if !should_run() { return; }
+        if !should_run() {
+            return;
+        }
 
         let client = RealtimeClient::new(get_url(), get_key()).unwrap();
         client.connect().await.unwrap();
@@ -833,10 +888,7 @@ mod integration {
             .unwrap();
 
         // Subscribing to same name should fail
-        let result = client
-            .channel("dup-test")
-            .subscribe(|_, _| {})
-            .await;
+        let result = client.channel("dup-test").subscribe(|_, _| {}).await;
         assert!(result.is_err());
 
         client.remove_all_channels().await.unwrap();

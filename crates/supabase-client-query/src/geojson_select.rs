@@ -43,17 +43,18 @@ impl GeoJsonSelectBuilder {
     /// Execute the SELECT query and return the response as GeoJSON.
     pub async fn execute(self) -> Result<JsonValue, SupabaseError> {
         match &self.backend {
-            QueryBackend::Rest { http, base_url, api_key, schema } => {
-                let (url, mut headers) = crate::postgrest::build_postgrest_select(
-                    base_url, &self.parts, &self.params,
-                )
-                .map_err(SupabaseError::QueryBuilder)?;
+            QueryBackend::Rest {
+                http,
+                base_url,
+                api_key,
+                schema,
+            } => {
+                let (url, mut headers) =
+                    crate::postgrest::build_postgrest_select(base_url, &self.parts, &self.params)
+                        .map_err(SupabaseError::QueryBuilder)?;
 
                 // Override Accept to GeoJSON
-                headers.insert(
-                    "Accept",
-                    HeaderValue::from_static("application/geo+json"),
-                );
+                headers.insert("Accept", HeaderValue::from_static("application/geo+json"));
 
                 // Standard auth headers
                 use crate::postgrest_execute::header_value;
@@ -89,18 +90,13 @@ impl GeoJsonSelectBuilder {
                 }
 
                 serde_json::from_str(&body).map_err(|e| {
-                    SupabaseError::Serialization(format!(
-                        "Failed to parse GeoJSON response: {}",
-                        e
-                    ))
+                    SupabaseError::Serialization(format!("Failed to parse GeoJSON response: {}", e))
                 })
             }
             #[cfg(feature = "direct-sql")]
-            QueryBackend::DirectSql { .. } => {
-                Err(SupabaseError::query_builder(
-                    "GeoJSON output is only supported with the REST (PostgREST) backend",
-                ))
-            }
+            QueryBackend::DirectSql { .. } => Err(SupabaseError::query_builder(
+                "GeoJSON output is only supported with the REST (PostgREST) backend",
+            )),
         }
     }
 }
@@ -108,7 +104,7 @@ impl GeoJsonSelectBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sql::{SqlOperation, SqlParts, ParamStore};
+    use crate::sql::{ParamStore, SqlOperation, SqlParts};
 
     #[test]
     fn test_geojson_builder_modifiable() {
@@ -164,9 +160,9 @@ mod tests {
     fn test_geojson_accept_header() {
         let parts = SqlParts::new(SqlOperation::Select, "public", "cities");
         let params = ParamStore::new();
-        let (_, mut headers) = crate::postgrest::build_postgrest_select(
-            "http://localhost:64321", &parts, &params,
-        ).unwrap();
+        let (_, mut headers) =
+            crate::postgrest::build_postgrest_select("http://localhost:64321", &parts, &params)
+                .unwrap();
         // Simulate what GeoJsonSelectBuilder does
         headers.insert("Accept", HeaderValue::from_static("application/geo+json"));
         assert_eq!(headers.get("Accept").unwrap(), "application/geo+json");
@@ -213,10 +209,7 @@ mod tests {
         });
         Mock::given(method("GET"))
             .and(path("/rest/v1/cities"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(geojson.clone()),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(geojson.clone()))
             .mount(&mock_server)
             .await;
 
@@ -246,10 +239,7 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/rest/v1/nonexistent"))
-            .respond_with(
-                ResponseTemplate::new(404)
-                    .set_body_string("Relation not found"),
-            )
+            .respond_with(ResponseTemplate::new(404).set_body_string("Relation not found"))
             .mount(&mock_server)
             .await;
 
@@ -282,10 +272,7 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/rest/v1/cities"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string("this is not json"),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_string("this is not json"))
             .mount(&mock_server)
             .await;
 

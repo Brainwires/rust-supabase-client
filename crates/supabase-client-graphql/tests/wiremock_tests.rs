@@ -62,24 +62,26 @@ async fn client_execute_success_with_data() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {
-                    "usersCollection": {
-                        "edges": [
-                            {"cursor": "c1", "node": {"id": "1", "name": "Alice"}}
-                        ]
-                    }
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {
+                "usersCollection": {
+                    "edges": [
+                        {"cursor": "c1", "node": {"id": "1", "name": "Alice"}}
+                    ]
                 }
-            })),
-        )
+            }
+        })))
         .expect(1)
         .mount(&server)
         .await;
 
     let client = mock_client(&server);
     let resp: GraphqlResponse<Value> = client
-        .execute("query { usersCollection { edges { node { id name } } } }", None, None)
+        .execute(
+            "query { usersCollection { edges { node { id name } } } }",
+            None,
+            None,
+        )
         .await
         .expect("execute should succeed");
 
@@ -96,23 +98,20 @@ async fn client_execute_graphql_errors_array() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": null,
-                "errors": [
-                    {"message": "Column 'foo' not found"},
-                    {"message": "Permission denied"}
-                ]
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": null,
+            "errors": [
+                {"message": "Column 'foo' not found"},
+                {"message": "Permission denied"}
+            ]
+        })))
         .expect(1)
         .mount(&server)
         .await;
 
     let client = mock_client(&server);
-    let result: Result<GraphqlResponse<Value>, GraphqlError> = client
-        .execute("query { bad }", None, None)
-        .await;
+    let result: Result<GraphqlResponse<Value>, GraphqlError> =
+        client.execute("query { bad }", None, None).await;
 
     match result {
         Err(GraphqlError::GraphqlErrors(errors)) => {
@@ -130,17 +129,14 @@ async fn client_execute_http_400_error() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(400).set_body_string("Bad Request: malformed query"),
-        )
+        .respond_with(ResponseTemplate::new(400).set_body_string("Bad Request: malformed query"))
         .expect(1)
         .mount(&server)
         .await;
 
     let client = mock_client(&server);
-    let result: Result<GraphqlResponse<Value>, GraphqlError> = client
-        .execute("invalid", None, None)
-        .await;
+    let result: Result<GraphqlResponse<Value>, GraphqlError> =
+        client.execute("invalid", None, None).await;
 
     match result {
         Err(GraphqlError::HttpError { status, message }) => {
@@ -157,17 +153,14 @@ async fn client_execute_http_500_error() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(500).set_body_string("Internal Server Error"),
-        )
+        .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
         .expect(1)
         .mount(&server)
         .await;
 
     let client = mock_client(&server);
-    let result: Result<GraphqlResponse<Value>, GraphqlError> = client
-        .execute("query { x }", None, None)
-        .await;
+    let result: Result<GraphqlResponse<Value>, GraphqlError> =
+        client.execute("query { x }", None, None).await;
 
     match result {
         Err(GraphqlError::HttpError { status, message }) => {
@@ -186,11 +179,9 @@ async fn client_execute_with_auth_override() {
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
         .and(header("authorization", "Bearer user-jwt-token"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {"ok": true}
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {"ok": true}
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -213,11 +204,9 @@ async fn client_execute_sends_apikey_header() {
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
         .and(header("apikey", "test-api-key"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {"check": true}
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {"check": true}
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -237,24 +226,26 @@ async fn client_execute_raw_success() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {
-                    "blogCollection": {
-                        "edges": [
-                            {"cursor": "x", "node": {"id": "99", "title": "Hello"}}
-                        ]
-                    }
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {
+                "blogCollection": {
+                    "edges": [
+                        {"cursor": "x", "node": {"id": "99", "title": "Hello"}}
+                    ]
                 }
-            })),
-        )
+            }
+        })))
         .expect(1)
         .mount(&server)
         .await;
 
     let client = mock_client(&server);
     let resp = client
-        .execute_raw("query { blogCollection { edges { node { id title } } } }", None, None)
+        .execute_raw(
+            "query { blogCollection { edges { node { id title } } } }",
+            None,
+            None,
+        )
         .await
         .expect("execute_raw should succeed");
 
@@ -271,11 +262,9 @@ async fn client_execute_with_variables_and_operation_name() {
     // and operationName are provided.
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {"result": 42}
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {"result": 42}
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -301,12 +290,10 @@ async fn client_execute_graphql_errors_with_data_succeeds() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {"partial": true},
-                "errors": [{"message": "deprecation warning"}]
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {"partial": true},
+            "errors": [{"message": "deprecation warning"}]
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -424,15 +411,13 @@ async fn query_builder_execute_missing_collection_key() {
     // The response has data but the collection key is wrong.
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {
-                    "wrongCollection": {
-                        "edges": []
-                    }
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {
+                "wrongCollection": {
+                    "edges": []
                 }
-            })),
-        )
+            }
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -462,19 +447,17 @@ async fn query_builder_execute_empty_edges() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {
-                    "usersCollection": {
-                        "edges": [],
-                        "pageInfo": {
-                            "hasNextPage": false,
-                            "hasPreviousPage": false
-                        }
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {
+                "usersCollection": {
+                    "edges": [],
+                    "pageInfo": {
+                        "hasNextPage": false,
+                        "hasPreviousPage": false
                     }
                 }
-            })),
-        )
+            }
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -498,12 +481,10 @@ async fn query_builder_execute_no_data_in_response() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": null,
-                "errors": [{"message": "table not found"}]
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": null,
+            "errors": [{"message": "table not found"}]
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -557,18 +538,16 @@ async fn mutation_insert_execute_success() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {
-                    "insertIntoBlogCollection": {
-                        "affectedCount": 1,
-                        "records": [
-                            {"id": "10", "name": "New Post"}
-                        ]
-                    }
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {
+                "insertIntoBlogCollection": {
+                    "affectedCount": 1,
+                    "records": [
+                        {"id": "10", "name": "New Post"}
+                    ]
                 }
-            })),
-        )
+            }
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -594,18 +573,16 @@ async fn mutation_update_execute_success() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {
-                    "updateBlogCollection": {
-                        "affectedCount": 1,
-                        "records": [
-                            {"id": "5", "name": "Updated Title"}
-                        ]
-                    }
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {
+                "updateBlogCollection": {
+                    "affectedCount": 1,
+                    "records": [
+                        {"id": "5", "name": "Updated Title"}
+                    ]
                 }
-            })),
-        )
+            }
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -631,18 +608,16 @@ async fn mutation_delete_execute_success() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {
-                    "deleteFromBlogCollection": {
-                        "affectedCount": 1,
-                        "records": [
-                            {"id": "7", "name": "Deleted Post"}
-                        ]
-                    }
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {
+                "deleteFromBlogCollection": {
+                    "affectedCount": 1,
+                    "records": [
+                        {"id": "7", "name": "Deleted Post"}
+                    ]
                 }
-            })),
-        )
+            }
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -668,16 +643,14 @@ async fn mutation_execute_missing_mutation_field() {
     // Response data does not contain the expected mutation field.
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {
-                    "someOtherField": {
-                        "affectedCount": 0,
-                        "records": []
-                    }
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {
+                "someOtherField": {
+                    "affectedCount": 0,
+                    "records": []
                 }
-            })),
-        )
+            }
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -708,12 +681,10 @@ async fn mutation_execute_graphql_error_response() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": null,
-                "errors": [{"message": "violates foreign key constraint"}]
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": null,
+            "errors": [{"message": "violates foreign key constraint"}]
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -767,19 +738,17 @@ async fn mutation_insert_multiple_objects() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {
-                    "insertIntoBlogCollection": {
-                        "affectedCount": 2,
-                        "records": [
-                            {"id": "1", "name": "Post A"},
-                            {"id": "2", "name": "Post B"}
-                        ]
-                    }
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {
+                "insertIntoBlogCollection": {
+                    "affectedCount": 2,
+                    "records": [
+                        {"id": "1", "name": "Post A"},
+                        {"id": "2", "name": "Post B"}
+                    ]
                 }
-            })),
-        )
+            }
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -787,10 +756,7 @@ async fn mutation_insert_multiple_objects() {
     let client = mock_client(&server);
     let result: MutationResult<TestRow> = client
         .insert_into("blogCollection")
-        .objects(vec![
-            json!({"name": "Post A"}),
-            json!({"name": "Post B"}),
-        ])
+        .objects(vec![json!({"name": "Post A"}), json!({"name": "Post B"})])
         .returning(&["id", "name"])
         .execute()
         .await
@@ -834,11 +800,9 @@ async fn extension_trait_graphql_client_can_execute() {
 
     Mock::given(method("POST"))
         .and(path("/graphql/v1"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "data": {"ping": "pong"}
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": {"ping": "pong"}
+        })))
         .expect(1)
         .mount(&server)
         .await;

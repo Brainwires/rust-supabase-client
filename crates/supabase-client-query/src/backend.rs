@@ -18,20 +18,19 @@ pub enum QueryBackend {
     },
     /// Direct SQL via sqlx (opt-in with `direct-sql` feature).
     #[cfg(feature = "direct-sql")]
-    DirectSql {
-        pool: Arc<PgPool>,
-    },
+    DirectSql { pool: Arc<PgPool> },
 }
 
 impl std::fmt::Debug for QueryBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Rest { base_url, schema, .. } => {
-                f.debug_struct("Rest")
-                    .field("base_url", base_url)
-                    .field("schema", schema)
-                    .finish()
-            }
+            Self::Rest {
+                base_url, schema, ..
+            } => f
+                .debug_struct("Rest")
+                .field("base_url", base_url)
+                .field("schema", schema)
+                .finish(),
             #[cfg(feature = "direct-sql")]
             Self::DirectSql { .. } => f.debug_struct("DirectSql").finish(),
         }
@@ -51,7 +50,12 @@ mod tests {
             schema: "public".to_string(),
         };
         match &backend {
-            QueryBackend::Rest { base_url, api_key, schema, .. } => {
+            QueryBackend::Rest {
+                base_url,
+                api_key,
+                schema,
+                ..
+            } => {
                 assert_eq!(base_url.as_ref(), "http://localhost:54321");
                 assert_eq!(api_key.as_ref(), "test-api-key");
                 assert_eq!(schema, "public");
@@ -89,8 +93,16 @@ mod tests {
         let cloned = backend.clone();
         match (&backend, &cloned) {
             (
-                QueryBackend::Rest { base_url: a, schema: sa, .. },
-                QueryBackend::Rest { base_url: b, schema: sb, .. },
+                QueryBackend::Rest {
+                    base_url: a,
+                    schema: sa,
+                    ..
+                },
+                QueryBackend::Rest {
+                    base_url: b,
+                    schema: sb,
+                    ..
+                },
             ) => {
                 assert_eq!(a, b);
                 assert_eq!(sa, sb);

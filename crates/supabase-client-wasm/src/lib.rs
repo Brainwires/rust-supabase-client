@@ -4,8 +4,8 @@
 //! - `make wasm-web`  → `pkg/web/`  (ES modules for browsers)
 //! - `make wasm-node` → `pkg/node/` (CommonJS for Node.js)
 
-use wasm_bindgen::prelude::*;
 use serde_json::Value as JsonValue;
+use wasm_bindgen::prelude::*;
 
 use supabase_client_sdk::prelude::*;
 
@@ -129,28 +129,26 @@ impl WasmSupabaseClient {
 
     /// Create a storage client.
     pub fn storage(&self) -> Result<WasmStorageClient, JsValue> {
-        let storage = supabase_client_sdk::supabase_client_storage::StorageClient::new(
-            &self.url,
-            &self.key,
-        ).map_err(to_js_err)?;
+        let storage =
+            supabase_client_sdk::supabase_client_storage::StorageClient::new(&self.url, &self.key)
+                .map_err(to_js_err)?;
         Ok(WasmStorageClient { inner: storage })
     }
 
     /// Create a functions client.
     pub fn functions(&self) -> Result<WasmFunctionsClient, JsValue> {
         let functions = supabase_client_sdk::supabase_client_functions::FunctionsClient::new(
-            &self.url,
-            &self.key,
-        ).map_err(to_js_err)?;
+            &self.url, &self.key,
+        )
+        .map_err(to_js_err)?;
         Ok(WasmFunctionsClient { inner: functions })
     }
 
     /// Create a GraphQL client.
     pub fn graphql(&self) -> Result<WasmGraphqlClient, JsValue> {
-        let graphql = supabase_client_sdk::supabase_client_graphql::GraphqlClient::new(
-            &self.url,
-            &self.key,
-        ).map_err(to_js_err)?;
+        let graphql =
+            supabase_client_sdk::supabase_client_graphql::GraphqlClient::new(&self.url, &self.key)
+                .map_err(to_js_err)?;
         Ok(WasmGraphqlClient { inner: graphql })
     }
 }
@@ -167,13 +165,25 @@ pub struct WasmAuthClient {
 impl WasmAuthClient {
     /// Sign up with email and password. Returns the auth response as JSON.
     pub async fn sign_up(&self, email: &str, password: &str) -> Result<JsValue, JsValue> {
-        let resp = self.inner.sign_up_with_email(email, password).await.map_err(to_js_err)?;
+        let resp = self
+            .inner
+            .sign_up_with_email(email, password)
+            .await
+            .map_err(to_js_err)?;
         to_js_value(&resp)
     }
 
     /// Sign in with email and password. Returns the session as JSON.
-    pub async fn sign_in_with_password(&self, email: &str, password: &str) -> Result<JsValue, JsValue> {
-        let session = self.inner.sign_in_with_password_email(email, password).await.map_err(to_js_err)?;
+    pub async fn sign_in_with_password(
+        &self,
+        email: &str,
+        password: &str,
+    ) -> Result<JsValue, JsValue> {
+        let session = self
+            .inner
+            .sign_in_with_password_email(email, password)
+            .await
+            .map_err(to_js_err)?;
         to_js_value(&session)
     }
 
@@ -185,7 +195,10 @@ impl WasmAuthClient {
 
     /// Send a magic link / OTP to an email address.
     pub async fn sign_in_with_otp(&self, email: &str) -> Result<(), JsValue> {
-        self.inner.sign_in_with_otp_email(email).await.map_err(to_js_err)
+        self.inner
+            .sign_in_with_otp_email(email)
+            .await
+            .map_err(to_js_err)
     }
 
     /// Get the current session as JSON (or null).
@@ -198,7 +211,11 @@ impl WasmAuthClient {
 
     /// Refresh the current session. Returns new session as JSON.
     pub async fn refresh_session(&self) -> Result<JsValue, JsValue> {
-        let session = self.inner.refresh_current_session().await.map_err(to_js_err)?;
+        let session = self
+            .inner
+            .refresh_current_session()
+            .await
+            .map_err(to_js_err)?;
         to_js_value(&session)
     }
 
@@ -215,7 +232,10 @@ impl WasmAuthClient {
 
     /// Send a password reset email.
     pub async fn reset_password_for_email(&self, email: &str) -> Result<(), JsValue> {
-        self.inner.reset_password_for_email(email, None).await.map_err(to_js_err)
+        self.inner
+            .reset_password_for_email(email, None)
+            .await
+            .map_err(to_js_err)
     }
 
     /// Get an OAuth sign-in URL for a given provider.
@@ -227,9 +247,13 @@ impl WasmAuthClient {
             "facebook" => supabase_client_sdk::supabase_client_auth::OAuthProvider::Facebook,
             "twitter" => supabase_client_sdk::supabase_client_auth::OAuthProvider::Twitter,
             "discord" => supabase_client_sdk::supabase_client_auth::OAuthProvider::Discord,
-            other => supabase_client_sdk::supabase_client_auth::OAuthProvider::Custom(other.to_string()),
+            other => {
+                supabase_client_sdk::supabase_client_auth::OAuthProvider::Custom(other.to_string())
+            }
         };
-        self.inner.get_oauth_sign_in_url(provider, None, None).map_err(to_js_err)
+        self.inner
+            .get_oauth_sign_in_url(provider, None, None)
+            .map_err(to_js_err)
     }
 }
 
@@ -296,7 +320,8 @@ impl WasmFunctionsClient {
     pub async fn invoke(&self, function_name: &str, body: JsValue) -> Result<JsValue, JsValue> {
         let json: JsonValue = serde_wasm_bindgen::from_value(body)?;
         let options = InvokeOptions::default().body(json);
-        let response = self.inner
+        let response = self
+            .inner
             .invoke(function_name, options)
             .await
             .map_err(to_js_err)?;
@@ -319,18 +344,15 @@ impl WasmGraphqlClient {
     ///
     /// @param query - The GraphQL query string
     /// @param variables - Optional JSON variables object
-    pub async fn execute(
-        &self,
-        query: &str,
-        variables: JsValue,
-    ) -> Result<JsValue, JsValue> {
+    pub async fn execute(&self, query: &str, variables: JsValue) -> Result<JsValue, JsValue> {
         let vars: Option<JsonValue> = if variables.is_null() || variables.is_undefined() {
             None
         } else {
             Some(serde_wasm_bindgen::from_value(variables)?)
         };
 
-        let response = self.inner
+        let response = self
+            .inner
             .execute_raw(query, vars, None)
             .await
             .map_err(to_js_err)?;

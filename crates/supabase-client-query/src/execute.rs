@@ -88,15 +88,15 @@ where
             Ok(rows) => {
                 let mut data = Vec::with_capacity(rows.len());
                 for row in rows {
-                    let json_obj = serde_json::Value::Object(
-                        row.into_inner().into_iter().collect(),
-                    );
+                    let json_obj =
+                        serde_json::Value::Object(row.into_inner().into_iter().collect());
                     match serde_json::from_value::<T>(json_obj) {
                         Ok(val) => data.push(val),
                         Err(e) => {
-                            return SupabaseResponse::error(SupabaseError::QueryBuilder(
-                                format!("Failed to deserialize row: {}", e),
-                            ))
+                            return SupabaseResponse::error(SupabaseError::QueryBuilder(format!(
+                                "Failed to deserialize row: {}",
+                                e
+                            )))
                         }
                     }
                 }

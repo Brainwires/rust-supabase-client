@@ -53,7 +53,11 @@ pub fn build_postgrest_select(
     params: &ParamStore,
 ) -> Result<(String, HeaderMap), String> {
     let table = &parts.table;
-    let mut url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), encode_value(table));
+    let mut url = format!(
+        "{}/rest/v1/{}",
+        base_url.trim_end_matches('/'),
+        encode_value(table)
+    );
     let mut headers = HeaderMap::new();
     let mut query_params = Vec::new();
 
@@ -131,10 +135,7 @@ pub fn build_postgrest_select(
             prefer_parts.push(count_val.to_string());
         }
         if !prefer_parts.is_empty() {
-            headers.insert(
-                "Prefer",
-                header_value("Prefer", &prefer_parts.join(","))?,
-            );
+            headers.insert("Prefer", header_value("Prefer", &prefer_parts.join(","))?);
         }
     }
 
@@ -164,7 +165,11 @@ pub fn build_postgrest_insert(
     params: &ParamStore,
 ) -> Result<(String, HeaderMap, JsonValue), String> {
     let table = &parts.table;
-    let url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), encode_value(table));
+    let url = format!(
+        "{}/rest/v1/{}",
+        base_url.trim_end_matches('/'),
+        encode_value(table)
+    );
     let mut headers = HeaderMap::new();
 
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
@@ -180,10 +185,7 @@ pub fn build_postgrest_insert(
         if let Some(count_val) = count_option_prefer(parts.count) {
             prefer_parts.push(count_val);
         }
-        headers.insert(
-            "Prefer",
-            header_value("Prefer", &prefer_parts.join(","))?,
-        );
+        headers.insert("Prefer", header_value("Prefer", &prefer_parts.join(","))?);
     }
 
     // Schema override
@@ -204,7 +206,11 @@ pub fn build_postgrest_update(
     params: &ParamStore,
 ) -> Result<(String, HeaderMap, JsonValue), String> {
     let table = &parts.table;
-    let mut url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), encode_value(table));
+    let mut url = format!(
+        "{}/rest/v1/{}",
+        base_url.trim_end_matches('/'),
+        encode_value(table)
+    );
     let mut headers = HeaderMap::new();
     let mut query_params = Vec::new();
 
@@ -221,10 +227,7 @@ pub fn build_postgrest_update(
         if let Some(count_val) = count_option_prefer(parts.count) {
             prefer_parts.push(count_val);
         }
-        headers.insert(
-            "Prefer",
-            header_value("Prefer", &prefer_parts.join(","))?,
-        );
+        headers.insert("Prefer", header_value("Prefer", &prefer_parts.join(","))?);
     }
 
     // Schema override
@@ -253,7 +256,11 @@ pub fn build_postgrest_delete(
     params: &ParamStore,
 ) -> Result<(String, HeaderMap), String> {
     let table = &parts.table;
-    let mut url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), encode_value(table));
+    let mut url = format!(
+        "{}/rest/v1/{}",
+        base_url.trim_end_matches('/'),
+        encode_value(table)
+    );
     let mut headers = HeaderMap::new();
     let mut query_params = Vec::new();
 
@@ -268,10 +275,7 @@ pub fn build_postgrest_delete(
         if let Some(count_val) = count_option_prefer(parts.count) {
             prefer_parts.push(count_val);
         }
-        headers.insert(
-            "Prefer",
-            header_value("Prefer", &prefer_parts.join(","))?,
-        );
+        headers.insert("Prefer", header_value("Prefer", &prefer_parts.join(","))?);
     }
 
     // Schema override
@@ -297,7 +301,11 @@ pub fn build_postgrest_upsert(
     params: &ParamStore,
 ) -> Result<(String, HeaderMap, JsonValue), String> {
     let table = &parts.table;
-    let mut url = format!("{}/rest/v1/{}", base_url.trim_end_matches('/'), encode_value(table));
+    let mut url = format!(
+        "{}/rest/v1/{}",
+        base_url.trim_end_matches('/'),
+        encode_value(table)
+    );
     let mut headers = HeaderMap::new();
 
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
@@ -323,10 +331,7 @@ pub fn build_postgrest_upsert(
         prefer_parts.push(cv);
     }
 
-    headers.insert(
-        "Prefer",
-        header_value("Prefer", &prefer_parts.join(","))?,
-    );
+    headers.insert("Prefer", header_value("Prefer", &prefer_parts.join(","))?);
 
     // Conflict columns as on_conflict query param
     if !parts.conflict_columns.is_empty() {
@@ -416,9 +421,27 @@ pub fn render_param_value(param: &SqlParam) -> String {
         SqlParam::Time(t) => t.to_string(),
         SqlParam::Json(v) => v.to_string(),
         SqlParam::ByteArray(b) => format!("\\x{}", hex_encode(b)),
-        SqlParam::TextArray(arr) => format!("{{{}}}", arr.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(",")),
-        SqlParam::I32Array(arr) => format!("{{{}}}", arr.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")),
-        SqlParam::I64Array(arr) => format!("{{{}}}", arr.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")),
+        SqlParam::TextArray(arr) => format!(
+            "{{{}}}",
+            arr.iter()
+                .map(|s| format!("\"{}\"", s))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        SqlParam::I32Array(arr) => format!(
+            "{{{}}}",
+            arr.iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        SqlParam::I64Array(arr) => format!(
+            "{{{}}}",
+            arr.iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
     }
 }
 
@@ -444,9 +467,17 @@ fn param_to_json(param: &SqlParam) -> JsonValue {
         SqlParam::Time(t) => JsonValue::String(t.to_string()),
         SqlParam::Json(v) => v.clone(),
         SqlParam::ByteArray(b) => JsonValue::String(format!("\\x{}", hex_encode(b))),
-        SqlParam::TextArray(arr) => JsonValue::Array(arr.iter().map(|s| JsonValue::String(s.clone())).collect()),
-        SqlParam::I32Array(arr) => JsonValue::Array(arr.iter().map(|n| JsonValue::Number((*n as i64).into())).collect()),
-        SqlParam::I64Array(arr) => JsonValue::Array(arr.iter().map(|n| JsonValue::Number((*n).into())).collect()),
+        SqlParam::TextArray(arr) => {
+            JsonValue::Array(arr.iter().map(|s| JsonValue::String(s.clone())).collect())
+        }
+        SqlParam::I32Array(arr) => JsonValue::Array(
+            arr.iter()
+                .map(|n| JsonValue::Number((*n as i64).into()))
+                .collect(),
+        ),
+        SqlParam::I64Array(arr) => {
+            JsonValue::Array(arr.iter().map(|n| JsonValue::Number((*n).into())).collect())
+        }
     }
 }
 
@@ -512,7 +543,10 @@ fn logic_tree_item(key: &str, rhs: &str) -> String {
 }
 
 /// Render the children of an `or` / `and` tree as `(child,child,...)`.
-fn render_logic_tree(conditions: &[FilterCondition], params: &ParamStore) -> Result<String, String> {
+fn render_logic_tree(
+    conditions: &[FilterCondition],
+    params: &ParamStore,
+) -> Result<String, String> {
     let mut items = Vec::new();
     for cond in conditions {
         let mut sub = Vec::new();
@@ -533,7 +567,11 @@ fn render_filter(
     output: &mut Vec<(String, String)>,
 ) -> Result<(), String> {
     match condition {
-        FilterCondition::Comparison { column, operator, param_index } => {
+        FilterCondition::Comparison {
+            column,
+            operator,
+            param_index,
+        } => {
             let op = match operator {
                 FilterOperator::Eq => "eq",
                 FilterOperator::Neq => "neq",
@@ -542,7 +580,8 @@ fn render_filter(
                 FilterOperator::Lt => "lt",
                 FilterOperator::Lte => "lte",
             };
-            let param = params.get(*param_index - 1)
+            let param = params
+                .get(*param_index - 1)
                 .ok_or_else(|| format!("Missing param at index {}", param_index))?;
             let val = render_value(param, ctx);
             output.push((encode_value(column), format!("{}.{}", op, val)));
@@ -556,11 +595,15 @@ fn render_filter(
             };
             output.push((encode_value(column), rhs.to_string()));
         }
-        FilterCondition::In { column, param_indices } => {
+        FilterCondition::In {
+            column,
+            param_indices,
+        } => {
             let vals: Result<Vec<String>, String> = param_indices
                 .iter()
                 .map(|idx| {
-                    let param = params.get(*idx - 1)
+                    let param = params
+                        .get(*idx - 1)
                         .ok_or_else(|| format!("Missing param at index {}", idx))?;
                     Ok(render_value(param, FilterContext::List))
                 })
@@ -568,23 +611,34 @@ fn render_filter(
             let val_list = vals?.join(",");
             output.push((encode_value(column), format!("in.({})", val_list)));
         }
-        FilterCondition::Pattern { column, operator, param_index } => {
+        FilterCondition::Pattern {
+            column,
+            operator,
+            param_index,
+        } => {
             let op = match operator {
                 PatternOperator::Like => "like",
                 PatternOperator::ILike => "ilike",
             };
-            let param = params.get(*param_index - 1)
+            let param = params
+                .get(*param_index - 1)
                 .ok_or_else(|| format!("Missing param at index {}", param_index))?;
             let val = render_value(param, ctx);
             output.push((encode_value(column), format!("{}.{}", op, val)));
         }
-        FilterCondition::TextSearch { column, query_param_index, config, search_type } => {
+        FilterCondition::TextSearch {
+            column,
+            query_param_index,
+            config,
+            search_type,
+        } => {
             let op = match search_type {
                 TextSearchType::Plain => "plfts",
                 TextSearchType::Phrase => "phfts",
                 TextSearchType::Websearch => "wfts",
             };
-            let param = params.get(*query_param_index - 1)
+            let param = params
+                .get(*query_param_index - 1)
                 .ok_or_else(|| format!("Missing param at index {}", query_param_index))?;
             let val = render_value(param, ctx);
             if let Some(cfg) = config {
@@ -596,18 +650,23 @@ fn render_filter(
                 output.push((encode_value(column), format!("{}.{}", op, val)));
             }
         }
-        FilterCondition::ArrayRange { column, operator, param_index } => {
+        FilterCondition::ArrayRange {
+            column,
+            operator,
+            param_index,
+        } => {
             let op = match operator {
                 ArrayRangeOperator::Contains => "cs",
                 ArrayRangeOperator::ContainedBy => "cd",
                 ArrayRangeOperator::Overlaps => "ov",
-                ArrayRangeOperator::RangeGt => "sl",   // strictly left → right of
+                ArrayRangeOperator::RangeGt => "sl", // strictly left → right of
                 ArrayRangeOperator::RangeGte => "nxl",
-                ArrayRangeOperator::RangeLt => "sr",    // strictly right → left of
+                ArrayRangeOperator::RangeLt => "sr", // strictly right → left of
                 ArrayRangeOperator::RangeLte => "nxr",
                 ArrayRangeOperator::RangeAdjacent => "adj",
             };
-            let param = params.get(*param_index - 1)
+            let param = params
+                .get(*param_index - 1)
                 .ok_or_else(|| format!("Missing param at index {}", param_index))?;
             let val = render_value(param, ctx);
             output.push((encode_value(column), format!("{}.{}", op, val)));
@@ -634,11 +693,15 @@ fn render_filter(
         }
         FilterCondition::Raw(sql) => {
             // Raw SQL cannot be directly translated to PostgREST
-            return Err(format!("Raw SQL filter '{}' cannot be used with PostgREST backend", sql));
+            return Err(format!(
+                "Raw SQL filter '{}' cannot be used with PostgREST backend",
+                sql
+            ));
         }
         FilterCondition::Match { conditions } => {
             for (col, idx) in conditions {
-                let param = params.get(*idx - 1)
+                let param = params
+                    .get(*idx - 1)
                     .ok_or_else(|| format!("Missing param at index {}", idx))?;
                 let val = render_value(param, ctx);
                 output.push((encode_value(col), format!("eq.{}", val)));
@@ -656,7 +719,11 @@ fn render_filters_to_params(
     for filter in filters {
         let mut pairs = Vec::new();
         render_filter(filter, params, FilterContext::TopLevel, &mut pairs)?;
-        output.extend(pairs.into_iter().map(|(key, value)| format!("{}={}", key, value)));
+        output.extend(
+            pairs
+                .into_iter()
+                .map(|(key, value)| format!("{}={}", key, value)),
+        );
     }
     Ok(())
 }
@@ -667,31 +734,41 @@ fn build_insert_body(parts: &SqlParts, params: &ParamStore) -> Result<JsonValue,
         // Single row from set_clauses
         let mut obj = serde_json::Map::new();
         for (col, idx) in &parts.set_clauses {
-            let param = params.get(*idx - 1)
+            let param = params
+                .get(*idx - 1)
                 .ok_or_else(|| format!("Missing param at index {}", idx))?;
             obj.insert(col.clone(), param_to_json(param));
         }
         Ok(JsonValue::Object(obj))
     } else {
         // Multiple rows
-        let rows: Result<Vec<JsonValue>, String> = parts.many_rows.iter().map(|row| {
-            let mut obj = serde_json::Map::new();
-            for (col, idx) in row {
-                let param = params.get(*idx - 1)
-                    .ok_or_else(|| format!("Missing param at index {}", idx))?;
-                obj.insert(col.clone(), param_to_json(param));
-            }
-            Ok(JsonValue::Object(obj))
-        }).collect();
+        let rows: Result<Vec<JsonValue>, String> = parts
+            .many_rows
+            .iter()
+            .map(|row| {
+                let mut obj = serde_json::Map::new();
+                for (col, idx) in row {
+                    let param = params
+                        .get(*idx - 1)
+                        .ok_or_else(|| format!("Missing param at index {}", idx))?;
+                    obj.insert(col.clone(), param_to_json(param));
+                }
+                Ok(JsonValue::Object(obj))
+            })
+            .collect();
         Ok(JsonValue::Array(rows?))
     }
 }
 
 /// Build the SET body for UPDATE operations.
-fn build_set_body(set_clauses: &[(String, usize)], params: &ParamStore) -> Result<JsonValue, String> {
+fn build_set_body(
+    set_clauses: &[(String, usize)],
+    params: &ParamStore,
+) -> Result<JsonValue, String> {
     let mut obj = serde_json::Map::new();
     for (col, idx) in set_clauses {
-        let param = params.get(*idx - 1)
+        let param = params
+            .get(*idx - 1)
             .ok_or_else(|| format!("Missing param at index {}", idx))?;
         obj.insert(col.clone(), param_to_json(param));
     }
@@ -726,7 +803,8 @@ mod tests {
     fn test_select_simple() {
         let parts = SqlParts::new(SqlOperation::Select, "public", "cities");
         let params = ParamStore::new();
-        let (url, _headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        let (url, _headers) =
+            build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(url, "http://localhost:64321/rest/v1/cities");
     }
 
@@ -736,7 +814,10 @@ mod tests {
         parts.select_columns = Some("\"name\", \"country_id\"".to_string());
         let params = ParamStore::new();
         let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
-        assert_eq!(url, "http://localhost:64321/rest/v1/cities?select=name,country_id");
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?select=name,country_id"
+        );
     }
 
     #[test]
@@ -749,7 +830,10 @@ mod tests {
         });
         let params = make_params(vec![SqlParam::Text("Auckland".to_string())]);
         let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
-        assert_eq!(url, "http://localhost:64321/rest/v1/cities?name=eq.Auckland");
+        assert_eq!(
+            url,
+            "http://localhost:64321/rest/v1/cities?name=eq.Auckland"
+        );
     }
 
     #[test]
@@ -802,7 +886,8 @@ mod tests {
         let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
         parts.limit = Some(10);
         let params = ParamStore::new();
-        let (url, headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        let (url, headers) =
+            build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         assert!(url.contains("limit=10"));
         assert!(headers.contains_key("Range"));
     }
@@ -813,7 +898,8 @@ mod tests {
         parts.limit = Some(10);
         parts.offset = Some(5);
         let params = ParamStore::new();
-        let (url, headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        let (url, headers) =
+            build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         assert!(url.contains("limit=10"));
         assert!(url.contains("offset=5"));
         assert_eq!(headers.get("Range").unwrap(), "5-14");
@@ -824,7 +910,8 @@ mod tests {
         let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
         parts.single = true;
         let params = ParamStore::new();
-        let (_, headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        let (_, headers) =
+            build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(
             headers.get("Accept").unwrap(),
             "application/vnd.pgrst.object+json"
@@ -836,7 +923,8 @@ mod tests {
         let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
         parts.count = CountOption::Exact;
         let params = ParamStore::new();
-        let (_, headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        let (_, headers) =
+            build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(headers.get("Prefer").unwrap(), "count=exact");
     }
 
@@ -845,7 +933,8 @@ mod tests {
         let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
         parts.head = true;
         let params = ParamStore::new();
-        let (_, headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        let (_, headers) =
+            build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(headers.get("Prefer").unwrap(), "count=exact");
     }
 
@@ -870,11 +959,7 @@ mod tests {
             column: "id".to_string(),
             param_indices: vec![1, 2, 3],
         });
-        let params = make_params(vec![
-            SqlParam::I32(1),
-            SqlParam::I32(2),
-            SqlParam::I32(3),
-        ]);
+        let params = make_params(vec![SqlParam::I32(1), SqlParam::I32(2), SqlParam::I32(3)]);
         let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         assert!(url.contains("id=in.(1,2,3)"));
     }
@@ -928,7 +1013,10 @@ mod tests {
             operator: ArrayRangeOperator::Contains,
             param_index: 1,
         });
-        let params = make_params(vec![SqlParam::TextArray(vec!["a".to_string(), "b".to_string()])]);
+        let params = make_params(vec![SqlParam::TextArray(vec![
+            "a".to_string(),
+            "b".to_string(),
+        ])]);
         let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         // {"a","b"} percent-encoded (`{`, `"` and `}` are not valid URL characters)
         assert!(url.contains("tags=cs.%7B%22a%22%2C%22b%22%7D"));
@@ -976,10 +1064,7 @@ mod tests {
     fn test_filter_match() {
         let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
         parts.filters.push(FilterCondition::Match {
-            conditions: vec![
-                ("name".to_string(), 1),
-                ("country_id".to_string(), 2),
-            ],
+            conditions: vec![("name".to_string(), 1), ("country_id".to_string(), 2)],
         });
         let params = make_params(vec![
             SqlParam::Text("Auckland".to_string()),
@@ -1004,16 +1089,14 @@ mod tests {
     #[test]
     fn test_insert_single() {
         let mut parts = SqlParts::new(SqlOperation::Insert, "public", "cities");
-        parts.set_clauses = vec![
-            ("name".to_string(), 1),
-            ("country_id".to_string(), 2),
-        ];
+        parts.set_clauses = vec![("name".to_string(), 1), ("country_id".to_string(), 2)];
         parts.returning = Some("*".to_string());
         let params = make_params(vec![
             SqlParam::Text("Auckland".to_string()),
             SqlParam::I32(1),
         ]);
-        let (url, headers, body) = build_postgrest_insert("http://localhost:64321", &parts, &params).unwrap();
+        let (url, headers, body) =
+            build_postgrest_insert("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(url, "http://localhost:64321/rest/v1/cities");
         assert_eq!(headers.get("Prefer").unwrap(), "return=representation");
         assert_eq!(body["name"], "Auckland");
@@ -1033,7 +1116,8 @@ mod tests {
             SqlParam::Text("Wellington".to_string()),
             SqlParam::I32(1),
         ]);
-        let (_, _, body) = build_postgrest_insert("http://localhost:64321", &parts, &params).unwrap();
+        let (_, _, body) =
+            build_postgrest_insert("http://localhost:64321", &parts, &params).unwrap();
         assert!(body.is_array());
         assert_eq!(body.as_array().unwrap().len(), 2);
     }
@@ -1054,7 +1138,8 @@ mod tests {
             SqlParam::Text("New Auckland".to_string()),
             SqlParam::I32(1),
         ]);
-        let (url, headers, body) = build_postgrest_update("http://localhost:64321", &parts, &params).unwrap();
+        let (url, headers, body) =
+            build_postgrest_update("http://localhost:64321", &parts, &params).unwrap();
         assert!(url.contains("id=eq.1"));
         assert_eq!(headers.get("Prefer").unwrap(), "return=representation");
         assert_eq!(body["name"], "New Auckland");
@@ -1072,7 +1157,8 @@ mod tests {
         });
         parts.returning = Some("*".to_string());
         let params = make_params(vec![SqlParam::I32(1)]);
-        let (url, headers) = build_postgrest_delete("http://localhost:64321", &parts, &params).unwrap();
+        let (url, headers) =
+            build_postgrest_delete("http://localhost:64321", &parts, &params).unwrap();
         assert!(url.contains("id=eq.1"));
         assert_eq!(headers.get("Prefer").unwrap(), "return=representation");
     }
@@ -1082,14 +1168,15 @@ mod tests {
     #[test]
     fn test_upsert_merge_duplicates() {
         let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "cities");
-        parts.set_clauses = vec![
-            ("id".to_string(), 1),
-            ("name".to_string(), 2),
-        ];
+        parts.set_clauses = vec![("id".to_string(), 1), ("name".to_string(), 2)];
         parts.conflict_columns = vec!["id".to_string()];
         parts.returning = Some("*".to_string());
-        let params = make_params(vec![SqlParam::I32(1), SqlParam::Text("Auckland".to_string())]);
-        let (url, headers, _) = build_postgrest_upsert("http://localhost:64321", &parts, &params).unwrap();
+        let params = make_params(vec![
+            SqlParam::I32(1),
+            SqlParam::Text("Auckland".to_string()),
+        ]);
+        let (url, headers, _) =
+            build_postgrest_upsert("http://localhost:64321", &parts, &params).unwrap();
         assert!(url.contains("on_conflict=id"));
         let prefer = headers.get("Prefer").unwrap().to_str().unwrap();
         assert!(prefer.contains("resolution=merge-duplicates"));
@@ -1099,14 +1186,15 @@ mod tests {
     #[test]
     fn test_upsert_ignore_duplicates() {
         let mut parts = SqlParts::new(SqlOperation::Upsert, "public", "cities");
-        parts.set_clauses = vec![
-            ("id".to_string(), 1),
-            ("name".to_string(), 2),
-        ];
+        parts.set_clauses = vec![("id".to_string(), 1), ("name".to_string(), 2)];
         parts.conflict_columns = vec!["id".to_string()];
         parts.ignore_duplicates = true;
-        let params = make_params(vec![SqlParam::I32(1), SqlParam::Text("Auckland".to_string())]);
-        let (_, headers, _) = build_postgrest_upsert("http://localhost:64321", &parts, &params).unwrap();
+        let params = make_params(vec![
+            SqlParam::I32(1),
+            SqlParam::Text("Auckland".to_string()),
+        ]);
+        let (_, headers, _) =
+            build_postgrest_upsert("http://localhost:64321", &parts, &params).unwrap();
         let prefer = headers.get("Prefer").unwrap().to_str().unwrap();
         assert!(prefer.contains("resolution=ignore-duplicates"));
     }
@@ -1116,7 +1204,8 @@ mod tests {
     #[test]
     fn test_rpc_simple() {
         let args = serde_json::json!({"name": "Auckland"});
-        let (url, headers, body) = build_postgrest_rpc("http://localhost:64321", "get_city", &args, false);
+        let (url, headers, body) =
+            build_postgrest_rpc("http://localhost:64321", "get_city", &args, false);
         assert_eq!(url, "http://localhost:64321/rest/v1/rpc/get_city");
         assert_eq!(headers.get("Content-Type").unwrap(), "application/json");
         assert_eq!(body["name"], "Auckland");
@@ -1133,14 +1222,16 @@ mod tests {
     #[test]
     fn test_rpc_rollback() {
         let args = serde_json::json!({"name": "Auckland"});
-        let (_, headers, _) = build_postgrest_rpc("http://localhost:64321", "get_city", &args, true);
+        let (_, headers, _) =
+            build_postgrest_rpc("http://localhost:64321", "get_city", &args, true);
         assert_eq!(headers.get("Prefer").unwrap(), "tx=rollback");
     }
 
     #[test]
     fn test_rpc_no_rollback_no_prefer() {
         let args = serde_json::json!({"name": "Auckland"});
-        let (_, headers, _) = build_postgrest_rpc("http://localhost:64321", "get_city", &args, false);
+        let (_, headers, _) =
+            build_postgrest_rpc("http://localhost:64321", "get_city", &args, false);
         assert!(headers.get("Prefer").is_none());
     }
 
@@ -1166,7 +1257,10 @@ mod tests {
 
     #[test]
     fn test_render_param_text() {
-        assert_eq!(render_param_value(&SqlParam::Text("hello".to_string())), "hello");
+        assert_eq!(
+            render_param_value(&SqlParam::Text("hello".to_string())),
+            "hello"
+        );
     }
 
     #[test]
@@ -1185,7 +1279,8 @@ mod tests {
         let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
         parts.count = CountOption::Planned;
         let params = ParamStore::new();
-        let (_, headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        let (_, headers) =
+            build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(headers.get("Prefer").unwrap(), "count=planned");
     }
 
@@ -1194,7 +1289,8 @@ mod tests {
         let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
         parts.count = CountOption::Estimated;
         let params = ParamStore::new();
-        let (_, headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        let (_, headers) =
+            build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(headers.get("Prefer").unwrap(), "count=estimated");
     }
 
@@ -1204,7 +1300,8 @@ mod tests {
         parts.count = CountOption::Exact;
         parts.head = true;
         let params = ParamStore::new();
-        let (_, headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        let (_, headers) =
+            build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         // Head mode forces count=exact
         let prefer = headers.get("Prefer").unwrap().to_str().unwrap();
         assert!(prefer.contains("count=exact"));
@@ -1217,7 +1314,8 @@ mod tests {
         parts.returning = Some("*".to_string());
         parts.count = CountOption::Exact;
         let params = make_params(vec![SqlParam::Text("Auckland".to_string())]);
-        let (_, headers, _) = build_postgrest_insert("http://localhost:64321", &parts, &params).unwrap();
+        let (_, headers, _) =
+            build_postgrest_insert("http://localhost:64321", &parts, &params).unwrap();
         let prefer = headers.get("Prefer").unwrap().to_str().unwrap();
         assert!(prefer.contains("return=representation"));
         assert!(prefer.contains("count=exact"));
@@ -1230,7 +1328,8 @@ mod tests {
         parts.returning = Some("*".to_string());
         parts.count = CountOption::Planned;
         let params = make_params(vec![SqlParam::Text("Auckland".to_string())]);
-        let (_, headers, _) = build_postgrest_update("http://localhost:64321", &parts, &params).unwrap();
+        let (_, headers, _) =
+            build_postgrest_update("http://localhost:64321", &parts, &params).unwrap();
         let prefer = headers.get("Prefer").unwrap().to_str().unwrap();
         assert!(prefer.contains("return=representation"));
         assert!(prefer.contains("count=planned"));
@@ -1242,7 +1341,8 @@ mod tests {
         parts.returning = Some("*".to_string());
         parts.count = CountOption::Estimated;
         let params = ParamStore::new();
-        let (_, headers) = build_postgrest_delete("http://localhost:64321", &parts, &params).unwrap();
+        let (_, headers) =
+            build_postgrest_delete("http://localhost:64321", &parts, &params).unwrap();
         let prefer = headers.get("Prefer").unwrap().to_str().unwrap();
         assert!(prefer.contains("return=representation"));
         assert!(prefer.contains("count=estimated"));
@@ -1255,8 +1355,12 @@ mod tests {
         parts.conflict_columns = vec!["id".to_string()];
         parts.returning = Some("*".to_string());
         parts.count = CountOption::Exact;
-        let params = make_params(vec![SqlParam::I32(1), SqlParam::Text("Auckland".to_string())]);
-        let (_, headers, _) = build_postgrest_upsert("http://localhost:64321", &parts, &params).unwrap();
+        let params = make_params(vec![
+            SqlParam::I32(1),
+            SqlParam::Text("Auckland".to_string()),
+        ]);
+        let (_, headers, _) =
+            build_postgrest_upsert("http://localhost:64321", &parts, &params).unwrap();
         let prefer = headers.get("Prefer").unwrap().to_str().unwrap();
         assert!(prefer.contains("resolution=merge-duplicates"));
         assert!(prefer.contains("return=representation"));
@@ -1268,7 +1372,8 @@ mod tests {
         let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
         parts.schema_override = Some("custom".to_string());
         let params = ParamStore::new();
-        let (_, headers) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
+        let (_, headers) =
+            build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(headers.get("Accept-Profile").unwrap(), "custom");
     }
 
@@ -1278,7 +1383,8 @@ mod tests {
         parts.schema_override = Some("custom".to_string());
         parts.set_clauses = vec![("name".to_string(), 1)];
         let params = make_params(vec![SqlParam::Text("Auckland".to_string())]);
-        let (_, headers, _) = build_postgrest_insert("http://localhost:64321", &parts, &params).unwrap();
+        let (_, headers, _) =
+            build_postgrest_insert("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(headers.get("Content-Profile").unwrap(), "custom");
     }
 
@@ -1517,18 +1623,20 @@ mod tests {
     #[test]
     fn test_not_or_tree_syntax() {
         let mut parts = SqlParts::new(SqlOperation::Select, "public", "cities");
-        parts.filters.push(FilterCondition::Not(Box::new(FilterCondition::Or(vec![
-            FilterCondition::Comparison {
-                column: "a".to_string(),
-                operator: FilterOperator::Eq,
-                param_index: 1,
-            },
-            FilterCondition::Comparison {
-                column: "b".to_string(),
-                operator: FilterOperator::Eq,
-                param_index: 2,
-            },
-        ]))));
+        parts
+            .filters
+            .push(FilterCondition::Not(Box::new(FilterCondition::Or(vec![
+                FilterCondition::Comparison {
+                    column: "a".to_string(),
+                    operator: FilterOperator::Eq,
+                    param_index: 1,
+                },
+                FilterCondition::Comparison {
+                    column: "b".to_string(),
+                    operator: FilterOperator::Eq,
+                    param_index: 2,
+                },
+            ]))));
         let params = make_params(vec![SqlParam::I32(1), SqlParam::I32(2)]);
         let (url, _) = build_postgrest_select("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(
@@ -1661,7 +1769,8 @@ mod tests {
         parts.set_clauses = vec![("id".to_string(), 1)];
         parts.conflict_columns = vec!["id".to_string(), "a&b".to_string()];
         let params = make_params(vec![SqlParam::I32(1)]);
-        let (url, _, _) = build_postgrest_upsert("http://localhost:64321", &parts, &params).unwrap();
+        let (url, _, _) =
+            build_postgrest_upsert("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(
             url,
             "http://localhost:64321/rest/v1/cities?on_conflict=id,a%26b"
@@ -1688,7 +1797,8 @@ mod tests {
             SqlParam::Text("x".to_string()),
             SqlParam::Text("a&b".to_string()),
         ]);
-        let (url, _, _) = build_postgrest_update("http://localhost:64321", &parts, &params).unwrap();
+        let (url, _, _) =
+            build_postgrest_update("http://localhost:64321", &parts, &params).unwrap();
         assert_eq!(url, "http://localhost:64321/rest/v1/cities?slug=eq.a%26b");
 
         let mut parts = SqlParts::new(SqlOperation::Delete, "public", "cities");

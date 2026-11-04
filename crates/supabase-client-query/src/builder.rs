@@ -286,10 +286,7 @@ impl<T: Table> TypedQueryBuilder<T> {
         let all_cols = T::column_names();
         let update_vals = value.bind_update();
 
-        let update_cols: Vec<&&str> = all_cols
-            .iter()
-            .filter(|c| !pk_cols.contains(c))
-            .collect();
+        let update_cols: Vec<&&str> = all_cols.iter().filter(|c| !pk_cols.contains(c)).collect();
 
         for (col, val) in update_cols.iter().zip(update_vals.into_iter()) {
             let idx = params.push(val);

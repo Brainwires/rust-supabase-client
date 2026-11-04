@@ -8,9 +8,9 @@
 //!
 //! Run with: cargo test -p supabase-client-query --test rest_integration
 
-use serial_test::serial;
 use serde::Deserialize;
 use serde_json::json;
+use serial_test::serial;
 use supabase_client_core::{SupabaseClient, SupabaseConfig};
 use supabase_client_query::{
     CountOption, Filterable, IsValue, Modifiable, OrderDirection, SupabaseClientQueryExt,
@@ -336,12 +336,7 @@ async fn rest_select_with_count() {
     let client = create_client();
     reset_data(&client).await;
 
-    let resp = client
-        .from("cities")
-        .select("*")
-        .count()
-        .execute()
-        .await;
+    let resp = client.from("cities").select("*").count().execute().await;
     assert!(resp.is_ok(), "count failed: {:?}", resp.error);
     assert_eq!(resp.count, Some(5));
 }
@@ -398,10 +393,23 @@ async fn rest_insert_many_rows() {
     let nz_id = nz.into_single().unwrap().get_as::<i64>("id").unwrap();
 
     let rows = vec![
-        supabase_client_core::row![("name", "Queenstown"), ("country_id", nz_id), ("population", 15000_i64)],
-        supabase_client_core::row![("name", "Rotorua"), ("country_id", nz_id), ("population", 58000_i64)],
+        supabase_client_core::row![
+            ("name", "Queenstown"),
+            ("country_id", nz_id),
+            ("population", 15000_i64)
+        ],
+        supabase_client_core::row![
+            ("name", "Rotorua"),
+            ("country_id", nz_id),
+            ("population", 58000_i64)
+        ],
     ];
-    let resp = client.from("cities").insert_many(rows).select().execute().await;
+    let resp = client
+        .from("cities")
+        .insert_many(rows)
+        .select()
+        .execute()
+        .await;
     assert!(resp.is_ok(), "insert_many failed: {:?}", resp.error);
     let data = resp.into_result().unwrap();
     assert_eq!(data.len(), 2);
@@ -600,10 +608,22 @@ async fn rest_csv_format() {
     let csv_text = csv.unwrap();
     let lines: Vec<&str> = csv_text.trim().lines().collect();
     // Should have header row + 5 data rows
-    assert_eq!(lines.len(), 6, "Expected 6 lines (header + 5 rows), got {}: {:?}", lines.len(), lines);
+    assert_eq!(
+        lines.len(),
+        6,
+        "Expected 6 lines (header + 5 rows), got {}: {:?}",
+        lines.len(),
+        lines
+    );
     assert!(lines[0].contains("name"), "Header should contain 'name'");
-    assert!(lines[0].contains("population"), "Header should contain 'population'");
-    assert!(lines[1].contains("Auckland"), "First data row should be Auckland");
+    assert!(
+        lines[0].contains("population"),
+        "Header should contain 'population'"
+    );
+    assert!(
+        lines[1].contains("Auckland"),
+        "First data row should be Auckland"
+    );
 }
 
 // ============================================================
