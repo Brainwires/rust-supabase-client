@@ -174,15 +174,24 @@ mod integration {
         assert!(resp.is_ok(), "sign_up_with_email failed: {:?}", resp.err());
 
         let auth_resp = resp.unwrap();
-        // With email confirmations disabled, we should get a session
-        assert!(auth_resp.session.is_some() || auth_resp.user.is_some());
+        // supabase/config.toml disables email confirmations, so GoTrue
+        // autoconfirms and returns a session (at the top level of the body).
+        let session = auth_resp
+            .session
+            .as_ref()
+            .expect("autoconfirm sign-up must return a session");
+        let user = auth_resp.user.as_ref().expect("sign-up must return the user");
+        assert_eq!(session.user.id, user.id);
+        assert_eq!(user.email.as_deref(), Some(email.as_str()));
+        assert!(!session.access_token.is_empty());
+        assert!(session.expires_at.is_some());
+
+        // The session is stored and SignedIn was recorded.
+        let stored = auth.get_session().await.expect("session must be stored");
+        assert_eq!(stored.access_token, session.access_token);
 
         // Cleanup
-        if let Some(session) = &auth_resp.session {
-            cleanup_user(&admin.admin(), &session.user.id).await;
-        } else if let Some(user) = &auth_resp.user {
-            cleanup_user(&admin.admin(), &user.id).await;
-        }
+        cleanup_user(&admin.admin(), &user.id).await;
     }
 
     #[tokio::test]

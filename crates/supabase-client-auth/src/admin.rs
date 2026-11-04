@@ -19,10 +19,21 @@ use crate::types::{AdminUserListResponse, Factor, OAuthClient, OAuthClientListRe
 /// let admin = auth.admin();
 /// let users = admin.list_users(None, None).await?;
 /// ```
-#[derive(Debug)]
 pub struct AdminClient<'a> {
     auth: &'a AuthClient,
     service_role_key: Option<&'a str>,
+}
+
+impl std::fmt::Debug for AdminClient<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdminClient")
+            .field("auth", self.auth)
+            .field(
+                "service_role_key",
+                &self.service_role_key.map(|_| "[redacted]"),
+            )
+            .finish()
+    }
 }
 
 impl<'a> AdminClient<'a> {
@@ -54,7 +65,7 @@ impl<'a> AdminClient<'a> {
         page: Option<u32>,
         per_page: Option<u32>,
     ) -> Result<AdminUserListResponse, AuthError> {
-        let mut url = self.auth.url("/admin/users");
+        let mut url = self.auth.fixed_url(&["admin", "users"]);
         {
             let mut pairs = url.query_pairs_mut();
             if let Some(page) = page {
@@ -86,7 +97,7 @@ impl<'a> AdminClient<'a> {
     ///
     /// Mirrors `supabase.auth.admin.getUserById(uid)`.
     pub async fn get_user_by_id(&self, user_id: &str) -> Result<User, AuthError> {
-        let url = self.auth.url(&format!("/admin/users/{}", user_id));
+        let url = self.auth.url_for(&["admin", "users", user_id])?;
         let resp = self
             .auth
             .http()
@@ -106,7 +117,7 @@ impl<'a> AdminClient<'a> {
         &self,
         params: AdminCreateUserParams,
     ) -> Result<User, AuthError> {
-        let url = self.auth.url("/admin/users");
+        let url = self.auth.fixed_url(&["admin", "users"]);
         let resp = self
             .auth
             .http()
@@ -128,7 +139,7 @@ impl<'a> AdminClient<'a> {
         user_id: &str,
         params: AdminUpdateUserParams,
     ) -> Result<User, AuthError> {
-        let url = self.auth.url(&format!("/admin/users/{}", user_id));
+        let url = self.auth.url_for(&["admin", "users", user_id])?;
         let resp = self
             .auth
             .http()
@@ -157,7 +168,7 @@ impl<'a> AdminClient<'a> {
         user_id: &str,
         soft_delete: bool,
     ) -> Result<(), AuthError> {
-        let url = self.auth.url(&format!("/admin/users/{}", user_id));
+        let url = self.auth.url_for(&["admin", "users", user_id])?;
 
         let body = if soft_delete {
             json!({ "should_soft_delete": true })
@@ -184,12 +195,12 @@ impl<'a> AdminClient<'a> {
         email: &str,
         redirect_to: Option<&str>,
     ) -> Result<User, AuthError> {
-        let mut body = json!({ "email": email });
+        let body = json!({ "email": email });
+        // GoTrue reads the redirect from the query string, not the body.
+        let mut url = self.auth.fixed_url(&["invite"]);
         if let Some(redirect) = redirect_to {
-            body["redirect_to"] = json!(redirect);
+            url.query_pairs_mut().append_pair("redirect_to", redirect);
         }
-
-        let url = self.auth.url("/invite");
         let resp = self
             .auth
             .http()
@@ -206,7 +217,7 @@ impl<'a> AdminClient<'a> {
         &self,
         params: GenerateLinkParams,
     ) -> Result<serde_json::Value, AuthError> {
-        let url = self.auth.url("/admin/generate_link");
+        let url = self.auth.fixed_url(&["admin", "generate_link"]);
         let resp = self
             .auth
             .http()
@@ -231,9 +242,7 @@ impl<'a> AdminClient<'a> {
     ///
     /// Mirrors `supabase.auth.admin.mfa.listFactors()`.
     pub async fn mfa_list_factors(&self, user_id: &str) -> Result<Vec<Factor>, AuthError> {
-        let url = self
-            .auth
-            .url(&format!("/admin/users/{}/factors", user_id));
+        let url = self.auth.url_for(&["admin", "users", user_id, "factors"])?;
         let resp = self
             .auth
             .http()
@@ -261,7 +270,7 @@ impl<'a> AdminClient<'a> {
         page: Option<u32>,
         per_page: Option<u32>,
     ) -> Result<OAuthClientListResponse, AuthError> {
-        let mut url = self.auth.url("/admin/oauth/clients");
+        let mut url = self.auth.fixed_url(&["admin", "oauth", "clients"]);
         {
             let mut pairs = url.query_pairs_mut();
             if let Some(page) = page {
@@ -296,7 +305,7 @@ impl<'a> AdminClient<'a> {
         &self,
         params: CreateOAuthClientParams,
     ) -> Result<OAuthClient, AuthError> {
-        let url = self.auth.url("/admin/oauth/clients");
+        let url = self.auth.fixed_url(&["admin", "oauth", "clients"]);
         let resp = self
             .auth
             .http()
@@ -322,7 +331,7 @@ impl<'a> AdminClient<'a> {
         &self,
         client_id: &str,
     ) -> Result<OAuthClient, AuthError> {
-        let url = self.auth.url(&format!("/admin/oauth/clients/{}", client_id));
+        let url = self.auth.url_for(&["admin", "oauth", "clients", client_id])?;
         let resp = self
             .auth
             .http()
@@ -348,7 +357,7 @@ impl<'a> AdminClient<'a> {
         client_id: &str,
         params: UpdateOAuthClientParams,
     ) -> Result<OAuthClient, AuthError> {
-        let url = self.auth.url(&format!("/admin/oauth/clients/{}", client_id));
+        let url = self.auth.url_for(&["admin", "oauth", "clients", client_id])?;
         let resp = self
             .auth
             .http()
@@ -374,7 +383,7 @@ impl<'a> AdminClient<'a> {
         &self,
         client_id: &str,
     ) -> Result<(), AuthError> {
-        let url = self.auth.url(&format!("/admin/oauth/clients/{}", client_id));
+        let url = self.auth.url_for(&["admin", "oauth", "clients", client_id])?;
         let resp = self
             .auth
             .http()
@@ -392,10 +401,7 @@ impl<'a> AdminClient<'a> {
         &self,
         client_id: &str,
     ) -> Result<OAuthClient, AuthError> {
-        let url = self.auth.url(&format!(
-            "/admin/oauth/clients/{}/regenerate_secret",
-            client_id
-        ));
+        let url = self.auth.url_for(&["admin", "oauth", "clients", client_id, "regenerate_secret"])?;
         let resp = self
             .auth
             .http()
@@ -421,9 +427,7 @@ impl<'a> AdminClient<'a> {
         user_id: &str,
         factor_id: &str,
     ) -> Result<(), AuthError> {
-        let url = self
-            .auth
-            .url(&format!("/admin/users/{}/factors/{}", user_id, factor_id));
+        let url = self.auth.url_for(&["admin", "users", user_id, "factors", factor_id])?;
         let resp = self
             .auth
             .http()
@@ -436,21 +440,5 @@ impl<'a> AdminClient<'a> {
 }
 
 async fn parse_admin_error(status: u16, resp: reqwest::Response) -> AuthError {
-    use crate::error::GoTrueErrorResponse;
-
-    match resp.json::<GoTrueErrorResponse>().await {
-        Ok(err_resp) => {
-            let error_code = err_resp.error_code.as_deref().map(|s| s.into());
-            AuthError::Api {
-                status,
-                message: err_resp.error_message(),
-                error_code,
-            }
-        }
-        Err(_) => AuthError::Api {
-            status,
-            message: format!("HTTP {}", status),
-            error_code: None,
-        },
-    }
+    crate::client::parse_gotrue_error(status, resp).await
 }

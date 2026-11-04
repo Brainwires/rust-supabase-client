@@ -15,13 +15,31 @@ pub struct GoTrueErrorResponse {
     pub msg: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
+    /// GoTrue sends the HTTP status here as a number in most versions, and
+    /// an error code string in some, so it is kept as raw JSON.
     #[serde(default)]
-    pub code: Option<i32>,
+    pub code: Option<serde_json::Value>,
     #[serde(default)]
     pub error_code: Option<String>,
 }
 
 impl GoTrueErrorResponse {
+    /// The machine-readable error code: `error_code`, or `code` when it is a
+    /// string, or the OAuth-style `error` (e.g. `invalid_grant`) when the body
+    /// has an `error_description`.
+    pub fn code_str(&self) -> Option<String> {
+        if let Some(code) = &self.error_code {
+            return Some(code.clone());
+        }
+        if let Some(serde_json::Value::String(code)) = &self.code {
+            return Some(code.clone());
+        }
+        if self.error_description.is_some() {
+            return self.error.clone();
+        }
+        None
+    }
+
     /// Extract the most informative error message from the response.
     pub fn error_message(&self) -> String {
         self.msg
@@ -73,6 +91,11 @@ pub enum AuthError {
     /// Invalid or malformed JWT token.
     #[error("Invalid token: {0}")]
     InvalidToken(String),
+
+    /// A caller-supplied id cannot be used as a URL path segment (empty, `.`
+    /// or `..`).
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 /// Known GoTrue error codes for programmatic matching.
@@ -259,5 +282,25 @@ mod tests {
             assert_eq!(parsed, *expected);
             assert_eq!(parsed.to_string(), *s);
         }
+    }
+
+    #[test]
+    fn gotrue_error_code_number_or_string() {
+        let r: GoTrueErrorResponse =
+            serde_json::from_str(r#"{"code":400,"error_code":"weak_password","msg":"x"}"#).unwrap();
+        assert_eq!(r.code, Some(serde_json::json!(400)));
+        assert_eq!(r.code_str().as_deref(), Some("weak_password"));
+        let r: GoTrueErrorResponse =
+            serde_json::from_str(r#"{"code":"otp_expired","message":"y"}"#).unwrap();
+        assert_eq!(r.code_str().as_deref(), Some("otp_expired"));
+        let r: GoTrueErrorResponse = serde_json::from_str(
+            r#"{"error":"invalid_grant","error_description":"Invalid Refresh Token: Refresh Token Not Found"}"#,
+        )
+        .unwrap();
+        assert_eq!(r.code_str().as_deref(), Some("invalid_grant"));
+        assert_eq!(
+            r.error_message(),
+            "Invalid Refresh Token: Refresh Token Not Found"
+        );
     }
 }
