@@ -102,7 +102,9 @@ pub enum InvokeBody {
 ///     .body(json!({"name": "World"}))
 ///     .header("x-custom", "value");
 /// ```
-#[derive(Debug, Clone)]
+///
+/// `Debug` output redacts the authorization override and custom header values.
+#[derive(Clone)]
 pub struct InvokeOptions {
     pub(crate) body: InvokeBody,
     pub(crate) method: HttpMethod,
@@ -110,6 +112,24 @@ pub struct InvokeOptions {
     pub(crate) region: Option<FunctionRegion>,
     pub(crate) content_type: Option<String>,
     pub(crate) authorization: Option<String>,
+}
+
+impl std::fmt::Debug for InvokeOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut header_names: Vec<&str> = self.headers.keys().map(String::as_str).collect();
+        header_names.sort_unstable();
+        f.debug_struct("InvokeOptions")
+            .field("body", &self.body)
+            .field("method", &self.method)
+            .field("headers", &header_names)
+            .field("region", &self.region)
+            .field("content_type", &self.content_type)
+            .field(
+                "authorization",
+                &self.authorization.as_ref().map(|_| "[redacted]"),
+            )
+            .finish()
+    }
 }
 
 impl Default for InvokeOptions {
