@@ -898,9 +898,14 @@ let mine = storage.from("avatars").download("me.png").await?;  // as the user
 auth.sign_out_current().await?;          // back to the anon key
 ```
 
+Query builders take the token when they are created; storage, functions and
+GraphQL clients read it on every request; realtime channels join with it, and
+a refreshed token is pushed to joined channels on the next heartbeat.
+
 For a session obtained elsewhere, call `client.set_access_token(jwt)`;
-`StorageClient::set_auth` and `FunctionsClient::set_auth` override the token
-for a single service client.
+`set_auth` on the storage, functions, GraphQL and realtime clients (and
+`.access_token(jwt)` on a query builder) override the token for a single
+client.
 
 ## Testing
 
