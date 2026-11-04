@@ -46,11 +46,7 @@ pub(crate) fn apply_diff(
                 .iter()
                 .filter_map(|m| m.phx_ref.as_ref())
                 .collect();
-            metas.retain(|m| {
-                m.phx_ref
-                    .as_ref()
-                    .map_or(true, |r| !leave_refs.contains(&r))
-            });
+            metas.retain(|m| m.phx_ref.as_ref().is_none_or(|r| !leave_refs.contains(&r)));
             if metas.is_empty() {
                 current.remove(&key);
             }
