@@ -8,7 +8,7 @@ use crate::parse::{parse_fields, ParsedField, TableAttrs};
 /// the derive: the query crate itself when it is a direct dependency
 /// (possibly renamed), otherwise `supabase_client_sdk::__query`.
 fn query_crate() -> TokenStream {
-    use proc_macro_crate::{FoundCrate, crate_name};
+    use proc_macro_crate::{crate_name, FoundCrate};
     let ident = |name: &str| proc_macro2::Ident::new(name, proc_macro2::Span::call_site());
     match crate_name("supabase-client-query") {
         Ok(FoundCrate::Itself) => quote!(crate),
