@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use crate::types::{FactorType, OAuthClientGrantType, OAuthClientResponseType, OtpChannel, OtpType};
+use crate::types::{
+    FactorType, OAuthClientGrantType, OAuthClientResponseType, OtpChannel, OtpType,
+};
 
 /// Parameters for updating the current user.
 ///
@@ -558,8 +560,7 @@ mod tests {
 
     #[test]
     fn mfa_enroll_params_phone_builder() {
-        let params = MfaEnrollParams::phone("+1234567890")
-            .friendly_name("My Phone");
+        let params = MfaEnrollParams::phone("+1234567890").friendly_name("My Phone");
         assert_eq!(params.factor_type, FactorType::Phone);
         assert_eq!(params.phone.as_deref(), Some("+1234567890"));
         assert_eq!(params.friendly_name.as_deref(), Some("My Phone"));
@@ -584,11 +585,13 @@ mod tests {
 
     #[test]
     fn sso_sign_in_params_domain_builder() {
-        let params = SsoSignInParams::domain("company.com")
-            .redirect_to("https://app.com/callback");
+        let params = SsoSignInParams::domain("company.com").redirect_to("https://app.com/callback");
         assert_eq!(params.domain.as_deref(), Some("company.com"));
         assert!(params.provider_id.is_none());
-        assert_eq!(params.redirect_to.as_deref(), Some("https://app.com/callback"));
+        assert_eq!(
+            params.redirect_to.as_deref(),
+            Some("https://app.com/callback")
+        );
         assert!(params.skip_http_redirect);
     }
 
@@ -657,12 +660,10 @@ mod tests {
 
     #[test]
     fn create_oauth_client_params_builder() {
-        let params = CreateOAuthClientParams::new(
-            "My App",
-            vec!["https://myapp.com/callback".to_string()],
-        )
-        .client_uri("https://myapp.com")
-        .scope("openid profile");
+        let params =
+            CreateOAuthClientParams::new("My App", vec!["https://myapp.com/callback".to_string()])
+                .client_uri("https://myapp.com")
+                .scope("openid profile");
 
         assert_eq!(params.client_name, "My App");
         assert_eq!(params.redirect_uris.len(), 1);
@@ -674,10 +675,8 @@ mod tests {
 
     #[test]
     fn create_oauth_client_params_serialization() {
-        let params = CreateOAuthClientParams::new(
-            "Test App",
-            vec!["https://test.com/cb".to_string()],
-        );
+        let params =
+            CreateOAuthClientParams::new("Test App", vec!["https://test.com/cb".to_string()]);
         let json = serde_json::to_value(&params).unwrap();
         assert_eq!(json["client_name"], "Test App");
         assert_eq!(json["redirect_uris"][0], "https://test.com/cb");
@@ -703,8 +702,7 @@ mod tests {
 
     #[test]
     fn update_oauth_client_params_serialization() {
-        let params = UpdateOAuthClientParams::new()
-            .client_name("New Name");
+        let params = UpdateOAuthClientParams::new().client_name("New Name");
         let json = serde_json::to_value(&params).unwrap();
         assert_eq!(json["client_name"], "New Name");
         // Optional fields should be absent

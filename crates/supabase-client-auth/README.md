@@ -10,7 +10,8 @@ Auth (GoTrue) client for supabase-client.
 - **`AuthClient`** — full GoTrue HTTP client via reqwest
 - Sign-in methods: email/password, phone, OAuth, magic link, OTP, anonymous, Web3 (Ethereum/Solana), SSO (SAML), ID token (external OIDC)
 - Session management: `get_session()`, `set_session()`, `on_auth_state_change()`
-- Auto-refresh with configurable intervals via `start_auto_refresh()`
+- Auto-refresh with configurable intervals via `start_auto_refresh()` (single-flight; never undoes a sign-out)
+- The session's access token is shared with the `SupabaseClient`, so other clients built from it act as the user
 - JWT claims extraction via `get_claims()` (no network call)
 - MFA: TOTP enroll/challenge/verify, phone factors, AAL detection
 - **Admin API**: list/create/update/delete users, MFA factor management
@@ -20,7 +21,10 @@ Auth (GoTrue) client for supabase-client.
 ## Usage
 
 ```rust
+use supabase_client_core::{SupabaseClient, SupabaseConfig};
 use supabase_client_auth::SupabaseClientAuthExt;
+
+let client = SupabaseClient::new(SupabaseConfig::new("https://your-project.supabase.co", "your-anon-key"))?;
 
 let auth = client.auth()?;
 

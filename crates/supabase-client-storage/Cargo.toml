@@ -12,6 +12,17 @@ readme = "README.md"
 keywords = ["supabase", "storage", "object-storage", "file-upload", "s3"]
 categories = ["filesystem", "web-programming::http-client"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["rustls"]
+## TLS via rustls (aws-lc-rs crypto, OS trust store). No OpenSSL needed.
+rustls = ["reqwest/rustls", "supabase-client-core/rustls"]
+## TLS via the platform library (OpenSSL on Linux, SChannel, Secure Transport).
+native-tls = ["reqwest/native-tls", "supabase-client-core/native-tls"]
+
 [dependencies]
 supabase-client-core.workspace = true
 serde.workspace = true
@@ -20,9 +31,7 @@ thiserror.workspace = true
 tracing.workspace = true
 reqwest.workspace = true
 url.workspace = true
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-reqwest = { workspace = true, features = ["rustls-tls"] }
+base64.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

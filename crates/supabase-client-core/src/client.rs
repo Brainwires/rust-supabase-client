@@ -5,6 +5,7 @@ use sqlx::postgres::PgPoolOptions;
 #[cfg(feature = "direct-sql")]
 use sqlx::PgPool;
 
+use crate::auth_token::AccessToken;
 use crate::config::SupabaseConfig;
 use crate::error::SupabaseResult;
 use crate::SupabaseError;
@@ -17,6 +18,9 @@ use crate::SupabaseError;
 pub struct SupabaseClient {
     config: Arc<SupabaseConfig>,
     http: reqwest::Client,
+    /// The signed-in user's access token, shared by every clone and by the
+    /// service clients created from this client.
+    access_token: AccessToken,
     #[cfg(feature = "direct-sql")]
     pool: Option<Arc<PgPool>>,
 }
@@ -25,12 +29,27 @@ impl SupabaseClient {
     /// Create a new REST-only client (no database connection needed).
     ///
     /// This is the primary constructor. Queries go through PostgREST.
+    ///
+    /// On wasm32 this refuses a privileged key (a `service_role` JWT or an
+    /// `sb_secret_...` key), because code shipped to a browser is readable by
+    /// anyone; see [`new_allowing_privileged_key`](Self::new_allowing_privileged_key).
     pub fn new(config: SupabaseConfig) -> SupabaseResult<Self> {
+        check_privileged_key(&config, cfg!(target_arch = "wasm32"))?;
+        Self::new_allowing_privileged_key(config)
+    }
+
+    /// Like [`new`](Self::new), but accepts a privileged key on wasm32.
+    ///
+    /// Only use this for wasm32 builds that never run in a browser (for
+    /// example a server-side wasm runtime). On native targets it is the same
+    /// as `new`.
+    pub fn new_allowing_privileged_key(config: SupabaseConfig) -> SupabaseResult<Self> {
         validate_config(&config)?;
         let http = build_http_client()?;
         Ok(Self {
             config: Arc::new(config),
             http,
+            access_token: AccessToken::new(),
             #[cfg(feature = "direct-sql")]
             pool: None,
         })
@@ -42,6 +61,7 @@ impl SupabaseClient {
     #[cfg(feature = "direct-sql")]
     pub async fn with_database(config: SupabaseConfig) -> SupabaseResult<Self> {
         validate_config(&config)?;
+        check_privileged_key(&config, cfg!(target_arch = "wasm32"))?;
         let db_url = config.database_url.as_ref().ok_or_else(|| {
             crate::error::SupabaseError::Config(
                 "database_url is required for direct-sql mode".into(),
@@ -62,6 +82,7 @@ impl SupabaseClient {
         Ok(Self {
             config: Arc::new(config),
             http,
+            access_token: AccessToken::new(),
             pool: Some(Arc::new(pool)),
         })
     }
@@ -72,6 +93,7 @@ impl SupabaseClient {
         Self {
             config: Arc::new(config),
             http: reqwest::Client::new(),
+            access_token: AccessToken::new(),
             pool: Some(Arc::new(pool)),
         }
     }
@@ -89,6 +111,40 @@ impl SupabaseClient {
     /// Get the Supabase API key.
     pub fn api_key(&self) -> &str {
         &self.config.supabase_key
+    }
+
+    /// Use `token` (a user JWT) as the bearer token for requests made through
+    /// this client and the service clients created from it.
+    ///
+    /// The `apikey` header still carries the project API key. The auth client
+    /// created by `client.auth()` calls this on sign-in and token refresh, so
+    /// you only need it when the session comes from somewhere else.
+    pub fn set_access_token(&self, token: impl Into<String>) {
+        self.access_token.set(token);
+    }
+
+    /// Stop sending a user JWT; requests fall back to the API key.
+    pub fn clear_access_token(&self) {
+        self.access_token.clear();
+    }
+
+    /// The user JWT currently in use, if any.
+    pub fn access_token(&self) -> Option<String> {
+        self.access_token.get()
+    }
+
+    /// The shared token slot, for service clients that need to follow
+    /// sign-in, refresh and sign-out.
+    pub fn access_token_handle(&self) -> AccessToken {
+        self.access_token.clone()
+    }
+
+    /// The token to send as `Authorization: Bearer ...`: the user JWT when
+    /// one is set, otherwise the API key.
+    pub fn bearer_token(&self) -> String {
+        self.access_token
+            .get()
+            .unwrap_or_else(|| self.config.supabase_key.clone())
     }
 
     /// Get the default schema.
@@ -130,7 +186,7 @@ impl SupabaseClient {
     /// Check if the pool is closed (if available).
     #[cfg(feature = "direct-sql")]
     pub fn is_closed(&self) -> bool {
-        self.pool.as_ref().map_or(true, |p| p.is_closed())
+        self.pool.as_ref().is_none_or(|p| p.is_closed())
     }
 }
 
@@ -144,6 +200,15 @@ fn validate_config(config: &SupabaseConfig) -> SupabaseResult<()> {
             err
         ))
     })?;
+    Ok(())
+}
+
+/// Refuse a service_role/secret key on wasm32.
+fn check_privileged_key(config: &SupabaseConfig, is_wasm: bool) -> SupabaseResult<()> {
+    use crate::keys::{classify_key, KeyKind, PRIVILEGED_KEY_ON_WASM};
+    if is_wasm && classify_key(&config.supabase_key) == KeyKind::Privileged {
+        return Err(SupabaseError::Config(PRIVILEGED_KEY_ON_WASM.into()));
+    }
     Ok(())
 }
 
@@ -226,6 +291,54 @@ mod tests {
         assert_eq!(config.supabase_url, "http://localhost:54321");
         assert_eq!(config.supabase_key, "test-anon-key");
         assert_eq!(config.schema, "public");
+    }
+
+    #[test]
+    fn test_access_token_is_shared_by_clones() {
+        let client = SupabaseClient::new(test_config()).unwrap();
+        let cloned = client.clone();
+        assert_eq!(client.bearer_token(), "test-anon-key");
+        client.set_access_token("user-jwt");
+        assert_eq!(cloned.access_token().as_deref(), Some("user-jwt"));
+        assert_eq!(cloned.bearer_token(), "user-jwt");
+        assert!(client
+            .access_token_handle()
+            .ptr_eq(&cloned.access_token_handle()));
+        cloned.clear_access_token();
+        assert_eq!(client.bearer_token(), "test-anon-key");
+    }
+
+    fn service_role_jwt() -> String {
+        use base64::Engine;
+        let p =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"role":"service_role"}"#);
+        format!("eyJhbGciOiJIUzI1NiJ9.{}.sig", p)
+    }
+
+    #[test]
+    fn test_privileged_key_refused_on_wasm_unless_allowed() {
+        let config = SupabaseConfig::new("http://localhost:54321", service_role_jwt());
+        assert!(matches!(
+            check_privileged_key(&config, true),
+            Err(SupabaseError::Config(_))
+        ));
+        assert!(check_privileged_key(&config, false).is_ok());
+        // Native: both constructors accept it.
+        assert!(SupabaseClient::new(config.clone()).is_ok());
+        assert!(SupabaseClient::new_allowing_privileged_key(config).is_ok());
+        let secret = SupabaseConfig::new("http://localhost:54321", "sb_secret_x");
+        assert!(check_privileged_key(&secret, true).is_err());
+        let anon = SupabaseConfig::new("http://localhost:54321", "sb_publishable_x");
+        assert!(check_privileged_key(&anon, true).is_ok());
+    }
+
+    #[test]
+    fn test_debug_does_not_leak_access_token() {
+        let client = SupabaseClient::new(test_config()).unwrap();
+        client.set_access_token("user-jwt-secret");
+        let dbg = format!("{:?}", client);
+        assert!(!dbg.contains("user-jwt-secret"), "{}", dbg);
+        assert!(!dbg.contains("test-anon-key"), "{}", dbg);
     }
 
     #[test]

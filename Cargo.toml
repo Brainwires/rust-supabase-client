@@ -14,28 +14,32 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-rust-version = "1.75"
+# Minimum supported Rust version: uuid 1.29 (and so the default dependency
+# resolution) needs 1.89. CI checks the libraries with this toolchain.
+rust-version = "1.89"
 repository = "https://github.com/Brainwires/rust-supabase-client"
 homepage = "https://github.com/Brainwires/rust-supabase-client"
 authors = ["Brainwires"]
 
 [workspace.dependencies]
 # Internal crates
-supabase-client-core = { path = "crates/supabase-client-core", version = "0.2.2" }
-supabase-client-query = { path = "crates/supabase-client-query", version = "0.2.2" }
-supabase-client-derive = { path = "crates/supabase-client-derive", version = "0.2.2" }
-supabase-client-auth = { path = "crates/supabase-client-auth", version = "0.2.2" }
-supabase-client-realtime = { path = "crates/supabase-client-realtime", version = "0.2.2" }
-supabase-client-storage = { path = "crates/supabase-client-storage", version = "0.2.2" }
-supabase-client-functions = { path = "crates/supabase-client-functions", version = "0.2.2" }
-supabase-client-graphql = { path = "crates/supabase-client-graphql", version = "0.2.2" }
-supabase-client-sdk = { path = "crates/supabase-client-sdk", version = "0.2.2" }
+supabase-client-core = { path = "crates/supabase-client-core", version = "0.3.0", default-features = false }
+supabase-client-query = { path = "crates/supabase-client-query", version = "0.3.0", default-features = false }
+supabase-client-derive = { path = "crates/supabase-client-derive", version = "0.3.0", default-features = false }
+supabase-client-auth = { path = "crates/supabase-client-auth", version = "0.3.0", default-features = false }
+supabase-client-realtime = { path = "crates/supabase-client-realtime", version = "0.3.0", default-features = false }
+supabase-client-storage = { path = "crates/supabase-client-storage", version = "0.3.0", default-features = false }
+supabase-client-functions = { path = "crates/supabase-client-functions", version = "0.3.0", default-features = false }
+supabase-client-graphql = { path = "crates/supabase-client-graphql", version = "0.3.0", default-features = false }
+supabase-client-sdk = { path = "crates/supabase-client-sdk", version = "0.3.0", default-features = false }
 
-# Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "json", "chrono", "uuid"] }
+# Database. No TLS feature here: supabase-client-core's `rustls` / `native-tls`
+# features pick sqlx's TLS backend (`tls-rustls-aws-lc-rs` / `tls-native-tls`)
+# so the whole tree uses one rustls crypto provider (aws-lc-rs).
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 
 # Async
 tokio = { version = "1", features = ["sync"] }
@@ -54,13 +58,17 @@ tracing = "0.1"
 chrono = { version = "0.4", features = ["serde", "wasmbind"] }
 uuid = { version = "1", features = ["v4", "serde", "js"] }
 
-# HTTP client (for auth/storage)
-reqwest = { version = "0.12", features = ["json"] }
+# HTTP client. Default features off so the TLS backend is chosen by each
+# crate's `rustls` (default) / `native-tls` features instead of reqwest's
+# default-tls. reqwest's `rustls` feature uses aws-lc-rs and verifies
+# certificates against the OS trust store (rustls-platform-verifier).
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "charset", "http2", "system-proxy"] }
 url = "2"
 percent-encoding = "2"
 
-# WebSocket (for realtime — native only, per-crate conditional)
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+# WebSocket (for realtime — native only, per-crate conditional). TLS is
+# selected by supabase-client-realtime's `rustls` / `native-tls` features.
+tokio-tungstenite = "0.30"
 futures-util = "0.3"
 
 # WASM dependencies
@@ -68,16 +76,16 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = "0.3"
-gloo-timers = { version = "0.3", features = ["futures"] }
+gloo-timers = { version = "0.4", features = ["futures"] }
 serde-wasm-bindgen = "0.6"
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
 
 # Base64 (for JWT parsing)
 base64 = "0.22"
 
 # PKCE (for OAuth client-side flow)
-sha2 = "0.10"
-rand = "0.9"
+sha2 = "0.11"
+rand = "0.10"
 
 # Proc macros
 syn = { version = "2", features = ["full", "extra-traits"] }

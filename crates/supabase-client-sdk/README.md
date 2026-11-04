@@ -6,10 +6,15 @@ Rust client for Supabase with fluent API — REST by default, direct SQL opt-in.
 
 ```toml
 [dependencies]
-supabase-client-sdk = "0.2.1"
+supabase-client-sdk = "0.3"
 # Or with specific features:
-supabase-client-sdk = { version = "0.2.1", features = ["auth", "realtime"] }
+supabase-client-sdk = { version = "0.3", features = ["auth", "realtime"] }
+# Without rustls/aws-lc-rs, using the platform TLS library:
+# supabase-client-sdk = { version = "0.3", default-features = false, features = ["query", "derive", "native-tls"] }
 ```
+
+Requires Rust 1.89+. The default `rustls` backend compiles AWS-LC, which needs
+a C compiler (and CMake on some targets).
 
 ### Feature Flags
 
@@ -21,8 +26,15 @@ supabase-client-sdk = { version = "0.2.1", features = ["auth", "realtime"] }
 | `realtime` | No | WebSocket realtime subscriptions |
 | `storage` | No | Object storage client |
 | `functions` | No | Edge Functions client |
-| `direct-sql` | No | Direct PostgreSQL via sqlx (bypasses PostgREST) |
-| `full` | No | All features enabled |
+| `graphql` | No | GraphQL client (pg_graphql) |
+| `direct-sql` | No | Direct PostgreSQL via sqlx (bypasses PostgREST; not on wasm32) |
+| `full` | No | `query`, `derive`, `auth`, `realtime`, `storage`, `functions`, `graphql` |
+| `rustls` | Yes | TLS via rustls + aws-lc-rs with the OS trust store |
+| `native-tls` | No | TLS via OpenSSL / SChannel / Secure Transport |
+
+After `client.auth()?.sign_in_*()`, the query, storage, functions, GraphQL and
+realtime clients created from the same `SupabaseClient` send the signed-in
+user's JWT, so row-level security applies to that user.
 
 ## Quick Start
 
@@ -64,6 +76,7 @@ This is the facade crate that re-exports all sub-crates behind feature flags:
 | [`supabase-client-realtime`](https://crates.io/crates/supabase-client-realtime) | WebSocket realtime client |
 | [`supabase-client-storage`](https://crates.io/crates/supabase-client-storage) | Object storage client |
 | [`supabase-client-functions`](https://crates.io/crates/supabase-client-functions) | Edge Functions client |
+| [`supabase-client-graphql`](https://crates.io/crates/supabase-client-graphql) | GraphQL (pg_graphql) client |
 | [`supabase-client-wasm`](https://crates.io/crates/supabase-client-wasm) | WASM/TypeScript bindings |
 
 Each sub-crate provides an extension trait on `SupabaseClient`:
@@ -72,6 +85,7 @@ Each sub-crate provides an extension trait on `SupabaseClient`:
 - `SupabaseClientRealtimeExt` — `.realtime()`
 - `SupabaseClientStorageExt` — `.storage()`
 - `SupabaseClientFunctionsExt` — `.functions()`
+- `SupabaseClientGraphqlExt` — `.graphql()`
 
 See the [repository README](https://github.com/Brainwires/rust-supabase-client) for full documentation, examples, and usage guides.
 

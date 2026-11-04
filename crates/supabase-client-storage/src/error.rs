@@ -8,11 +8,22 @@ pub struct StorageApiErrorResponse {
     pub error: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
+    /// The storage server sends this as a string (`"404"`) or a number,
+    /// depending on version, so it is kept as raw JSON.
     #[serde(default, rename = "statusCode")]
-    pub status_code: Option<String>,
+    pub status_code: Option<serde_json::Value>,
 }
 
 impl StorageApiErrorResponse {
+    /// The `statusCode` field as text, whether it was sent as a string or a number.
+    pub fn status_code_str(&self) -> Option<String> {
+        match self.status_code.as_ref()? {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Null => None,
+            other => Some(other.to_string()),
+        }
+    }
+
     /// Extract the most informative error message from the response.
     pub fn error_message(&self) -> String {
         self.message
@@ -45,6 +56,15 @@ pub enum StorageError {
     /// URL parsing error.
     #[error("URL parse error: {0}")]
     UrlParse(#[from] url::ParseError),
+
+    /// A bucket id or object path is not usable in a URL (empty, `.`/`..`
+    /// segments, or a `/` in a bucket id).
+    #[error("Invalid storage path: {0}")]
+    InvalidPath(String),
+
+    /// The response body is larger than the configured download limit.
+    #[error("Response body exceeds the {limit} byte limit")]
+    ResponseTooLarge { limit: u64 },
 }
 
 impl From<StorageError> for SupabaseError {
@@ -93,13 +113,18 @@ mod tests {
         let json = r#"{"error":"Bucket not found","message":"The resource was not found","statusCode":"404"}"#;
         let resp: StorageApiErrorResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.error.as_deref(), Some("Bucket not found"));
-        assert_eq!(
-            resp.message.as_deref(),
-            Some("The resource was not found")
-        );
-        assert_eq!(resp.status_code.as_deref(), Some("404"));
+        assert_eq!(resp.message.as_deref(), Some("The resource was not found"));
+        assert_eq!(resp.status_code_str().as_deref(), Some("404"));
         // message takes priority
         assert_eq!(resp.error_message(), "The resource was not found");
+    }
+
+    #[test]
+    fn api_error_response_numeric_status_code() {
+        let json = r#"{"error":"not_found","message":"Object not found","statusCode":404}"#;
+        let resp: StorageApiErrorResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.status_code_str().as_deref(), Some("404"));
+        assert_eq!(resp.error_message(), "Object not found");
     }
 
     #[test]

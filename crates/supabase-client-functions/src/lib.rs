@@ -18,6 +18,8 @@
 //! let data: serde_json::Value = response.json()?;
 //! ```
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 pub mod client;
 pub mod error;
 pub mod types;
@@ -48,8 +50,12 @@ pub trait SupabaseClientFunctionsExt {
 }
 
 impl SupabaseClientFunctionsExt for SupabaseClient {
+    /// The returned client follows the `SupabaseClient`'s access token, so
+    /// once the auth client from `client.auth()` has a session, invocations
+    /// carry the user's JWT.
     fn functions(&self) -> Result<FunctionsClient, FunctionsError> {
-        FunctionsClient::new(self.supabase_url(), self.api_key())
+        Ok(FunctionsClient::new(self.supabase_url(), self.api_key())?
+            .with_session_token(self.access_token_handle()))
     }
 }
 

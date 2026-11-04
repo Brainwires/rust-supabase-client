@@ -12,7 +12,8 @@ const DEFAULT_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = std::env::var("SUPABASE_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
-    let key = std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
+    let key =
+        std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
     let config = SupabaseConfig::new(&url, &key);
     let client = SupabaseClient::new(config)?;
     let storage = client.storage()?;
@@ -59,7 +60,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== List files ===");
     let files = file_api.list(None, None).await?;
     for f in &files {
-        println!("  {} (size: {:?})", f.name, f.metadata.as_ref().and_then(|m| m.get("size")));
+        println!(
+            "  {} (size: {:?})",
+            f.name,
+            f.metadata.as_ref().and_then(|m| m.get("size"))
+        );
     }
 
     // ── File info ──
@@ -93,12 +98,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Move file ──
     println!("\n=== Move file ===");
-    file_api.move_file("hello-copy.txt", "hello-moved.txt").await?;
+    file_api
+        .move_file("hello-copy.txt", "hello-moved.txt")
+        .await?;
     println!("  Moved hello-copy.txt -> hello-moved.txt");
 
     // ── Remove files ──
     println!("\n=== Remove files ===");
-    let removed = file_api.remove(vec!["hello.txt", "hello-moved.txt"]).await?;
+    let removed = file_api
+        .remove(vec!["hello.txt", "hello-moved.txt"])
+        .await?;
     println!("  Removed {} files", removed.len());
 
     // ── Cleanup: delete bucket ──

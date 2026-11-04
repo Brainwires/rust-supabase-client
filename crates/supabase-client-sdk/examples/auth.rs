@@ -15,7 +15,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a client with the anon key (for user-facing auth)
     let url = std::env::var("SUPABASE_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
     let anon = std::env::var("SUPABASE_ANON_KEY").unwrap_or_else(|_| ANON_KEY.to_string());
-    let service = std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
+    let service =
+        std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
 
     let config = SupabaseConfig::new(&url, &anon);
     let client = SupabaseClient::new(config)?;
@@ -57,16 +58,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Session management ──
     println!("\n=== Session state ===");
     let stored = auth.get_session().await;
-    println!(
-        "  Session stored: {}",
-        stored.is_some(),
-    );
+    println!("  Session stored: {}", stored.is_some(),);
 
     // ── JWT claims extraction ──
     println!("\n=== JWT claims ===");
     let claims = AuthClient::get_claims(&session.access_token)?;
-    println!("  Role: {}", claims.get("role").unwrap_or(&serde_json::Value::Null));
-    println!("  Issuer: {}", claims.get("iss").unwrap_or(&serde_json::Value::Null));
+    println!(
+        "  Role: {}",
+        claims.get("role").unwrap_or(&serde_json::Value::Null)
+    );
+    println!(
+        "  Issuer: {}",
+        claims.get("iss").unwrap_or(&serde_json::Value::Null)
+    );
 
     // ── Get current user ──
     println!("\n=== Get user ===");
@@ -93,7 +97,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Total users: {}", users.users.len());
 
     // Clean up: delete the test user
-    if let Some(user) = users.users.iter().find(|u| u.email.as_deref() == Some(email)) {
+    if let Some(user) = users
+        .users
+        .iter()
+        .find(|u| u.email.as_deref() == Some(email))
+    {
         admin.delete_user(&user.id).await?;
         println!("  Cleaned up test user");
     }

@@ -221,7 +221,11 @@ mod integration_tests {
         assert!(upload.is_ok(), "upload failed: {:?}", upload.err());
 
         let downloaded = file_api.download("test-file.txt").await;
-        assert!(downloaded.is_ok(), "download failed: {:?}", downloaded.err());
+        assert!(
+            downloaded.is_ok(),
+            "download failed: {:?}",
+            downloaded.err()
+        );
         assert_eq!(downloaded.unwrap(), content);
 
         cleanup_bucket(&storage, &name).await;
@@ -244,9 +248,7 @@ mod integration_tests {
             .upload(
                 "file.txt",
                 b"version 1".to_vec(),
-                FileOptions::new()
-                    .content_type("text/plain")
-                    .upsert(true),
+                FileOptions::new().content_type("text/plain").upsert(true),
             )
             .await
             .expect("first upload failed");
@@ -256,14 +258,15 @@ mod integration_tests {
             .upload(
                 "file.txt",
                 b"version 2".to_vec(),
-                FileOptions::new()
-                    .content_type("text/plain")
-                    .upsert(true),
+                FileOptions::new().content_type("text/plain").upsert(true),
             )
             .await
             .expect("upsert failed");
 
-        let data = file_api.download("file.txt").await.expect("download failed");
+        let data = file_api
+            .download("file.txt")
+            .await
+            .expect("download failed");
         assert_eq!(data, b"version 2");
 
         cleanup_bucket(&storage, &name).await;
@@ -339,7 +342,11 @@ mod integration_tests {
         let files = file_api
             .list(
                 None,
-                Some(SearchOptions::new().limit(2).sort_by("name", SortOrder::Asc)),
+                Some(
+                    SearchOptions::new()
+                        .limit(2)
+                        .sort_by("name", SortOrder::Asc),
+                ),
             )
             .await
             .expect("list with options failed");
@@ -393,7 +400,10 @@ mod integration_tests {
             .await
             .expect("upload failed");
 
-        let docs = file_api.list(Some("docs"), None).await.expect("list docs failed");
+        let docs = file_api
+            .list(Some("docs"), None)
+            .await
+            .expect("list docs failed");
         assert_eq!(docs.len(), 2);
 
         cleanup_bucket(&storage, &name).await;
@@ -458,8 +468,14 @@ mod integration_tests {
         assert!(result.is_ok(), "copy failed: {:?}", result.err());
 
         // Both should be accessible
-        let orig = file_api.download("original.txt").await.expect("download original failed");
-        let copied = file_api.download("copy.txt").await.expect("download copy failed");
+        let orig = file_api
+            .download("original.txt")
+            .await
+            .expect("download original failed");
+        let copied = file_api
+            .download("copy.txt")
+            .await
+            .expect("download copy failed");
         assert_eq!(orig, b"original data");
         assert_eq!(copied, b"original data");
 
@@ -527,13 +543,19 @@ mod integration_tests {
             .expect("upload failed");
 
         let signed = file_api.create_signed_url("secret.txt", 3600).await;
-        assert!(signed.is_ok(), "create_signed_url failed: {:?}", signed.err());
+        assert!(
+            signed.is_ok(),
+            "create_signed_url failed: {:?}",
+            signed.err()
+        );
         let signed = signed.unwrap();
         assert!(!signed.signed_url.is_empty());
         assert!(signed.signed_url.contains("token="));
 
         // Download via the signed URL
-        let resp = reqwest::get(&signed.signed_url).await.expect("GET signed URL failed");
+        let resp = reqwest::get(&signed.signed_url)
+            .await
+            .expect("GET signed URL failed");
         assert!(resp.status().is_success());
         let body = resp.bytes().await.expect("read body failed");
         assert_eq!(body.as_ref(), b"secret data");
@@ -572,7 +594,11 @@ mod integration_tests {
         let result = file_api
             .create_signed_urls(vec!["file1.txt", "file2.txt"], 3600)
             .await;
-        assert!(result.is_ok(), "create_signed_urls failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "create_signed_urls failed: {:?}",
+            result.err()
+        );
         let entries = result.unwrap();
         assert_eq!(entries.len(), 2);
         for entry in &entries {
@@ -613,7 +639,9 @@ mod integration_tests {
         assert!(public_url.contains("/object/public/"));
 
         // Download via public URL
-        let resp = reqwest::get(&public_url).await.expect("GET public URL failed");
+        let resp = reqwest::get(&public_url)
+            .await
+            .expect("GET public URL failed");
         assert!(
             resp.status().is_success(),
             "Public URL download failed: {}",
@@ -689,7 +717,11 @@ mod integration_tests {
 
         match result.unwrap_err() {
             StorageError::Api { status, .. } => {
-                assert!(status == 400 || status == 404, "Expected 400 or 404, got {}", status);
+                assert!(
+                    status == 400 || status == 404,
+                    "Expected 400 or 404, got {}",
+                    status
+                );
             }
             other => panic!("Expected Api error, got: {:?}", other),
         }
@@ -1018,14 +1050,19 @@ mod integration_tests {
             .expect("upload failed");
 
         // Move to different bucket
-        let result = src_api.move_to_bucket("moveme.txt", &dst, "moved.txt").await;
+        let result = src_api
+            .move_to_bucket("moveme.txt", &dst, "moved.txt")
+            .await;
         assert!(result.is_ok(), "move_to_bucket failed: {:?}", result.err());
 
         // Source should be gone
         assert!(src_api.download("moveme.txt").await.is_err());
 
         // Destination should have the file
-        let data = dst_api.download("moved.txt").await.expect("download from dst failed");
+        let data = dst_api
+            .download("moved.txt")
+            .await
+            .expect("download from dst failed");
         assert_eq!(data, b"moving data");
 
         cleanup_bucket(&storage, &src).await;
@@ -1060,15 +1097,23 @@ mod integration_tests {
             .expect("upload failed");
 
         // Copy to different bucket
-        let result = src_api.copy_to_bucket("copyme.txt", &dst, "copied.txt").await;
+        let result = src_api
+            .copy_to_bucket("copyme.txt", &dst, "copied.txt")
+            .await;
         assert!(result.is_ok(), "copy_to_bucket failed: {:?}", result.err());
 
         // Source should still exist
-        let orig = src_api.download("copyme.txt").await.expect("download from src failed");
+        let orig = src_api
+            .download("copyme.txt")
+            .await
+            .expect("download from src failed");
         assert_eq!(orig, b"copy data");
 
         // Destination should have the copy
-        let copied = dst_api.download("copied.txt").await.expect("download from dst failed");
+        let copied = dst_api
+            .download("copied.txt")
+            .await
+            .expect("download from dst failed");
         assert_eq!(copied, b"copy data");
 
         cleanup_bucket(&storage, &src).await;
@@ -1099,11 +1144,19 @@ mod integration_tests {
 
         // With custom filename
         let url = file_api.get_public_url_with_download("report.pdf", Some("my-report.pdf"));
-        assert!(url.contains("?download=my-report.pdf"), "URL should contain download param: {}", url);
+        assert!(
+            url.contains("?download=my-report.pdf"),
+            "URL should contain download param: {}",
+            url
+        );
 
         // Download via the URL — server should set Content-Disposition
         let resp = reqwest::get(&url).await.expect("GET failed");
-        assert!(resp.status().is_success(), "Download failed: {}", resp.status());
+        assert!(
+            resp.status().is_success(),
+            "Download failed: {}",
+            resp.status()
+        );
         let body = resp.bytes().await.expect("read body failed");
         assert_eq!(body.as_ref(), b"pdf data");
 
@@ -1134,7 +1187,11 @@ mod integration_tests {
         let signed = file_api
             .create_signed_url_with_download("secret.txt", 3600, Some("download.txt"))
             .await;
-        assert!(signed.is_ok(), "create_signed_url_with_download failed: {:?}", signed.err());
+        assert!(
+            signed.is_ok(),
+            "create_signed_url_with_download failed: {:?}",
+            signed.err()
+        );
         let signed = signed.unwrap();
         assert!(
             signed.signed_url.contains("download=download.txt"),
@@ -1144,7 +1201,11 @@ mod integration_tests {
 
         // Download via the signed URL
         let resp = reqwest::get(&signed.signed_url).await.expect("GET failed");
-        assert!(resp.status().is_success(), "Download failed: {}", resp.status());
+        assert!(
+            resp.status().is_success(),
+            "Download failed: {}",
+            resp.status()
+        );
         let body = resp.bytes().await.expect("read body failed");
         assert_eq!(body.as_ref(), b"secret content");
 
@@ -1197,8 +1258,14 @@ mod integration_tests {
             .expect("copy failed");
 
         // 7. Verify both exist
-        let data1 = file_api.download("renamed.txt").await.expect("download renamed failed");
-        let data2 = file_api.download("copy.txt").await.expect("download copy failed");
+        let data1 = file_api
+            .download("renamed.txt")
+            .await
+            .expect("download renamed failed");
+        let data2 = file_api
+            .download("copy.txt")
+            .await
+            .expect("download copy failed");
         assert_eq!(data1, data2);
 
         // 8. Remove

@@ -32,7 +32,9 @@ where
         futures_util::pin_mut!(future);
         futures_util::future::select(future, abort_rx).await;
     });
-    SpawnHandle { abort_tx: Some(abort_tx) }
+    SpawnHandle {
+        abort_tx: Some(abort_tx),
+    }
 }
 
 // ── SpawnHandle ──────────────────────────────────────────────────────────────

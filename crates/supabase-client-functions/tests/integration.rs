@@ -245,10 +245,7 @@ async fn invoke_nonexistent_function() {
     }
     let client = functions_client();
     let result = client
-        .invoke(
-            "this-function-does-not-exist-xyz",
-            InvokeOptions::new(),
-        )
+        .invoke("this-function-does-not-exist-xyz", InvokeOptions::new())
         .await;
 
     assert!(result.is_err());
