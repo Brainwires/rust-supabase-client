@@ -298,8 +298,7 @@ mod tests {
 
     #[test]
     fn test_into_maybe_single_with_error_set() {
-        let resp =
-            SupabaseResponse::<i32>::error(SupabaseError::Storage("no bucket".to_string()));
+        let resp = SupabaseResponse::<i32>::error(SupabaseError::Storage("no bucket".to_string()));
         let result = resp.into_maybe_single();
         match result {
             Err(SupabaseError::Storage(msg)) => assert_eq!(msg, "no bucket"),

@@ -229,12 +229,24 @@ mod tests {
     #[test]
     fn mfa_error_codes_roundtrip() {
         let codes = [
-            ("mfa_factor_name_conflict", AuthErrorCode::MfaFactorNameConflict),
+            (
+                "mfa_factor_name_conflict",
+                AuthErrorCode::MfaFactorNameConflict,
+            ),
             ("mfa_factor_not_found", AuthErrorCode::MfaFactorNotFound),
             ("mfa_challenge_expired", AuthErrorCode::MfaChallengeExpired),
-            ("mfa_verification_failed", AuthErrorCode::MfaVerificationFailed),
-            ("mfa_verification_rejected", AuthErrorCode::MfaVerificationRejected),
-            ("mfa_ip_address_mismatch", AuthErrorCode::MfaIpAddressMismatch),
+            (
+                "mfa_verification_failed",
+                AuthErrorCode::MfaVerificationFailed,
+            ),
+            (
+                "mfa_verification_rejected",
+                AuthErrorCode::MfaVerificationRejected,
+            ),
+            (
+                "mfa_ip_address_mismatch",
+                AuthErrorCode::MfaIpAddressMismatch,
+            ),
             ("mfa_enroll_not_enabled", AuthErrorCode::MfaEnrollNotEnabled),
             ("mfa_verify_not_enabled", AuthErrorCode::MfaVerifyNotEnabled),
         ];
@@ -258,10 +270,19 @@ mod tests {
     #[test]
     fn identity_error_codes_roundtrip() {
         let codes = [
-            ("identity_already_exists", AuthErrorCode::IdentityAlreadyExists),
+            (
+                "identity_already_exists",
+                AuthErrorCode::IdentityAlreadyExists,
+            ),
             ("identity_not_found", AuthErrorCode::IdentityNotFound),
-            ("manual_linking_disabled", AuthErrorCode::ManualLinkingDisabled),
-            ("single_identity_not_deletable", AuthErrorCode::SingleIdentityNotDeletable),
+            (
+                "manual_linking_disabled",
+                AuthErrorCode::ManualLinkingDisabled,
+            ),
+            (
+                "single_identity_not_deletable",
+                AuthErrorCode::SingleIdentityNotDeletable,
+            ),
         ];
         for (s, expected) in &codes {
             let parsed: AuthErrorCode = (*s).into();
@@ -274,7 +295,10 @@ mod tests {
     fn oauth_error_codes_roundtrip() {
         let codes = [
             ("oauth_client_not_found", AuthErrorCode::OAuthClientNotFound),
-            ("oauth_client_already_exists", AuthErrorCode::OAuthClientAlreadyExists),
+            (
+                "oauth_client_already_exists",
+                AuthErrorCode::OAuthClientAlreadyExists,
+            ),
             ("oauth_invalid_grant", AuthErrorCode::OAuthInvalidGrant),
         ];
         for (s, expected) in &codes {

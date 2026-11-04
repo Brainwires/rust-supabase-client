@@ -310,8 +310,8 @@ mod tests {
 
     fn service_role_jwt() -> String {
         use base64::Engine;
-        let p = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(r#"{"role":"service_role"}"#);
+        let p =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"role":"service_role"}"#);
         format!("eyJhbGciOiJIUzI1NiJ9.{}.sig", p)
     }
 

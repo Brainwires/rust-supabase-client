@@ -113,10 +113,7 @@ impl<'a> AdminClient<'a> {
     /// Does not send confirmation emails. Use `invite_user_by_email` for that.
     ///
     /// Mirrors `supabase.auth.admin.createUser(attributes)`.
-    pub async fn create_user(
-        &self,
-        params: AdminCreateUserParams,
-    ) -> Result<User, AuthError> {
+    pub async fn create_user(&self, params: AdminCreateUserParams) -> Result<User, AuthError> {
         let url = self.auth.fixed_url(&["admin", "users"]);
         let resp = self
             .auth
@@ -327,11 +324,10 @@ impl<'a> AdminClient<'a> {
     /// Get an OAuth client by its client ID.
     ///
     /// Mirrors `supabase.auth.admin.oauth.getClient()`.
-    pub async fn oauth_get_client(
-        &self,
-        client_id: &str,
-    ) -> Result<OAuthClient, AuthError> {
-        let url = self.auth.url_for(&["admin", "oauth", "clients", client_id])?;
+    pub async fn oauth_get_client(&self, client_id: &str) -> Result<OAuthClient, AuthError> {
+        let url = self
+            .auth
+            .url_for(&["admin", "oauth", "clients", client_id])?;
         let resp = self
             .auth
             .http()
@@ -357,7 +353,9 @@ impl<'a> AdminClient<'a> {
         client_id: &str,
         params: UpdateOAuthClientParams,
     ) -> Result<OAuthClient, AuthError> {
-        let url = self.auth.url_for(&["admin", "oauth", "clients", client_id])?;
+        let url = self
+            .auth
+            .url_for(&["admin", "oauth", "clients", client_id])?;
         let resp = self
             .auth
             .http()
@@ -379,11 +377,10 @@ impl<'a> AdminClient<'a> {
     /// Delete an OAuth client.
     ///
     /// Mirrors `supabase.auth.admin.oauth.deleteClient()`.
-    pub async fn oauth_delete_client(
-        &self,
-        client_id: &str,
-    ) -> Result<(), AuthError> {
-        let url = self.auth.url_for(&["admin", "oauth", "clients", client_id])?;
+    pub async fn oauth_delete_client(&self, client_id: &str) -> Result<(), AuthError> {
+        let url = self
+            .auth
+            .url_for(&["admin", "oauth", "clients", client_id])?;
         let resp = self
             .auth
             .http()
@@ -401,7 +398,9 @@ impl<'a> AdminClient<'a> {
         &self,
         client_id: &str,
     ) -> Result<OAuthClient, AuthError> {
-        let url = self.auth.url_for(&["admin", "oauth", "clients", client_id, "regenerate_secret"])?;
+        let url =
+            self.auth
+                .url_for(&["admin", "oauth", "clients", client_id, "regenerate_secret"])?;
         let resp = self
             .auth
             .http()
@@ -422,12 +421,10 @@ impl<'a> AdminClient<'a> {
     /// Delete an MFA factor for a user (admin).
     ///
     /// Mirrors `supabase.auth.admin.mfa.deleteFactor()`.
-    pub async fn mfa_delete_factor(
-        &self,
-        user_id: &str,
-        factor_id: &str,
-    ) -> Result<(), AuthError> {
-        let url = self.auth.url_for(&["admin", "users", user_id, "factors", factor_id])?;
+    pub async fn mfa_delete_factor(&self, user_id: &str, factor_id: &str) -> Result<(), AuthError> {
+        let url = self
+            .auth
+            .url_for(&["admin", "users", user_id, "factors", factor_id])?;
         let resp = self
             .auth
             .http()

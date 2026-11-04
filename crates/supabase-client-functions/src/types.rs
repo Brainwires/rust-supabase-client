@@ -320,10 +320,7 @@ mod tests {
         assert_eq!(opts.headers.get("x-custom"), Some(&"test".to_string()));
         assert_eq!(opts.region, Some(FunctionRegion::UsEast1));
         assert_eq!(opts.content_type, Some("text/plain".to_string()));
-        assert_eq!(
-            opts.authorization,
-            Some("Bearer token123".to_string())
-        );
+        assert_eq!(opts.authorization, Some("Bearer token123".to_string()));
     }
 
     #[test]
@@ -351,11 +348,7 @@ mod tests {
 
     #[test]
     fn function_response_json() {
-        let resp = FunctionResponse::new(
-            200,
-            HashMap::new(),
-            br#"{"message":"hello"}"#.to_vec(),
-        );
+        let resp = FunctionResponse::new(200, HashMap::new(), br#"{"message":"hello"}"#.to_vec());
         let val: serde_json::Value = resp.json().unwrap();
         assert_eq!(val["message"], "hello");
     }

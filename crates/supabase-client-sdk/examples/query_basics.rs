@@ -12,7 +12,8 @@ const DEFAULT_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 fn create_client() -> SupabaseClient {
     let url = std::env::var("SUPABASE_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
-    let key = std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
+    let key =
+        std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
     let config = SupabaseConfig::new(url, key);
     SupabaseClient::new(config).expect("Failed to create client")
 }
@@ -139,7 +140,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .execute()
         .await;
     let inserted = resp.into_result()?;
-    println!("  Inserted: {}", inserted[0].get_as::<String>("name").unwrap());
+    println!(
+        "  Inserted: {}",
+        inserted[0].get_as::<String>("name").unwrap()
+    );
 
     // ── UPDATE a row ──
     println!("\n=== UPDATE Wellington's name ===");
@@ -151,7 +155,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .execute()
         .await;
     let updated = resp.into_result()?;
-    println!("  Updated to: {}", updated[0].get_as::<String>("name").unwrap());
+    println!(
+        "  Updated to: {}",
+        updated[0].get_as::<String>("name").unwrap()
+    );
 
     // ── DELETE a row ──
     println!("\n=== DELETE Christchurch ===");
@@ -163,7 +170,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .execute()
         .await;
     let deleted = resp.into_result()?;
-    println!("  Deleted: {}", deleted[0].get_as::<String>("name").unwrap());
+    println!(
+        "  Deleted: {}",
+        deleted[0].get_as::<String>("name").unwrap()
+    );
 
     // ── UPSERT ──
     println!("\n=== UPSERT a city ===");
@@ -179,7 +189,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .execute()
         .await;
     let upserted = resp.into_result()?;
-    println!("  Upserted: {}", upserted[0].get_as::<String>("name").unwrap());
+    println!(
+        "  Upserted: {}",
+        upserted[0].get_as::<String>("name").unwrap()
+    );
 
     // Reset data back to original state
     client.rpc("reset_test_data", json!({}))?.execute().await;

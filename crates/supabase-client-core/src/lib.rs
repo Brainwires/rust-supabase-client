@@ -37,9 +37,9 @@ pub mod value;
 
 pub use auth_token::AccessToken;
 pub use client::SupabaseClient;
-pub use config::SupabaseConfig;
 #[cfg(feature = "direct-sql")]
 pub use config::PoolConfig;
+pub use config::SupabaseConfig;
 pub use error::{StatusCode, SupabaseError, SupabaseResult};
 pub use response::SupabaseResponse;
 pub use value::Row;

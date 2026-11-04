@@ -45,10 +45,15 @@ async fn auth_session_token_flows_to_storage_and_functions() {
     let auth = client.auth().unwrap();
 
     storage.list_buckets().await.unwrap();
-    auth.sign_in_with_password_email("a@b.c", "pw").await.unwrap();
+    auth.sign_in_with_password_email("a@b.c", "pw")
+        .await
+        .unwrap();
     assert_eq!(client.access_token().as_deref(), Some("USER-JWT"));
     storage.list_buckets().await.unwrap();
-    functions.invoke("hello", InvokeOptions::new()).await.unwrap();
+    functions
+        .invoke("hello", InvokeOptions::new())
+        .await
+        .unwrap();
     auth.sign_out_current().await.unwrap();
     storage.list_buckets().await.unwrap();
 
@@ -67,10 +72,26 @@ async fn auth_session_token_flows_to_storage_and_functions() {
     assert_eq!(
         seen,
         vec![
-            ("/storage/v1/bucket".into(), "Bearer ANON-KEY".into(), "ANON-KEY".into()),
-            ("/storage/v1/bucket".into(), "Bearer USER-JWT".into(), "ANON-KEY".into()),
-            ("/functions/v1/hello".into(), "Bearer USER-JWT".into(), "ANON-KEY".into()),
-            ("/storage/v1/bucket".into(), "Bearer ANON-KEY".into(), "ANON-KEY".into()),
+            (
+                "/storage/v1/bucket".into(),
+                "Bearer ANON-KEY".into(),
+                "ANON-KEY".into()
+            ),
+            (
+                "/storage/v1/bucket".into(),
+                "Bearer USER-JWT".into(),
+                "ANON-KEY".into()
+            ),
+            (
+                "/functions/v1/hello".into(),
+                "Bearer USER-JWT".into(),
+                "ANON-KEY".into()
+            ),
+            (
+                "/storage/v1/bucket".into(),
+                "Bearer ANON-KEY".into(),
+                "ANON-KEY".into()
+            ),
         ]
     );
 }

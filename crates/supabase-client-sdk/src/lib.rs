@@ -107,20 +107,19 @@ pub use supabase_client_graphql;
 /// use supabase_client_sdk::prelude::*;
 /// ```
 pub mod prelude {
+    pub use supabase_client_core::row;
+    #[cfg(feature = "direct-sql")]
+    pub use supabase_client_core::PoolConfig;
     pub use supabase_client_core::{
         AccessToken, Row, SupabaseClient, SupabaseConfig, SupabaseError, SupabaseResponse,
         SupabaseResult,
     };
-    #[cfg(feature = "direct-sql")]
-    pub use supabase_client_core::PoolConfig;
-    pub use supabase_client_core::row;
 
     #[cfg(feature = "query")]
     pub use supabase_client_query::{
-        Filterable, Modifiable, OrderDirection, IsValue, TextSearchType,
-        SupabaseClientQueryExt, Table,
-        ExplainOptions, ExplainFormat, CountOption,
-        CsvSelectBuilder, GeoJsonSelectBuilder,
+        CountOption, CsvSelectBuilder, ExplainFormat, ExplainOptions, Filterable,
+        GeoJsonSelectBuilder, IsValue, Modifiable, OrderDirection, SupabaseClientQueryExt, Table,
+        TextSearchType,
     };
 
     #[cfg(feature = "derive")]
@@ -128,69 +127,113 @@ pub mod prelude {
 
     #[cfg(feature = "auth")]
     pub use supabase_client_auth::{
-        AuthClient, AuthError, AuthErrorCode, AuthResponse, Session, SignOutScope, User,
-        SupabaseClientAuthExt,
+        AmrEntry,
         // Session state management
-        AuthChangeEvent, AuthStateChange, AuthSubscription, AutoRefreshConfig,
-        // MFA types
-        MfaEnrollParams, MfaVerifyParams, MfaChallengeParams,
-        MfaEnrollResponse, MfaTotpInfo, MfaChallengeResponse, MfaUnenrollResponse,
-        MfaListFactorsResponse, AuthenticatorAssuranceLevelInfo,
-        AuthenticatorAssuranceLevel, AmrEntry, FactorType, FactorStatus,
-        // SSO
-        SsoSignInParams, SsoSignInResponse,
-        // ID Token
-        SignInWithIdTokenParams,
+        AuthChangeEvent,
+        AuthClient,
+        AuthError,
+        AuthErrorCode,
+        AuthResponse,
+        AuthStateChange,
+        AuthSubscription,
+        AuthenticatorAssuranceLevel,
+        AuthenticatorAssuranceLevelInfo,
+        AutoRefreshConfig,
+        CreateOAuthClientParams,
+        FactorStatus,
+        FactorType,
+        Jwk,
+        JwksResponse,
         // Identity linking
         LinkIdentityResponse,
-        // Resend
-        ResendParams, ResendType,
+        MfaChallengeParams,
+        MfaChallengeResponse,
+        // MFA types
+        MfaEnrollParams,
+        MfaEnrollResponse,
+        MfaListFactorsResponse,
+        MfaTotpInfo,
+        MfaUnenrollResponse,
+        MfaVerifyParams,
+        OAuthAuthorizationClient,
+        OAuthAuthorizationDetails,
+        OAuthAuthorizationDetailsResponse,
+        OAuthAuthorizationUser,
+        OAuthAuthorizeUrlParams,
         // OAuth Server types
-        OAuthClient, OAuthClientType, OAuthClientGrantType, OAuthClientResponseType,
-        OAuthClientRegistrationType, OAuthClientListResponse,
-        OAuthAuthorizationClient, OAuthAuthorizationUser, OAuthAuthorizationDetails,
-        OAuthAuthorizationDetailsResponse, OAuthRedirect, OAuthGrant,
-        CreateOAuthClientParams, UpdateOAuthClientParams,
+        OAuthClient,
+        OAuthClientGrantType,
+        OAuthClientListResponse,
+        OAuthClientRegistrationType,
+        OAuthClientResponseType,
+        OAuthClientType,
+        OAuthGrant,
+        OAuthRedirect,
+        OAuthTokenExchangeParams,
+        OAuthTokenResponse,
+        OpenIdConfiguration,
+        PkceCodeChallenge,
         // OAuth Client-Side Flow types
-        PkceCodeVerifier, PkceCodeChallenge, PkcePair,
-        OAuthTokenResponse, OpenIdConfiguration, JwksResponse, Jwk,
-        OAuthAuthorizeUrlParams, OAuthTokenExchangeParams,
+        PkceCodeVerifier,
+        PkcePair,
+        // Resend
+        ResendParams,
+        ResendType,
+        Session,
+        // ID Token
+        SignInWithIdTokenParams,
+        SignOutScope,
+        // SSO
+        SsoSignInParams,
+        SsoSignInResponse,
+        SupabaseClientAuthExt,
+        UpdateOAuthClientParams,
+        User,
         // Web3 auth
-        Web3Chain, Web3SignInParams,
+        Web3Chain,
+        Web3SignInParams,
     };
 
     #[cfg(feature = "realtime")]
     pub use supabase_client_realtime::{
-        RealtimeClient, RealtimeChannel, RealtimeConfig, RealtimeError,
-        ChannelBuilder, SupabaseClientRealtimeExt,
-        PostgresChangesEvent, PostgresChangesFilter, PostgresChangePayload,
-        SubscriptionStatus, ChannelState, PresenceState, PresenceMeta,
+        ChannelBuilder, ChannelState, PostgresChangePayload, PostgresChangesEvent,
+        PostgresChangesFilter, PresenceMeta, PresenceState, RealtimeChannel, RealtimeClient,
+        RealtimeConfig, RealtimeError, SubscriptionStatus, SupabaseClientRealtimeExt,
     };
 
     #[cfg(feature = "storage")]
     pub use supabase_client_storage::{
-        StorageClient, StorageBucketApi, StorageError, SignedUrlBatchEntry, SignedUploadUrlResponse,
-        UploadResponse,
-        Bucket, BucketOptions, FileObject, FileOptions,
-        SearchOptions, SortOrder, SignedUrlResponse,
+        Bucket,
+        BucketOptions,
+        FileInfo,
+        FileObject,
+        FileOptions,
+        ImageFormat,
+        ResizeMode,
+        SearchOptions,
+        SignedUploadUrlResponse,
+        SignedUrlBatchEntry,
+        SignedUrlResponse,
+        SortOrder,
+        StorageBucketApi,
+        StorageClient,
+        StorageError,
         SupabaseClientStorageExt,
         // Phase 7: Storage enhancements
-        TransformOptions, ResizeMode, ImageFormat, FileInfo,
+        TransformOptions,
+        UploadResponse,
     };
 
     #[cfg(feature = "functions")]
     pub use supabase_client_functions::{
-        FunctionsClient, FunctionsError, FunctionResponse,
-        InvokeOptions, InvokeBody, HttpMethod, FunctionRegion,
-        SupabaseClientFunctionsExt,
+        FunctionRegion, FunctionResponse, FunctionsClient, FunctionsError, HttpMethod, InvokeBody,
+        InvokeOptions, SupabaseClientFunctionsExt,
     };
 
     #[cfg(feature = "graphql")]
     pub use supabase_client_graphql::{
-        GraphqlClient, GraphqlError, GraphqlResponse,
-        QueryBuilder as GqlQueryBuilder, MutationBuilder, MutationKind as GqlMutationKind,
-        Connection, Edge, PageInfo, MutationResult,
-        GqlFilter, FilterOp, IsValue as GqlIsValue, OrderByDirection,
-        SupabaseClientGraphqlExt,
+        Connection, Edge, FilterOp, GqlFilter, GraphqlClient, GraphqlError, GraphqlResponse,
+        IsValue as GqlIsValue, MutationBuilder, MutationKind as GqlMutationKind, MutationResult,
+        OrderByDirection, PageInfo, QueryBuilder as GqlQueryBuilder, SupabaseClientGraphqlExt,
     };
 }

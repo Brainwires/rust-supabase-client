@@ -13,7 +13,8 @@ const DEFAULT_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 fn create_client() -> SupabaseClient {
     let url = std::env::var("SUPABASE_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
-    let key = std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
+    let key =
+        std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
     let config = SupabaseConfig::new(url, key);
     SupabaseClient::new(config).expect("Failed to create client")
 }
@@ -49,11 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Typed SELECT — get all cities as City structs ──
     println!("=== Typed SELECT: all cities ===");
-    let resp = client
-        .from_typed::<City>()
-        .select()
-        .execute()
-        .await;
+    let resp = client.from_typed::<City>().select().execute().await;
     for city in resp.into_result()? {
         println!(
             "  {} (pop: {}, capital: {})",

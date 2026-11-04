@@ -420,7 +420,11 @@ impl StorageBucketApi {
     /// Get public URL with image transformation (no HTTP call).
     ///
     /// Mirrors `supabase.storage.from('bucket').getPublicUrl(path, { transform })`.
-    pub fn get_public_url_with_transform(&self, path: &str, transform: &TransformOptions) -> String {
+    pub fn get_public_url_with_transform(
+        &self,
+        path: &str,
+        transform: &TransformOptions,
+    ) -> String {
         let mut url = self.public_url(&["render", "image", "public"], path);
         set_transform_query(&mut url, transform);
         url.to_string()

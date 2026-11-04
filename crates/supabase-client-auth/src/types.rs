@@ -873,7 +873,8 @@ mod tests {
 
     #[test]
     fn mfa_list_factors_categorization() {
-        let factors = [Factor {
+        let factors = [
+            Factor {
                 id: "f1".into(),
                 friendly_name: Some("My TOTP".into()),
                 factor_type: "totp".into(),
@@ -892,10 +893,14 @@ mod tests {
                 last_challenged_at: None,
                 created_at: None,
                 updated_at: None,
-            }];
+            },
+        ];
 
         let totp: Vec<_> = factors.iter().filter(|f| f.factor_type == "totp").collect();
-        let phone: Vec<_> = factors.iter().filter(|f| f.factor_type == "phone").collect();
+        let phone: Vec<_> = factors
+            .iter()
+            .filter(|f| f.factor_type == "phone")
+            .collect();
 
         assert_eq!(totp.len(), 1);
         assert_eq!(totp[0].id, "f1");
@@ -1012,7 +1017,10 @@ mod tests {
         assert_eq!(client.client_name, "My App");
         assert_eq!(client.client_secret.as_deref(), Some("secret-456"));
         assert_eq!(client.client_type, OAuthClientType::Confidential);
-        assert_eq!(client.registration_type, OAuthClientRegistrationType::Manual);
+        assert_eq!(
+            client.registration_type,
+            OAuthClientRegistrationType::Manual
+        );
         assert_eq!(client.redirect_uris.len(), 1);
         assert_eq!(client.grant_types.len(), 2);
         assert_eq!(client.response_types.len(), 1);
@@ -1183,7 +1191,9 @@ mod tests {
         assert_eq!(config.issuer, "http://localhost:64321/auth/v1");
         assert!(config.jwks_uri.contains("jwks.json"));
         assert!(config.scopes_supported.contains(&"openid".to_string()));
-        assert!(config.code_challenge_methods_supported.contains(&"S256".to_string()));
+        assert!(config
+            .code_challenge_methods_supported
+            .contains(&"S256".to_string()));
     }
 
     #[test]
@@ -1238,12 +1248,21 @@ mod tests {
 
     #[test]
     fn auth_change_event_display() {
-        assert_eq!(AuthChangeEvent::InitialSession.to_string(), "INITIAL_SESSION");
+        assert_eq!(
+            AuthChangeEvent::InitialSession.to_string(),
+            "INITIAL_SESSION"
+        );
         assert_eq!(AuthChangeEvent::SignedIn.to_string(), "SIGNED_IN");
         assert_eq!(AuthChangeEvent::SignedOut.to_string(), "SIGNED_OUT");
-        assert_eq!(AuthChangeEvent::TokenRefreshed.to_string(), "TOKEN_REFRESHED");
+        assert_eq!(
+            AuthChangeEvent::TokenRefreshed.to_string(),
+            "TOKEN_REFRESHED"
+        );
         assert_eq!(AuthChangeEvent::UserUpdated.to_string(), "USER_UPDATED");
-        assert_eq!(AuthChangeEvent::PasswordRecovery.to_string(), "PASSWORD_RECOVERY");
+        assert_eq!(
+            AuthChangeEvent::PasswordRecovery.to_string(),
+            "PASSWORD_RECOVERY"
+        );
     }
 
     #[test]
@@ -1326,7 +1345,8 @@ mod tests {
         let r: AuthResponse = serde_json::from_value(json).unwrap();
         assert_eq!(r.session.unwrap().access_token, "AT");
         assert_eq!(r.user.unwrap().id, "u1");
-        let r: AuthResponse = serde_json::from_value(serde_json::json!({"user": {"id": "u2"}})).unwrap();
+        let r: AuthResponse =
+            serde_json::from_value(serde_json::json!({"user": {"id": "u2"}})).unwrap();
         assert!(r.session.is_none());
         assert_eq!(r.user.unwrap().id, "u2");
     }

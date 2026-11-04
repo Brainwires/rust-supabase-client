@@ -166,7 +166,9 @@ impl FunctionsClient {
             .iter()
             .any(|s| s.is_empty() || *s == "." || *s == "..")
         {
-            return Err(FunctionsError::InvalidFunctionName(function_name.to_string()));
+            return Err(FunctionsError::InvalidFunctionName(
+                function_name.to_string(),
+            ));
         }
         let mut url = self.base_url.clone();
         {
@@ -259,7 +261,10 @@ impl FunctionsClient {
         // Set Content-Type and body
         match options.body {
             InvokeBody::Json(value) => {
-                let ct = options.content_type.as_deref().unwrap_or("application/json");
+                let ct = options
+                    .content_type
+                    .as_deref()
+                    .unwrap_or("application/json");
                 request = request
                     .header(reqwest::header::CONTENT_TYPE, ct)
                     .body(serde_json::to_vec(&value)?);
@@ -275,9 +280,7 @@ impl FunctionsClient {
             }
             InvokeBody::Text(text) => {
                 let ct = options.content_type.as_deref().unwrap_or("text/plain");
-                request = request
-                    .header(reqwest::header::CONTENT_TYPE, ct)
-                    .body(text);
+                request = request.header(reqwest::header::CONTENT_TYPE, ct).body(text);
             }
             InvokeBody::None => {
                 if let Some(ct) = options.content_type {
@@ -410,8 +413,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/functions/v1/hello"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({"message": "ok"})),
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"message": "ok"})),
             )
             .mount(&server)
             .await;
@@ -598,7 +600,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/functions/v1/data"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"items": []})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"items": []})),
+            )
             .mount(&server)
             .await;
 
@@ -731,9 +735,12 @@ mod tests {
         f.invoke("a", InvokeOptions::new()).await.unwrap();
         f.set_auth("explicit");
         f.invoke("a", InvokeOptions::new()).await.unwrap();
-        f.invoke("a", InvokeOptions::new().authorization("Bearer per-request"))
-            .await
-            .unwrap();
+        f.invoke(
+            "a",
+            InvokeOptions::new().authorization("Bearer per-request"),
+        )
+        .await
+        .unwrap();
         let reqs = s.received_requests().await.unwrap();
         let auth: Vec<&str> = reqs
             .iter()

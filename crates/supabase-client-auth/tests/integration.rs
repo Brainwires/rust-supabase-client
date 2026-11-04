@@ -7,15 +7,28 @@
 //! Run with: cargo test -p supabase-client-auth -- --test-threads=1
 
 use supabase_client_auth::{
-    AdminClient, AuthClient, AuthError, OAuthProvider, SignOutScope,
-    AdminCreateUserParams, AdminUpdateUserParams, UpdateUserParams,
-    MfaEnrollParams, MfaVerifyParams, ResendParams, ResendType,
-    SsoSignInParams, SignInWithIdTokenParams, AuthenticatorAssuranceLevel,
-    CreateOAuthClientParams, UpdateOAuthClientParams,
-    OAuthAuthorizeUrlParams, OAuthTokenExchangeParams,
-    User,
+    AdminClient,
+    AdminCreateUserParams,
+    AdminUpdateUserParams,
     // Phase 12: Session state management
     AuthChangeEvent,
+    AuthClient,
+    AuthError,
+    AuthenticatorAssuranceLevel,
+    CreateOAuthClientParams,
+    MfaEnrollParams,
+    MfaVerifyParams,
+    OAuthAuthorizeUrlParams,
+    OAuthProvider,
+    OAuthTokenExchangeParams,
+    ResendParams,
+    ResendType,
+    SignInWithIdTokenParams,
+    SignOutScope,
+    SsoSignInParams,
+    UpdateOAuthClientParams,
+    UpdateUserParams,
+    User,
 };
 
 /// Default local Supabase URL (from `supabase start` output).
@@ -42,7 +55,8 @@ fn auth_client() -> AuthClient {
 }
 
 fn admin_auth_client() -> AuthClient {
-    AuthClient::new(&supabase_url(), &service_role_key()).expect("Failed to create admin AuthClient")
+    AuthClient::new(&supabase_url(), &service_role_key())
+        .expect("Failed to create admin AuthClient")
 }
 
 /// Generate a unique test email to avoid collisions between test runs.
@@ -180,7 +194,10 @@ mod integration {
             .session
             .as_ref()
             .expect("autoconfirm sign-up must return a session");
-        let user = auth_resp.user.as_ref().expect("sign-up must return the user");
+        let user = auth_resp
+            .user
+            .as_ref()
+            .expect("sign-up must return the user");
         assert_eq!(session.user.id, user.id);
         assert_eq!(user.email.as_deref(), Some(email.as_str()));
         assert!(!session.access_token.is_empty());
@@ -204,7 +221,11 @@ mod integration {
         let resp = auth
             .sign_up_with_email_and_data(&email, "password123456", Some(metadata))
             .await;
-        assert!(resp.is_ok(), "sign_up_with_email_and_data failed: {:?}", resp.err());
+        assert!(
+            resp.is_ok(),
+            "sign_up_with_email_and_data failed: {:?}",
+            resp.err()
+        );
 
         let auth_resp = resp.unwrap();
         // Verify metadata was set
@@ -212,7 +233,10 @@ mod integration {
             let user_meta = session.user.user_metadata.as_ref();
             assert!(user_meta.is_some());
             assert_eq!(
-                user_meta.unwrap().get("display_name").and_then(|v| v.as_str()),
+                user_meta
+                    .unwrap()
+                    .get("display_name")
+                    .and_then(|v| v.as_str()),
                 Some("Test User")
             );
             cleanup_user(&admin.admin(), &session.user.id).await;
@@ -257,7 +281,11 @@ mod integration {
 
         match result.unwrap_err() {
             AuthError::Api { status, .. } => {
-                assert!(status == 400 || status == 401, "Expected 400 or 401, got {}", status);
+                assert!(
+                    status == 400 || status == 401,
+                    "Expected 400 or 401, got {}",
+                    status
+                );
             }
             other => panic!("Expected AuthError::Api, got {:?}", other),
         }
@@ -273,10 +301,17 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let fetched_user = auth.get_user(&session.access_token).await;
-        assert!(fetched_user.is_ok(), "get_user failed: {:?}", fetched_user.err());
+        assert!(
+            fetched_user.is_ok(),
+            "get_user failed: {:?}",
+            fetched_user.err()
+        );
 
         let fetched_user = fetched_user.unwrap();
         assert_eq!(fetched_user.id, user.id);
@@ -295,7 +330,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let updated = auth
             .update_user(
@@ -328,10 +366,17 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let new_session = auth.refresh_session(&session.refresh_token).await;
-        assert!(new_session.is_ok(), "refresh_session failed: {:?}", new_session.err());
+        assert!(
+            new_session.is_ok(),
+            "refresh_session failed: {:?}",
+            new_session.err()
+        );
 
         let new_session = new_session.unwrap();
         assert!(!new_session.access_token.is_empty());
@@ -350,7 +395,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let result = auth.sign_out(&session.access_token).await;
         assert!(result.is_ok(), "sign_out failed: {:?}", result.err());
@@ -366,7 +414,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let result = auth
             .sign_out_with_scope(&session.access_token, SignOutScope::Local)
@@ -402,7 +453,11 @@ mod integration {
         let admin = admin_auth_client();
 
         let session = auth.sign_in_anonymous().await;
-        assert!(session.is_ok(), "sign_in_anonymous failed: {:?}", session.err());
+        assert!(
+            session.is_ok(),
+            "sign_in_anonymous failed: {:?}",
+            session.err()
+        );
 
         let session = session.unwrap();
         assert!(!session.access_token.is_empty());
@@ -418,7 +473,11 @@ mod integration {
         let admin = admin_auth_client();
 
         let result = admin.admin().list_users(None, None).await;
-        assert!(result.is_ok(), "admin list_users failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "admin list_users failed: {:?}",
+            result.err()
+        );
 
         let list = result.unwrap();
         // Verify we got a valid response
@@ -449,7 +508,11 @@ mod integration {
 
         // Get by ID
         let fetched = admin.get_user_by_id(&user.id).await;
-        assert!(fetched.is_ok(), "admin get_user_by_id failed: {:?}", fetched.err());
+        assert!(
+            fetched.is_ok(),
+            "admin get_user_by_id failed: {:?}",
+            fetched.err()
+        );
         let fetched = fetched.unwrap();
         assert_eq!(fetched.id, user.id);
 
@@ -463,14 +526,22 @@ mod integration {
                 },
             )
             .await;
-        assert!(updated.is_ok(), "admin update_user_by_id failed: {:?}", updated.err());
+        assert!(
+            updated.is_ok(),
+            "admin update_user_by_id failed: {:?}",
+            updated.err()
+        );
         let updated = updated.unwrap();
         let meta = updated.user_metadata.as_ref().unwrap();
         assert_eq!(meta.get("role").and_then(|v| v.as_str()), Some("updated"));
 
         // Delete
         let deleted = admin.delete_user(&user.id).await;
-        assert!(deleted.is_ok(), "admin delete_user failed: {:?}", deleted.err());
+        assert!(
+            deleted.is_ok(),
+            "admin delete_user failed: {:?}",
+            deleted.err()
+        );
 
         // Verify deleted — get should fail
         let get_after_delete = admin.get_user_by_id(&user.id).await;
@@ -494,7 +565,11 @@ mod integration {
 
         // List with pagination
         let result = admin.list_users(Some(1), Some(2)).await;
-        assert!(result.is_ok(), "admin list_users paginated failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "admin list_users paginated failed: {:?}",
+            result.err()
+        );
 
         // Cleanup
         for id in &user_ids {
@@ -551,9 +626,7 @@ mod integration {
         assert!(refreshed.is_ok(), "refresh failed: {:?}", refreshed.err());
 
         // 6. Sign out
-        let signout = auth
-            .sign_out(&refreshed.unwrap().access_token)
-            .await;
+        let signout = auth.sign_out(&refreshed.unwrap().access_token).await;
         assert!(signout.is_ok(), "signout failed: {:?}", signout.err());
 
         // Cleanup
@@ -570,7 +643,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let factor = auth
             .mfa_enroll(
@@ -602,7 +678,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let factor = auth
             .mfa_enroll(&session.access_token, MfaEnrollParams::totp())
@@ -610,7 +689,11 @@ mod integration {
             .unwrap();
 
         let challenge = auth.mfa_challenge(&session.access_token, &factor.id).await;
-        assert!(challenge.is_ok(), "mfa_challenge failed: {:?}", challenge.err());
+        assert!(
+            challenge.is_ok(),
+            "mfa_challenge failed: {:?}",
+            challenge.err()
+        );
 
         let challenge = challenge.unwrap();
         assert!(!challenge.id.is_empty());
@@ -630,7 +713,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         // 1. Enroll
         let factor = auth
@@ -665,7 +751,11 @@ mod integration {
                 MfaVerifyParams::new(&challenge.id, &code),
             )
             .await;
-        assert!(new_session.is_ok(), "mfa_verify failed: {:?}", new_session.err());
+        assert!(
+            new_session.is_ok(),
+            "mfa_verify failed: {:?}",
+            new_session.err()
+        );
 
         let new_session = new_session.unwrap();
         assert!(!new_session.access_token.is_empty());
@@ -685,7 +775,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let factor = auth
             .mfa_enroll(&session.access_token, MfaEnrollParams::totp())
@@ -694,7 +787,10 @@ mod integration {
         let secret = factor.totp.as_ref().unwrap().secret.clone();
 
         // First verify to make factor "verified" status
-        let challenge = auth.mfa_challenge(&session.access_token, &factor.id).await.unwrap();
+        let challenge = auth
+            .mfa_challenge(&session.access_token, &factor.id)
+            .await
+            .unwrap();
         let secret_bytes = Secret::try_from_base32(&secret).unwrap();
         let totp = Builder::new()
             .with_algorithm(Algorithm::SHA1)
@@ -721,7 +817,11 @@ mod integration {
         let result = auth
             .mfa_challenge_and_verify(&aal2_session.access_token, &factor.id, &code2)
             .await;
-        assert!(result.is_ok(), "mfa_challenge_and_verify failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "mfa_challenge_and_verify failed: {:?}",
+            result.err()
+        );
 
         cleanup_user(&admin.admin(), &user.id).await;
     }
@@ -736,7 +836,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let factor = auth
             .mfa_enroll(&session.access_token, MfaEnrollParams::totp())
@@ -760,7 +863,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         // Enroll a TOTP factor
         auth.mfa_enroll(&session.access_token, MfaEnrollParams::totp())
@@ -768,7 +874,11 @@ mod integration {
             .unwrap();
 
         let factors = auth.mfa_list_factors(&session.access_token).await;
-        assert!(factors.is_ok(), "mfa_list_factors failed: {:?}", factors.err());
+        assert!(
+            factors.is_ok(),
+            "mfa_list_factors failed: {:?}",
+            factors.err()
+        );
 
         let factors = factors.unwrap();
         assert_eq!(factors.totp.len(), 1);
@@ -790,7 +900,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         // Before MFA: AAL1, next_level should be AAL1 (no verified factors)
         let aal = auth
@@ -807,7 +920,10 @@ mod integration {
             .await
             .unwrap();
         let secret = factor.totp.as_ref().unwrap().secret.clone();
-        let challenge = auth.mfa_challenge(&session.access_token, &factor.id).await.unwrap();
+        let challenge = auth
+            .mfa_challenge(&session.access_token, &factor.id)
+            .await
+            .unwrap();
         let secret_bytes = Secret::try_from_base32(&secret).unwrap();
         let totp = Builder::new()
             .with_algorithm(Algorithm::SHA1)
@@ -874,18 +990,28 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         // Get the user's identity
         let fetched = auth.get_user(&session.access_token).await.unwrap();
         let identities = fetched.identities.unwrap_or_default();
-        assert!(!identities.is_empty(), "User should have at least one identity");
+        assert!(
+            !identities.is_empty(),
+            "User should have at least one identity"
+        );
 
-        let identity_id = identities[0].identity_id.as_deref()
+        let identity_id = identities[0]
+            .identity_id
+            .as_deref()
             .unwrap_or(&identities[0].id);
 
         // Try to unlink the only identity — should fail
-        let result = auth.unlink_identity(&session.access_token, identity_id).await;
+        let result = auth
+            .unlink_identity(&session.access_token, identity_id)
+            .await;
         assert!(result.is_err(), "Should fail to unlink single identity");
 
         cleanup_user(&admin.admin(), &user.id).await;
@@ -899,7 +1025,10 @@ mod integration {
 
         // GoTrue doesn't reveal user existence, so this should succeed
         let result = auth
-            .resend(ResendParams::email("nonexistent@example.com", ResendType::Signup))
+            .resend(ResendParams::email(
+                "nonexistent@example.com",
+                ResendType::Signup,
+            ))
             .await;
         // May succeed or return a specific error — GoTrue behavior varies
         // Just verify it doesn't panic
@@ -916,7 +1045,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let result = auth.reauthenticate(&session.access_token).await;
         // Reauthenticate sends a nonce email. Should succeed for a signed-in user.
@@ -935,7 +1067,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         // Enroll a factor
         auth.mfa_enroll(&session.access_token, MfaEnrollParams::totp())
@@ -944,7 +1079,11 @@ mod integration {
 
         // Admin list factors
         let factors = admin.admin().mfa_list_factors(&user.id).await;
-        assert!(factors.is_ok(), "admin mfa_list_factors failed: {:?}", factors.err());
+        assert!(
+            factors.is_ok(),
+            "admin mfa_list_factors failed: {:?}",
+            factors.err()
+        );
 
         let factors = factors.unwrap();
         assert!(!factors.is_empty());
@@ -963,7 +1102,10 @@ mod integration {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         // Enroll a factor
         let factor = auth
@@ -973,7 +1115,11 @@ mod integration {
 
         // Admin delete factor
         let result = admin.admin().mfa_delete_factor(&user.id, &factor.id).await;
-        assert!(result.is_ok(), "admin mfa_delete_factor failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "admin mfa_delete_factor failed: {:?}",
+            result.err()
+        );
 
         // Verify factor was deleted
         let factors = admin.admin().mfa_list_factors(&user.id).await.unwrap();
@@ -995,7 +1141,11 @@ mod integration {
             vec!["https://testapp.com/callback".to_string()],
         );
         let result = admin.admin().oauth_create_client(params).await;
-        assert!(result.is_ok(), "oauth_create_client failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "oauth_create_client failed: {:?}",
+            result.err()
+        );
 
         let client = result.unwrap();
         assert_eq!(client.client_name, "Test OAuth App");
@@ -1008,7 +1158,7 @@ mod integration {
     }
 
     #[tokio::test]
-async fn oauth_admin_get_client() {
+    async fn oauth_admin_get_client() {
         let admin = admin_auth_client();
 
         let params = CreateOAuthClientParams::new(
@@ -1018,7 +1168,11 @@ async fn oauth_admin_get_client() {
         let created = admin.admin().oauth_create_client(params).await.unwrap();
 
         let fetched = admin.admin().oauth_get_client(&created.client_id).await;
-        assert!(fetched.is_ok(), "oauth_get_client failed: {:?}", fetched.err());
+        assert!(
+            fetched.is_ok(),
+            "oauth_get_client failed: {:?}",
+            fetched.err()
+        );
 
         let fetched = fetched.unwrap();
         assert_eq!(fetched.client_id, created.client_id);
@@ -1029,7 +1183,7 @@ async fn oauth_admin_get_client() {
     }
 
     #[tokio::test]
-async fn oauth_admin_list_clients() {
+    async fn oauth_admin_list_clients() {
         let admin = admin_auth_client();
 
         let params = CreateOAuthClientParams::new(
@@ -1043,7 +1197,9 @@ async fn oauth_admin_list_clients() {
 
         let list = list.unwrap();
         assert!(
-            list.clients.iter().any(|c| c.client_id == created.client_id),
+            list.clients
+                .iter()
+                .any(|c| c.client_id == created.client_id),
             "Created client not found in list"
         );
 
@@ -1052,7 +1208,7 @@ async fn oauth_admin_list_clients() {
     }
 
     #[tokio::test]
-async fn oauth_admin_update_client() {
+    async fn oauth_admin_update_client() {
         let admin = admin_auth_client();
 
         let params = CreateOAuthClientParams::new(
@@ -1061,13 +1217,16 @@ async fn oauth_admin_update_client() {
         );
         let created = admin.admin().oauth_create_client(params).await.unwrap();
 
-        let update_params = UpdateOAuthClientParams::new()
-            .client_name("Updated App Name");
+        let update_params = UpdateOAuthClientParams::new().client_name("Updated App Name");
         let updated = admin
             .admin()
             .oauth_update_client(&created.client_id, update_params)
             .await;
-        assert!(updated.is_ok(), "oauth_update_client failed: {:?}", updated.err());
+        assert!(
+            updated.is_ok(),
+            "oauth_update_client failed: {:?}",
+            updated.err()
+        );
 
         let updated = updated.unwrap();
         assert_eq!(updated.client_name, "Updated App Name");
@@ -1078,7 +1237,7 @@ async fn oauth_admin_update_client() {
     }
 
     #[tokio::test]
-async fn oauth_admin_delete_client() {
+    async fn oauth_admin_delete_client() {
         let admin = admin_auth_client();
 
         let params = CreateOAuthClientParams::new(
@@ -1088,15 +1247,22 @@ async fn oauth_admin_delete_client() {
         let created = admin.admin().oauth_create_client(params).await.unwrap();
 
         let result = admin.admin().oauth_delete_client(&created.client_id).await;
-        assert!(result.is_ok(), "oauth_delete_client failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "oauth_delete_client failed: {:?}",
+            result.err()
+        );
 
         // Verify deleted — get should fail
         let get_after = admin.admin().oauth_get_client(&created.client_id).await;
-        assert!(get_after.is_err(), "Expected error getting deleted OAuth client");
+        assert!(
+            get_after.is_err(),
+            "Expected error getting deleted OAuth client"
+        );
     }
 
     #[tokio::test]
-async fn oauth_admin_regenerate_secret() {
+    async fn oauth_admin_regenerate_secret() {
         let admin = admin_auth_client();
 
         let params = CreateOAuthClientParams::new(
@@ -1110,7 +1276,11 @@ async fn oauth_admin_regenerate_secret() {
             .admin()
             .oauth_regenerate_client_secret(&created.client_id)
             .await;
-        assert!(regenerated.is_ok(), "oauth_regenerate_client_secret failed: {:?}", regenerated.err());
+        assert!(
+            regenerated.is_ok(),
+            "oauth_regenerate_client_secret failed: {:?}",
+            regenerated.err()
+        );
 
         let regenerated = regenerated.unwrap();
         assert_eq!(regenerated.client_id, created.client_id);
@@ -1124,7 +1294,7 @@ async fn oauth_admin_regenerate_secret() {
     // ─── OAuth: Full Client Lifecycle ─────────────────────────
 
     #[tokio::test]
-async fn oauth_full_client_lifecycle() {
+    async fn oauth_full_client_lifecycle() {
         let admin = admin_auth_client();
 
         // 1. Create
@@ -1138,10 +1308,17 @@ async fn oauth_full_client_lifecycle() {
 
         // 2. List → verify appears
         let list = admin.admin().oauth_list_clients(None, None).await.unwrap();
-        assert!(list.clients.iter().any(|c| c.client_id == created.client_id));
+        assert!(list
+            .clients
+            .iter()
+            .any(|c| c.client_id == created.client_id));
 
         // 3. Get → verify match
-        let fetched = admin.admin().oauth_get_client(&created.client_id).await.unwrap();
+        let fetched = admin
+            .admin()
+            .oauth_get_client(&created.client_id)
+            .await
+            .unwrap();
         assert_eq!(fetched.client_name, "Lifecycle App");
 
         // 4. Update
@@ -1176,17 +1353,24 @@ async fn oauth_full_client_lifecycle() {
     // ─── OAuth: User Consent (error cases) ────────────────────
 
     #[tokio::test]
-async fn oauth_list_grants_empty() {
+    async fn oauth_list_grants_empty() {
         let auth = auth_client();
         let admin = admin_auth_client();
         let email = test_email("oauth-grants");
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let grants = auth.oauth_list_grants(&session.access_token).await;
-        assert!(grants.is_ok(), "oauth_list_grants failed: {:?}", grants.err());
+        assert!(
+            grants.is_ok(),
+            "oauth_list_grants failed: {:?}",
+            grants.err()
+        );
 
         let grants = grants.unwrap();
         assert!(grants.is_empty(), "Expected empty grants for new user");
@@ -1195,68 +1379,89 @@ async fn oauth_list_grants_empty() {
     }
 
     #[tokio::test]
-async fn oauth_get_authorization_details_invalid() {
+    async fn oauth_get_authorization_details_invalid() {
         let auth = auth_client();
         let admin = admin_auth_client();
         let email = test_email("oauth-auth-det");
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let result = auth
             .oauth_get_authorization_details(&session.access_token, "nonexistent-auth-id")
             .await;
-        assert!(result.is_err(), "Expected error for invalid authorization ID");
+        assert!(
+            result.is_err(),
+            "Expected error for invalid authorization ID"
+        );
 
         cleanup_user(&admin.admin(), &user.id).await;
     }
 
     #[tokio::test]
-async fn oauth_approve_authorization_invalid() {
+    async fn oauth_approve_authorization_invalid() {
         let auth = auth_client();
         let admin = admin_auth_client();
         let email = test_email("oauth-approve");
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let result = auth
             .oauth_approve_authorization(&session.access_token, "nonexistent-auth-id")
             .await;
-        assert!(result.is_err(), "Expected error for invalid authorization ID");
+        assert!(
+            result.is_err(),
+            "Expected error for invalid authorization ID"
+        );
 
         cleanup_user(&admin.admin(), &user.id).await;
     }
 
     #[tokio::test]
-async fn oauth_deny_authorization_invalid() {
+    async fn oauth_deny_authorization_invalid() {
         let auth = auth_client();
         let admin = admin_auth_client();
         let email = test_email("oauth-deny");
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let result = auth
             .oauth_deny_authorization(&session.access_token, "nonexistent-auth-id")
             .await;
-        assert!(result.is_err(), "Expected error for invalid authorization ID");
+        assert!(
+            result.is_err(),
+            "Expected error for invalid authorization ID"
+        );
 
         cleanup_user(&admin.admin(), &user.id).await;
     }
 
     #[tokio::test]
-async fn oauth_revoke_grant_nonexistent() {
+    async fn oauth_revoke_grant_nonexistent() {
         let auth = auth_client();
         let admin = admin_auth_client();
         let email = test_email("oauth-revoke");
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         // Revoking a non-existent grant — GoTrue may return success or error
         let result = auth
@@ -1275,7 +1480,11 @@ async fn oauth_revoke_grant_nonexistent() {
         let auth = auth_client();
 
         let config = auth.oauth_get_openid_configuration().await;
-        assert!(config.is_ok(), "oauth_get_openid_configuration failed: {:?}", config.err());
+        assert!(
+            config.is_ok(),
+            "oauth_get_openid_configuration failed: {:?}",
+            config.err()
+        );
 
         let config = config.unwrap();
         assert!(!config.issuer.is_empty());
@@ -1306,14 +1515,24 @@ async fn oauth_revoke_grant_nonexistent() {
         let password = "password123456";
 
         let user = create_test_user(&admin.admin(), &email, password).await;
-        let session = auth.sign_in_with_password_email(&email, password).await.unwrap();
+        let session = auth
+            .sign_in_with_password_email(&email, password)
+            .await
+            .unwrap();
 
         let userinfo = auth.oauth_get_userinfo(&session.access_token).await;
-        assert!(userinfo.is_ok(), "oauth_get_userinfo failed: {:?}", userinfo.err());
+        assert!(
+            userinfo.is_ok(),
+            "oauth_get_userinfo failed: {:?}",
+            userinfo.err()
+        );
 
         let userinfo = userinfo.unwrap();
         // Should contain the user's sub (subject) claim
-        assert!(userinfo.get("sub").is_some(), "userinfo should have 'sub' claim");
+        assert!(
+            userinfo.get("sub").is_some(),
+            "userinfo should have 'sub' claim"
+        );
         assert_eq!(userinfo["sub"].as_str().unwrap(), user.id);
 
         cleanup_user(&admin.admin(), &user.id).await;
@@ -1333,13 +1552,11 @@ async fn oauth_revoke_grant_nonexistent() {
 
         // Generate PKCE pair and build authorize URL
         let pkce = AuthClient::generate_pkce_pair();
-        let url_params = OAuthAuthorizeUrlParams::new(
-            &client.client_id,
-            "https://urltest.com/callback",
-        )
-        .scope("openid")
-        .state("test-state-123")
-        .pkce(&pkce.challenge);
+        let url_params =
+            OAuthAuthorizeUrlParams::new(&client.client_id, "https://urltest.com/callback")
+                .scope("openid")
+                .state("test-state-123")
+                .pkce(&pkce.challenge);
 
         let url = auth.build_oauth_authorize_url(&url_params);
         assert!(url.contains(&client.client_id));
@@ -1428,13 +1645,11 @@ async fn oauth_revoke_grant_nonexistent() {
         assert_eq!(pkce.challenge.as_str().len(), 43);
 
         // 3. Build authorize URL
-        let url_params = OAuthAuthorizeUrlParams::new(
-            &client.client_id,
-            "https://pkcetest.com/callback",
-        )
-        .scope("openid")
-        .state("pkce-test-state")
-        .pkce(&pkce.challenge);
+        let url_params =
+            OAuthAuthorizeUrlParams::new(&client.client_id, "https://pkcetest.com/callback")
+                .scope("openid")
+                .state("pkce-test-state")
+                .pkce(&pkce.challenge);
         let authorize_url = auth.build_oauth_authorize_url(&url_params);
 
         // 4. Verify URL structure

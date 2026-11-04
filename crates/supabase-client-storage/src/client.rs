@@ -183,7 +183,11 @@ impl StorageClient {
     }
 
     /// Update a bucket.
-    pub async fn update_bucket(&self, id: &str, options: BucketOptions) -> Result<(), StorageError> {
+    pub async fn update_bucket(
+        &self,
+        id: &str,
+        options: BucketOptions,
+    ) -> Result<(), StorageError> {
         let url = self.endpoint(&["bucket", bucket_segment(id)?]);
         let body = bucket_body(id, options);
         let resp = self.request(Method::PUT, url).json(&body).send().await?;
@@ -394,7 +398,7 @@ mod tests {
 
     #[test]
     fn public_url_with_transform_all_options() {
-        use crate::types::{TransformOptions, ResizeMode, ImageFormat};
+        use crate::types::{ImageFormat, ResizeMode, TransformOptions};
 
         let client = StorageClient::new("https://example.supabase.co", "test-key").unwrap();
         let api = client.from("photos");
@@ -640,7 +644,10 @@ mod tests {
         assert!(matches!(err, StorageError::InvalidPath(_)), "{:?}", err);
         for bad in ["a/../b", "./a", "a//b", "/a", ""] {
             let err = st.from("avatars").download(bad).await.unwrap_err();
-            assert!(matches!(err, StorageError::InvalidPath(_)), "{bad}: {err:?}");
+            assert!(
+                matches!(err, StorageError::InvalidPath(_)),
+                "{bad}: {err:?}"
+            );
         }
         assert!(s.received_requests().await.unwrap().is_empty());
     }
@@ -763,7 +770,10 @@ mod tests {
             .iter()
             .map(|r| r.headers.get("authorization").unwrap().to_str().unwrap())
             .collect();
-        assert_eq!(auth, vec!["Bearer anon-key", "Bearer user-jwt", "Bearer anon-key"]);
+        assert_eq!(
+            auth,
+            vec!["Bearer anon-key", "Bearer user-jwt", "Bearer anon-key"]
+        );
         for r in &reqs {
             assert_eq!(r.headers.get("apikey").unwrap(), "anon-key");
         }
@@ -781,8 +791,14 @@ mod tests {
         st.set_auth("explicit");
         let _ = st.list_buckets().await;
         let reqs = s.received_requests().await.unwrap();
-        assert_eq!(reqs[0].headers.get("authorization").unwrap(), "Bearer session-jwt");
-        assert_eq!(reqs[1].headers.get("authorization").unwrap(), "Bearer explicit");
+        assert_eq!(
+            reqs[0].headers.get("authorization").unwrap(),
+            "Bearer session-jwt"
+        );
+        assert_eq!(
+            reqs[1].headers.get("authorization").unwrap(),
+            "Bearer explicit"
+        );
     }
 
     #[tokio::test]
@@ -797,7 +813,11 @@ mod tests {
             .unwrap()
             .with_max_download_size(Some(1024));
         let err = st.from("b").download("big").await.unwrap_err();
-        assert!(matches!(err, StorageError::ResponseTooLarge { limit: 1024 }), "{:?}", err);
+        assert!(
+            matches!(err, StorageError::ResponseTooLarge { limit: 1024 }),
+            "{:?}",
+            err
+        );
         let st = st.with_max_download_size(Some(4096));
         assert_eq!(st.from("b").download("big").await.unwrap().len(), 4096);
     }

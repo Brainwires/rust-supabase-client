@@ -113,10 +113,7 @@ mod tests {
         let json = r#"{"error":"Bucket not found","message":"The resource was not found","statusCode":"404"}"#;
         let resp: StorageApiErrorResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.error.as_deref(), Some("Bucket not found"));
-        assert_eq!(
-            resp.message.as_deref(),
-            Some("The resource was not found")
-        );
+        assert_eq!(resp.message.as_deref(), Some("The resource was not found"));
         assert_eq!(resp.status_code_str().as_deref(), Some("404"));
         // message takes priority
         assert_eq!(resp.error_message(), "The resource was not found");

@@ -199,7 +199,8 @@ impl AuthClient {
     /// Use this to restore a session from external storage (e.g., persisted tokens).
     /// If `expires_at` is missing it is filled in from `expires_in`.
     pub async fn set_session(&self, session: Session) {
-        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        self.store_session(&session, AuthChangeEvent::SignedIn)
+            .await;
     }
 
     /// Clear the stored session and emit `SignedOut`.
@@ -332,7 +333,8 @@ impl AuthClient {
         email: &str,
         password: &str,
     ) -> Result<AuthResponse, AuthError> {
-        self.sign_up_with_email_and_data(email, password, None).await
+        self.sign_up_with_email_and_data(email, password, None)
+            .await
     }
 
     /// Sign up a new user with email, password, and custom user metadata.
@@ -404,7 +406,8 @@ impl AuthClient {
         let url = self.fixed_url_with_query(&["token"], &[("grant_type", "password")]);
         let resp = self.inner.http.post(url).json(&body).send().await?;
         let session = self.handle_session_response(resp).await?;
-        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        self.store_session(&session, AuthChangeEvent::SignedIn)
+            .await;
         Ok(session)
     }
 
@@ -425,7 +428,8 @@ impl AuthClient {
         let url = self.fixed_url_with_query(&["token"], &[("grant_type", "password")]);
         let resp = self.inner.http.post(url).json(&body).send().await?;
         let session = self.handle_session_response(resp).await?;
-        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        self.store_session(&session, AuthChangeEvent::SignedIn)
+            .await;
         Ok(session)
     }
 
@@ -468,7 +472,8 @@ impl AuthClient {
         let url = self.fixed_url(&["verify"]);
         let resp = self.inner.http.post(url).json(&params).send().await?;
         let session = self.handle_session_response(resp).await?;
-        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        self.store_session(&session, AuthChangeEvent::SignedIn)
+            .await;
         Ok(session)
     }
 
@@ -481,7 +486,8 @@ impl AuthClient {
         let body = json!({});
         let resp = self.inner.http.post(url).json(&body).send().await?;
         let session = self.handle_session_response(resp).await?;
-        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        self.store_session(&session, AuthChangeEvent::SignedIn)
+            .await;
         Ok(session)
     }
 
@@ -503,8 +509,7 @@ impl AuthClient {
             .append_pair("provider", &provider.to_string());
 
         if let Some(redirect) = redirect_to {
-            url.query_pairs_mut()
-                .append_pair("redirect_to", redirect);
+            url.query_pairs_mut().append_pair("redirect_to", redirect);
         }
         if let Some(scopes) = scopes {
             url.query_pairs_mut().append_pair("scopes", scopes);
@@ -532,7 +537,8 @@ impl AuthClient {
         let url = self.fixed_url_with_query(&["token"], &[("grant_type", "pkce")]);
         let resp = self.inner.http.post(url).json(&body).send().await?;
         let session = self.handle_session_response(resp).await?;
-        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        self.store_session(&session, AuthChangeEvent::SignedIn)
+            .await;
         Ok(session)
     }
 
@@ -791,7 +797,8 @@ impl AuthClient {
             .send()
             .await?;
         let session = self.handle_session_response(resp).await?;
-        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        self.store_session(&session, AuthChangeEvent::SignedIn)
+            .await;
         Ok(session)
     }
 
@@ -878,7 +885,9 @@ impl AuthClient {
         let amr = parse_amr_from_jwt(access_token);
 
         // current_level: aal2 if AMR contains an MFA method, else aal1
-        let has_mfa_amr = amr.iter().any(|e| e.method == "totp" || e.method == "phone");
+        let has_mfa_amr = amr
+            .iter()
+            .any(|e| e.method == "totp" || e.method == "phone");
         let current_level = if !amr.is_empty() {
             if has_mfa_amr {
                 Some(AuthenticatorAssuranceLevel::Aal2)
@@ -936,7 +945,8 @@ impl AuthClient {
         let url = self.fixed_url_with_query(&["token"], &[("grant_type", "id_token")]);
         let resp = self.inner.http.post(url).json(&params).send().await?;
         let session = self.handle_session_response(resp).await?;
-        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        self.store_session(&session, AuthChangeEvent::SignedIn)
+            .await;
         Ok(session)
     }
 
@@ -1123,8 +1133,7 @@ impl AuthClient {
         client_id: &str,
     ) -> Result<(), AuthError> {
         let mut url = self.fixed_url(&["user", "oauth", "grants"]);
-        url.query_pairs_mut()
-            .append_pair("client_id", client_id);
+        url.query_pairs_mut().append_pair("client_id", client_id);
         let resp = self
             .inner
             .http
@@ -1290,9 +1299,7 @@ impl AuthClient {
     /// Fetch the OpenID Connect discovery document.
     ///
     /// GET `/.well-known/openid-configuration`.
-    pub async fn oauth_get_openid_configuration(
-        &self,
-    ) -> Result<OpenIdConfiguration, AuthError> {
+    pub async fn oauth_get_openid_configuration(&self) -> Result<OpenIdConfiguration, AuthError> {
         let url = self.fixed_url(&[".well-known", "openid-configuration"]);
         let resp = self.inner.http.get(url).send().await?;
         let status = resp.status().as_u16();
@@ -1320,10 +1327,7 @@ impl AuthClient {
     /// Fetch user info from the OAuth userinfo endpoint.
     ///
     /// GET `/oauth/userinfo` with Bearer token.
-    pub async fn oauth_get_userinfo(
-        &self,
-        access_token: &str,
-    ) -> Result<JsonValue, AuthError> {
+    pub async fn oauth_get_userinfo(&self, access_token: &str) -> Result<JsonValue, AuthError> {
         let url = self.fixed_url(&["oauth", "userinfo"]);
         let resp = self
             .inner
@@ -1359,7 +1363,9 @@ impl AuthClient {
         let payload_b64 = parts[1];
         let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(payload_b64)
-            .map_err(|e| AuthError::InvalidToken(format!("Invalid base64 in JWT payload: {}", e)))?;
+            .map_err(|e| {
+                AuthError::InvalidToken(format!("Invalid base64 in JWT payload: {}", e))
+            })?;
 
         serde_json::from_slice(&decoded)
             .map_err(|e| AuthError::InvalidToken(format!("Invalid JSON in JWT payload: {}", e)))
@@ -1417,7 +1423,8 @@ impl AuthClient {
         let url = self.fixed_url_with_query(&["token"], &[("grant_type", "password")]);
         let resp = self.inner.http.post(url).json(&body).send().await?;
         let session = self.handle_session_response(resp).await?;
-        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        self.store_session(&session, AuthChangeEvent::SignedIn)
+            .await;
         Ok(session)
     }
 
@@ -1465,10 +1472,7 @@ impl AuthClient {
     ///
     /// POST to `/token?grant_type=web3` with chain, address, message, signature, nonce.
     /// Stores the session and emits `SignedIn`.
-    pub async fn sign_in_with_web3(
-        &self,
-        params: Web3SignInParams,
-    ) -> Result<Session, AuthError> {
+    pub async fn sign_in_with_web3(&self, params: Web3SignInParams) -> Result<Session, AuthError> {
         let body = json!({
             "chain": params.chain,
             "address": params.address,
@@ -1480,7 +1484,8 @@ impl AuthClient {
         let url = self.fixed_url_with_query(&["token"], &[("grant_type", "web3")]);
         let resp = self.inner.http.post(url).json(&body).send().await?;
         let session = self.handle_session_response(resp).await?;
-        self.store_session(&session, AuthChangeEvent::SignedIn).await;
+        self.store_session(&session, AuthChangeEvent::SignedIn)
+            .await;
         Ok(session)
     }
 
@@ -1552,7 +1557,10 @@ impl AuthClient {
         &self.inner.api_key
     }
 
-    async fn handle_auth_response(&self, resp: reqwest::Response) -> Result<AuthResponse, AuthError> {
+    async fn handle_auth_response(
+        &self,
+        resp: reqwest::Response,
+    ) -> Result<AuthResponse, AuthError> {
         let status = resp.status().as_u16();
         if status >= 400 {
             return Err(self.parse_error(status, resp).await);
@@ -1656,7 +1664,10 @@ async fn handle_session_response(resp: reqwest::Response) -> Result<Session, Aut
 }
 
 /// POST `/token?grant_type=refresh_token`.
-async fn refresh_request(inner: &AuthClientInner, refresh_token: &str) -> Result<Session, AuthError> {
+async fn refresh_request(
+    inner: &AuthClientInner,
+    refresh_token: &str,
+) -> Result<Session, AuthError> {
     let body = json!({
         "refresh_token": refresh_token,
     });
@@ -1762,7 +1773,10 @@ async fn clear_if_unchanged(inner: &AuthClientInner, refresh_token: &str) {
     }
 }
 
-fn spawn_auto_refresh(inner: &Arc<AuthClientInner>, config: AutoRefreshConfig) -> platform::SpawnHandle {
+fn spawn_auto_refresh(
+    inner: &Arc<AuthClientInner>,
+    config: AutoRefreshConfig,
+) -> platform::SpawnHandle {
     platform::spawn(auto_refresh_loop(Arc::downgrade(inner), config))
 }
 
@@ -1841,7 +1855,9 @@ fn parse_amr_from_jwt(token: &str) -> Vec<AmrEntry> {
     };
 
     match payload.get("amr") {
-        Some(amr_val) => serde_json::from_value::<Vec<AmrEntry>>(amr_val.clone()).unwrap_or_default(),
+        Some(amr_val) => {
+            serde_json::from_value::<Vec<AmrEntry>>(amr_val.clone()).unwrap_or_default()
+        }
         None => Vec::new(),
     }
 }
@@ -1938,8 +1954,7 @@ mod tests {
         use sha2::{Digest, Sha256};
         let pair = AuthClient::generate_pkce_pair();
         let hash = Sha256::digest(pair.verifier.as_str().as_bytes());
-        let expected_challenge =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash);
+        let expected_challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash);
         assert_eq!(pair.challenge.as_str(), expected_challenge);
     }
 
@@ -2017,10 +2032,10 @@ mod tests {
         let client = AuthClient::new("https://example.supabase.co", "test-key").unwrap();
         let mut sub = client.on_auth_state_change();
         client.set_session(make_test_session()).await;
-        let event = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            sub.next(),
-        ).await.unwrap().unwrap();
+        let event = tokio::time::timeout(std::time::Duration::from_millis(100), sub.next())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(event.event, AuthChangeEvent::SignedIn);
         assert!(event.session.is_some());
     }
@@ -2030,10 +2045,10 @@ mod tests {
         let client = AuthClient::new("https://example.supabase.co", "test-key").unwrap();
         let mut sub = client.on_auth_state_change();
         client.clear_session().await;
-        let event = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            sub.next(),
-        ).await.unwrap().unwrap();
+        let event = tokio::time::timeout(std::time::Duration::from_millis(100), sub.next())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(event.event, AuthChangeEvent::SignedOut);
         assert!(event.session.is_none());
     }
@@ -2046,8 +2061,14 @@ mod tests {
         client.set_session(make_test_session()).await;
 
         let timeout = std::time::Duration::from_millis(100);
-        let e1 = tokio::time::timeout(timeout, sub1.next()).await.unwrap().unwrap();
-        let e2 = tokio::time::timeout(timeout, sub2.next()).await.unwrap().unwrap();
+        let e1 = tokio::time::timeout(timeout, sub1.next())
+            .await
+            .unwrap()
+            .unwrap();
+        let e2 = tokio::time::timeout(timeout, sub2.next())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(e1.event, AuthChangeEvent::SignedIn);
         assert_eq!(e2.event, AuthChangeEvent::SignedIn);
     }
@@ -2076,7 +2097,8 @@ mod tests {
         let future = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() as i64 + 3600;
+            .as_secs() as i64
+            + 3600;
         session.expires_at = Some(future);
         assert!(!should_refresh(&session, &margin));
 
@@ -2084,7 +2106,8 @@ mod tests {
         let soon = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() as i64 + 30;
+            .as_secs() as i64
+            + 30;
         session.expires_at = Some(soon);
         assert!(should_refresh(&session, &margin));
     }
@@ -2131,9 +2154,8 @@ mod tests {
     fn test_get_claims_valid_jwt() {
         // Create a minimal JWT: header.payload.signature
         // payload = {"sub":"user-123","email":"test@example.com","role":"authenticated"}
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-            r#"{"sub":"user-123","email":"test@example.com","role":"authenticated"}"#
-        );
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"sub":"user-123","email":"test@example.com","role":"authenticated"}"#);
         let token = format!("eyJhbGciOiJIUzI1NiJ9.{}.fake-signature", payload);
         let claims = AuthClient::get_claims(&token).unwrap();
         assert_eq!(claims["sub"], "user-123");
@@ -2165,8 +2187,14 @@ mod tests {
 
     #[test]
     fn test_web3_chain_serialization() {
-        assert_eq!(serde_json::to_string(&Web3Chain::Ethereum).unwrap(), "\"ethereum\"");
-        assert_eq!(serde_json::to_string(&Web3Chain::Solana).unwrap(), "\"solana\"");
+        assert_eq!(
+            serde_json::to_string(&Web3Chain::Ethereum).unwrap(),
+            "\"ethereum\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Web3Chain::Solana).unwrap(),
+            "\"solana\""
+        );
     }
 
     #[test]
@@ -2202,7 +2230,10 @@ mod tests {
         let token = "captcha-abc-123";
         body["gotrue_meta_security"] = json!({ "captcha_token": token });
 
-        assert_eq!(body["gotrue_meta_security"]["captcha_token"], "captcha-abc-123");
+        assert_eq!(
+            body["gotrue_meta_security"]["captcha_token"],
+            "captcha-abc-123"
+        );
         assert_eq!(body["email"], "test@example.com");
     }
 
@@ -2240,20 +2271,24 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/auth/v1/signup"))
-            .respond_with(
-                ResponseTemplate::new(422)
-                    .set_body_json(json!({
-                        "msg": "Password should be at least 6 characters",
-                        "error_code": "weak_password"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+                "msg": "Password should be at least 6 characters",
+                "error_code": "weak_password"
+            })))
             .mount(&server)
             .await;
 
         let auth = mock_auth(&server);
-        let err = auth.sign_up_with_email("user@test.com", "short").await.unwrap_err();
+        let err = auth
+            .sign_up_with_email("user@test.com", "short")
+            .await
+            .unwrap_err();
         match err {
-            AuthError::Api { status, message, error_code } => {
+            AuthError::Api {
+                status,
+                message,
+                error_code,
+            } => {
                 assert_eq!(status, 422);
                 assert_eq!(message, "Password should be at least 6 characters");
                 assert_eq!(error_code, Some(crate::error::AuthErrorCode::WeakPassword));
@@ -2270,13 +2305,10 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/auth/v1/token"))
             .and(query_param("grant_type", "password"))
-            .respond_with(
-                ResponseTemplate::new(400)
-                    .set_body_json(json!({
-                        "msg": "Invalid login credentials",
-                        "error_code": "invalid_credentials"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "msg": "Invalid login credentials",
+                "error_code": "invalid_credentials"
+            })))
             .mount(&server)
             .await;
 
@@ -2286,7 +2318,11 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            AuthError::Api { status, message, error_code } => {
+            AuthError::Api {
+                status,
+                message,
+                error_code,
+            } => {
                 assert_eq!(status, 400);
                 assert_eq!(message, "Invalid login credentials");
                 assert_eq!(
@@ -2306,20 +2342,21 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/auth/v1/token"))
             .and(query_param("grant_type", "refresh_token"))
-            .respond_with(
-                ResponseTemplate::new(400)
-                    .set_body_json(json!({
-                        "msg": "Invalid Refresh Token: Already Used",
-                        "error_code": "refresh_token_not_found"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "msg": "Invalid Refresh Token: Already Used",
+                "error_code": "refresh_token_not_found"
+            })))
             .mount(&server)
             .await;
 
         let auth = mock_auth(&server);
         let err = auth.refresh_session("expired-token").await.unwrap_err();
         match err {
-            AuthError::Api { status, message, error_code } => {
+            AuthError::Api {
+                status,
+                message,
+                error_code,
+            } => {
                 assert_eq!(status, 400);
                 assert!(message.contains("Already Used"));
                 assert_eq!(
@@ -2338,13 +2375,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/auth/v1/recover"))
-            .respond_with(
-                ResponseTemplate::new(429)
-                    .set_body_json(json!({
-                        "msg": "Rate limit exceeded",
-                        "error_code": "over_request_rate_limit"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(429).set_body_json(json!({
+                "msg": "Rate limit exceeded",
+                "error_code": "over_request_rate_limit"
+            })))
             .mount(&server)
             .await;
 
@@ -2354,7 +2388,11 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            AuthError::Api { status, message, error_code } => {
+            AuthError::Api {
+                status,
+                message,
+                error_code,
+            } => {
                 assert_eq!(status, 429);
                 assert_eq!(message, "Rate limit exceeded");
                 assert_eq!(
@@ -2373,13 +2411,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/auth/v1/verify"))
-            .respond_with(
-                ResponseTemplate::new(403)
-                    .set_body_json(json!({
-                        "msg": "Token has expired or is invalid",
-                        "error_code": "otp_expired"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+                "msg": "Token has expired or is invalid",
+                "error_code": "otp_expired"
+            })))
             .mount(&server)
             .await;
 
@@ -2393,13 +2428,14 @@ mod tests {
         };
         let err = auth.verify_otp(params).await.unwrap_err();
         match err {
-            AuthError::Api { status, message, error_code } => {
+            AuthError::Api {
+                status,
+                message,
+                error_code,
+            } => {
                 assert_eq!(status, 403);
                 assert!(message.contains("expired"));
-                assert_eq!(
-                    error_code,
-                    Some(crate::error::AuthErrorCode::OtpExpired)
-                );
+                assert_eq!(error_code, Some(crate::error::AuthErrorCode::OtpExpired));
             }
             other => panic!("Expected Api error, got: {:?}", other),
         }
@@ -2412,12 +2448,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/auth/v1/admin/users"))
-            .respond_with(
-                ResponseTemplate::new(401)
-                    .set_body_json(json!({
-                        "msg": "Invalid API key"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "msg": "Invalid API key"
+            })))
             .mount(&server)
             .await;
 
@@ -2425,7 +2458,9 @@ mod tests {
         let admin = auth.admin();
         let err = admin.list_users(None, None).await.unwrap_err();
         match err {
-            AuthError::Api { status, message, .. } => {
+            AuthError::Api {
+                status, message, ..
+            } => {
                 assert_eq!(status, 401);
                 assert_eq!(message, "Invalid API key");
             }
@@ -2438,13 +2473,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
             .and(path("/auth/v1/admin/users/nonexistent-id"))
-            .respond_with(
-                ResponseTemplate::new(404)
-                    .set_body_json(json!({
-                        "msg": "User not found",
-                        "error_code": "user_not_found"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+                "msg": "User not found",
+                "error_code": "user_not_found"
+            })))
             .mount(&server)
             .await;
 
@@ -2452,7 +2484,9 @@ mod tests {
         let admin = auth.admin();
         let err = admin.delete_user("nonexistent-id").await.unwrap_err();
         match err {
-            AuthError::Api { status, message, .. } => {
+            AuthError::Api {
+                status, message, ..
+            } => {
                 assert_eq!(status, 404);
                 assert_eq!(message, "User not found");
             }
@@ -2467,13 +2501,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/auth/v1/sso"))
-            .respond_with(
-                ResponseTemplate::new(404)
-                    .set_body_json(json!({
-                        "msg": "No SSO provider found for domain",
-                        "error_code": "sso_provider_not_found"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+                "msg": "No SSO provider found for domain",
+                "error_code": "sso_provider_not_found"
+            })))
             .mount(&server)
             .await;
 
@@ -2481,7 +2512,11 @@ mod tests {
         let params = crate::params::SsoSignInParams::domain("unknown.com");
         let err = auth.sign_in_with_sso(params).await.unwrap_err();
         match err {
-            AuthError::Api { status, message, error_code } => {
+            AuthError::Api {
+                status,
+                message,
+                error_code,
+            } => {
                 assert_eq!(status, 404);
                 assert!(message.contains("SSO provider"));
                 assert_eq!(
@@ -2500,13 +2535,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/auth/v1/user/identities/authorize"))
-            .respond_with(
-                ResponseTemplate::new(422)
-                    .set_body_json(json!({
-                        "msg": "Identity already exists",
-                        "error_code": "identity_already_exists"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+                "msg": "Identity already exists",
+                "error_code": "identity_already_exists"
+            })))
             .mount(&server)
             .await;
 
@@ -2516,7 +2548,11 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            AuthError::Api { status, message, error_code } => {
+            AuthError::Api {
+                status,
+                message,
+                error_code,
+            } => {
                 assert_eq!(status, 422);
                 assert!(message.contains("Identity already exists"));
                 assert_eq!(
@@ -2535,13 +2571,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
             .and(path("/auth/v1/user/identities/identity-123"))
-            .respond_with(
-                ResponseTemplate::new(422)
-                    .set_body_json(json!({
-                        "msg": "Unlinking this identity is not allowed",
-                        "error_code": "single_identity_not_deletable"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+                "msg": "Unlinking this identity is not allowed",
+                "error_code": "single_identity_not_deletable"
+            })))
             .mount(&server)
             .await;
 
@@ -2551,7 +2584,11 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            AuthError::Api { status, message, error_code } => {
+            AuthError::Api {
+                status,
+                message,
+                error_code,
+            } => {
                 assert_eq!(status, 422);
                 assert!(message.contains("not allowed"));
                 assert_eq!(
@@ -2571,9 +2608,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/auth/v1/token"))
             .and(query_param("grant_type", "password"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(session_json()),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(session_json()))
             .mount(&server)
             .await;
 
@@ -2597,12 +2632,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/auth/v1/logout"))
-            .respond_with(
-                ResponseTemplate::new(400)
-                    .set_body_json(json!({
-                        "msg": "Bad request"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "msg": "Bad request"
+            })))
             .mount(&server)
             .await;
 
@@ -2626,9 +2658,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/auth/v1/token"))
             .and(query_param("grant_type", "password"))
-            .respond_with(
-                ResponseTemplate::new(500).set_body_string("Internal Server Error"),
-            )
+            .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
             .mount(&server)
             .await;
 
@@ -2638,7 +2668,11 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            AuthError::Api { status, message, error_code } => {
+            AuthError::Api {
+                status,
+                message,
+                error_code,
+            } => {
                 assert_eq!(status, 500);
                 assert_eq!(message, "HTTP 500");
                 assert!(error_code.is_none());
@@ -2701,14 +2735,26 @@ mod tests {
             assert!(r.url.query().is_none(), "query injected: {}", r.url);
         }
         for bad in ["..", ".", ""] {
-            assert!(matches!(admin.delete_user(bad).await, Err(AuthError::InvalidInput(_))));
-            assert!(matches!(admin.get_user_by_id(bad).await, Err(AuthError::InvalidInput(_))));
-            assert!(matches!(admin.mfa_list_factors(bad).await, Err(AuthError::InvalidInput(_))));
+            assert!(matches!(
+                admin.delete_user(bad).await,
+                Err(AuthError::InvalidInput(_))
+            ));
+            assert!(matches!(
+                admin.get_user_by_id(bad).await,
+                Err(AuthError::InvalidInput(_))
+            ));
+            assert!(matches!(
+                admin.mfa_list_factors(bad).await,
+                Err(AuthError::InvalidInput(_))
+            ));
             assert!(matches!(
                 admin.mfa_delete_factor("u", bad).await,
                 Err(AuthError::InvalidInput(_))
             ));
-            assert!(matches!(admin.oauth_get_client(bad).await, Err(AuthError::InvalidInput(_))));
+            assert!(matches!(
+                admin.oauth_get_client(bad).await,
+                Err(AuthError::InvalidInput(_))
+            ));
             assert!(matches!(
                 admin.oauth_delete_client(bad).await,
                 Err(AuthError::InvalidInput(_))
@@ -2753,10 +2799,11 @@ mod tests {
         let s = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/auth/v1/signup"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(poc_session_json("AT", "RT", Some(9999999999))),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(poc_session_json(
+                "AT",
+                "RT",
+                Some(9999999999),
+            )))
             .mount(&s)
             .await;
         let a = AuthClient::new(&s.uri(), "anon").unwrap();
@@ -2771,9 +2818,10 @@ mod tests {
         let s = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/auth/v1/signup"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(
-                json!({"id": "u1", "aud": "authenticated", "email": "a@b.c"}),
-            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"id": "u1", "aud": "authenticated", "email": "a@b.c"})),
+            )
             .mount(&s)
             .await;
         let a = AuthClient::new(&s.uri(), "anon").unwrap();
@@ -2831,13 +2879,18 @@ mod tests {
             .mount(&s)
             .await;
         let a = AuthClient::new(&s.uri(), "anon").unwrap();
-        a.set_session(poc_session("AT1", "RT1", Some(9999999999))).await;
+        a.set_session(poc_session("AT1", "RT1", Some(9999999999)))
+            .await;
         let a2 = a.clone();
         let refresh = tokio::spawn(async move { a2.refresh_current_session().await });
         tokio::time::sleep(Duration::from_millis(100)).await;
         a.clear_session().await;
         let res = refresh.await.unwrap();
-        assert!(matches!(res, Err(AuthError::NoSession)), "{:?}", res.map(|s| s.access_token));
+        assert!(
+            matches!(res, Err(AuthError::NoSession)),
+            "{:?}",
+            res.map(|s| s.access_token)
+        );
         assert!(a.get_session().await.is_none());
     }
 
@@ -2854,7 +2907,8 @@ mod tests {
             .mount(&s)
             .await;
         let a = AuthClient::new(&s.uri(), "anon").unwrap();
-        a.set_session(poc_session("AT1", "RT1", Some(9999999999))).await;
+        a.set_session(poc_session("AT1", "RT1", Some(9999999999)))
+            .await;
         let (r1, r2, r3) = tokio::join!(
             a.refresh_current_session(),
             a.refresh_current_session(),
@@ -2879,7 +2933,8 @@ mod tests {
             .mount(&s)
             .await;
         let a = AuthClient::new(&s.uri(), "anon").unwrap();
-        a.set_session(poc_session("AT1", "RT1", Some(9999999999))).await;
+        a.set_session(poc_session("AT1", "RT1", Some(9999999999)))
+            .await;
         let err = a.refresh_current_session().await.unwrap_err();
         match &err {
             AuthError::Api {
@@ -2924,7 +2979,8 @@ mod tests {
         });
         tokio::time::sleep(Duration::from_millis(25)).await;
         // A new sign-in replaces the session while refreshes keep failing.
-        a.set_session(poc_session("NEW", "NEW-RT", Some(9999999999))).await;
+        a.set_session(poc_session("NEW", "NEW-RT", Some(9999999999)))
+            .await;
         tokio::time::sleep(Duration::from_millis(250)).await;
         assert_eq!(a.get_session().await.unwrap().access_token, "NEW");
     }
@@ -2939,7 +2995,8 @@ mod tests {
             .mount(&s)
             .await;
         let a = AuthClient::new(&s.uri(), "anon").unwrap();
-        a.set_session(poc_session("AT", "RT", Some(9999999999))).await;
+        a.set_session(poc_session("AT", "RT", Some(9999999999)))
+            .await;
         a.sign_out_current_with_scope(SignOutScope::Others)
             .await
             .unwrap();
@@ -2952,7 +3009,9 @@ mod tests {
             let s = MockServer::start().await;
             Mock::given(method("POST"))
                 .and(path("/auth/v1/logout"))
-                .respond_with(ResponseTemplate::new(status).set_body_json(json!({"msg":"invalid JWT"})))
+                .respond_with(
+                    ResponseTemplate::new(status).set_body_json(json!({"msg":"invalid JWT"})),
+                )
                 .mount(&s)
                 .await;
             let a = AuthClient::new(&s.uri(), "anon").unwrap();
@@ -2974,7 +3033,8 @@ mod tests {
             .mount(&s)
             .await;
         let a = AuthClient::new(&s.uri(), "anon").unwrap();
-        a.set_session(poc_session("AT", "RT", Some(9999999999))).await;
+        a.set_session(poc_session("AT", "RT", Some(9999999999)))
+            .await;
         assert!(a.sign_out_current().await.is_err());
         assert!(a.get_session().await.is_some());
     }
@@ -2997,7 +3057,11 @@ mod tests {
         let s = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/auth/v1/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(poc_session_json("AT", "RT", Some(0))))
+            .respond_with(ResponseTemplate::new(200).set_body_json(poc_session_json(
+                "AT",
+                "RT",
+                Some(0),
+            )))
             .mount(&s)
             .await;
         {
@@ -3008,7 +3072,10 @@ mod tests {
         let before = s.received_requests().await.unwrap().len();
         tokio::time::sleep(Duration::from_millis(300)).await;
         let after = s.received_requests().await.unwrap().len();
-        assert_eq!(before, after, "background task keeps refreshing after client drop");
+        assert_eq!(
+            before, after,
+            "background task keeps refreshing after client drop"
+        );
     }
 
     #[tokio::test]
@@ -3018,11 +3085,13 @@ mod tests {
         assert!(a.is_auto_refresh_running());
         a.clear_session().await;
         assert!(!a.is_auto_refresh_running());
-        a.set_session(poc_session("AT", "RT", Some(9999999999))).await;
+        a.set_session(poc_session("AT", "RT", Some(9999999999)))
+            .await;
         assert!(a.is_auto_refresh_running());
         a.stop_auto_refresh();
         a.clear_session().await;
-        a.set_session(poc_session("AT", "RT", Some(9999999999))).await;
+        a.set_session(poc_session("AT", "RT", Some(9999999999)))
+            .await;
         assert!(!a.is_auto_refresh_running());
     }
 
@@ -3040,12 +3109,18 @@ mod tests {
         let reqs = s.received_requests().await.unwrap();
         assert_eq!(reqs[0].url.path(), "/auth/v1/recover");
         let q: Vec<(String, String)> = reqs[0].url.query_pairs().into_owned().collect();
-        assert_eq!(q, vec![("redirect_to".into(), "https://app/reset?x=1".into())]);
+        assert_eq!(
+            q,
+            vec![("redirect_to".into(), "https://app/reset?x=1".into())]
+        );
         let body: serde_json::Value = serde_json::from_slice(&reqs[0].body).unwrap();
         assert_eq!(body, json!({"email": "a@b.c"}));
         assert_eq!(reqs[1].url.path(), "/auth/v1/invite");
         let q: Vec<(String, String)> = reqs[1].url.query_pairs().into_owned().collect();
-        assert_eq!(q, vec![("redirect_to".into(), "https://app/welcome".into())]);
+        assert_eq!(
+            q,
+            vec![("redirect_to".into(), "https://app/welcome".into())]
+        );
     }
 
     #[tokio::test]
