@@ -22,6 +22,10 @@
 //!     .await?;
 //! ```
 
+// `RealtimeError::WebSocket` wraps tungstenite's (large) error by value;
+// boxing it would change the public variant for little gain.
+#![allow(clippy::result_large_err)]
+
 pub mod callback;
 pub mod channel;
 pub mod client;
@@ -36,10 +40,9 @@ pub use channel::{ChannelBuilder, RealtimeChannel};
 pub use client::RealtimeClient;
 pub use error::RealtimeError;
 pub use types::{
-    BroadcastConfig, ChannelState, ColumnInfo, JoinConfig, JoinPayload,
-    PostgresChangePayload, PostgresChangesEvent, PostgresChangesFilter, PresenceConfig,
-    PresenceDiff, PresenceEntry, PresenceMeta, PresenceState, RealtimeConfig,
-    ReconnectConfig, SubscriptionStatus,
+    BroadcastConfig, ChannelState, ColumnInfo, JoinConfig, JoinPayload, PostgresChangePayload,
+    PostgresChangesEvent, PostgresChangesFilter, PresenceConfig, PresenceDiff, PresenceEntry,
+    PresenceMeta, PresenceState, RealtimeConfig, ReconnectConfig, SubscriptionStatus,
 };
 
 use supabase_client_core::SupabaseClient;
@@ -49,12 +52,17 @@ pub trait SupabaseClientRealtimeExt {
     /// Create a [`RealtimeClient`] from the client's configuration.
     ///
     /// Requires `supabase_url` and `supabase_key` to be set in the config.
+    /// The realtime client follows the client's access token
+    /// ([`SupabaseClient::access_token_handle`]): channels join with the
+    /// signed-in user's JWT, and refreshed tokens are pushed on the next
+    /// heartbeat.
     fn realtime(&self) -> Result<RealtimeClient, RealtimeError>;
 }
 
 impl SupabaseClientRealtimeExt for SupabaseClient {
     fn realtime(&self) -> Result<RealtimeClient, RealtimeError> {
-        RealtimeClient::new(self.supabase_url(), self.api_key())
+        Ok(RealtimeClient::new(self.supabase_url(), self.api_key())?
+            .with_session_token(self.access_token_handle()))
     }
 }
 
@@ -70,6 +78,6 @@ mod tests {
         let realtime = client.realtime();
         assert!(realtime.is_ok());
         let realtime = realtime.unwrap();
-        assert!(realtime.is_connected() == false);
+        assert!(!realtime.is_connected());
     }
 }

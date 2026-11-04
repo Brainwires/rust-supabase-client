@@ -77,7 +77,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let sign_up = auth.sign_up_with_email(email, "test-password-123").await?;
-    println!("Signed up user: {}", sign_up.user.as_ref().map(|u| u.id.as_str()).unwrap_or("?"));
+    println!(
+        "Signed up user: {}",
+        sign_up.user.as_ref().map(|u| u.id.as_str()).unwrap_or("?")
+    );
 
     let session = auth
         .sign_in_with_password_email(email, "test-password-123")

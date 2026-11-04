@@ -17,15 +17,15 @@ pub(crate) fn apply_state(raw: Value) -> PresenceState {
     state
 }
 
+/// `(key, metas)` pairs that joined or left.
+type PresenceChanges = Vec<(String, Vec<PresenceMeta>)>;
+
 /// Apply a presence_diff to the current state.
 /// Returns (joins, leaves) as vectors of (key, metas) for callback dispatch.
 pub(crate) fn apply_diff(
     current: &mut PresenceState,
     diff: PresenceDiff,
-) -> (
-    Vec<(String, Vec<PresenceMeta>)>,
-    Vec<(String, Vec<PresenceMeta>)>,
-) {
+) -> (PresenceChanges, PresenceChanges) {
     let mut joins = Vec::new();
     let mut leaves = Vec::new();
 
@@ -46,11 +46,7 @@ pub(crate) fn apply_diff(
                 .iter()
                 .filter_map(|m| m.phx_ref.as_ref())
                 .collect();
-            metas.retain(|m| {
-                m.phx_ref
-                    .as_ref()
-                    .map_or(true, |r| !leave_refs.contains(&r))
-            });
+            metas.retain(|m| m.phx_ref.as_ref().is_none_or(|r| !leave_refs.contains(&r)));
             if metas.is_empty() {
                 current.remove(&key);
             }
@@ -63,8 +59,8 @@ pub(crate) fn apply_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn test_apply_state_from_raw() {

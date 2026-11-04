@@ -239,12 +239,68 @@ pub struct LinkIdentityResponse {
 /// Response from sign-up and some auth operations.
 ///
 /// Mirrors Supabase JS `AuthResponse` — contains an optional session and/or user.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// GoTrue's `/signup` answers in one of two shapes, both accepted here:
+/// - with autoconfirm on, a session object (`access_token`, `refresh_token`,
+///   `user`, ...) at the top level, which fills both `session` and `user`;
+/// - when confirmation is required, a bare user object, which fills `user`.
+///
+/// The explicit `{ "session": ..., "user": ... }` shape is accepted too.
+#[derive(Debug, Clone, Serialize)]
 pub struct AuthResponse {
-    #[serde(default)]
     pub session: Option<Session>,
-    #[serde(default)]
     pub user: Option<User>,
+}
+
+impl<'de> Deserialize<'de> for AuthResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        let value = JsonValue::deserialize(deserializer)?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("expected a JSON object for AuthResponse"))?;
+
+        // Top-level session (autoconfirm sign-up, anonymous sign-in).
+        if obj.contains_key("access_token") {
+            let session: Session = serde_json::from_value(value).map_err(D::Error::custom)?;
+            let user = Some(session.user.clone());
+            return Ok(AuthResponse {
+                session: Some(session),
+                user,
+            });
+        }
+
+        // Explicit `{ session, user }` wrapper.
+        if obj.contains_key("session") || obj.contains_key("user") {
+            let session = match obj.get("session") {
+                None | Some(JsonValue::Null) => None,
+                Some(v) => Some(Session::deserialize(v).map_err(D::Error::custom)?),
+            };
+            let user = match obj.get("user") {
+                None | Some(JsonValue::Null) => session.as_ref().map(|s| s.user.clone()),
+                Some(v) => Some(User::deserialize(v).map_err(D::Error::custom)?),
+            };
+            return Ok(AuthResponse { session, user });
+        }
+
+        // Bare user (sign-up that needs email/phone confirmation).
+        if obj.contains_key("id") {
+            let user: User = serde_json::from_value(value).map_err(D::Error::custom)?;
+            return Ok(AuthResponse {
+                session: None,
+                user: Some(user),
+            });
+        }
+
+        Ok(AuthResponse {
+            session: None,
+            user: None,
+        })
+    }
 }
 
 /// Paginated list of users returned by admin endpoints.
@@ -817,7 +873,7 @@ mod tests {
 
     #[test]
     fn mfa_list_factors_categorization() {
-        let factors = vec![
+        let factors = [
             Factor {
                 id: "f1".into(),
                 friendly_name: Some("My TOTP".into()),
@@ -841,7 +897,10 @@ mod tests {
         ];
 
         let totp: Vec<_> = factors.iter().filter(|f| f.factor_type == "totp").collect();
-        let phone: Vec<_> = factors.iter().filter(|f| f.factor_type == "phone").collect();
+        let phone: Vec<_> = factors
+            .iter()
+            .filter(|f| f.factor_type == "phone")
+            .collect();
 
         assert_eq!(totp.len(), 1);
         assert_eq!(totp[0].id, "f1");
@@ -958,7 +1017,10 @@ mod tests {
         assert_eq!(client.client_name, "My App");
         assert_eq!(client.client_secret.as_deref(), Some("secret-456"));
         assert_eq!(client.client_type, OAuthClientType::Confidential);
-        assert_eq!(client.registration_type, OAuthClientRegistrationType::Manual);
+        assert_eq!(
+            client.registration_type,
+            OAuthClientRegistrationType::Manual
+        );
         assert_eq!(client.redirect_uris.len(), 1);
         assert_eq!(client.grant_types.len(), 2);
         assert_eq!(client.response_types.len(), 1);
@@ -1129,7 +1191,9 @@ mod tests {
         assert_eq!(config.issuer, "http://localhost:64321/auth/v1");
         assert!(config.jwks_uri.contains("jwks.json"));
         assert!(config.scopes_supported.contains(&"openid".to_string()));
-        assert!(config.code_challenge_methods_supported.contains(&"S256".to_string()));
+        assert!(config
+            .code_challenge_methods_supported
+            .contains(&"S256".to_string()));
     }
 
     #[test]
@@ -1184,12 +1248,21 @@ mod tests {
 
     #[test]
     fn auth_change_event_display() {
-        assert_eq!(AuthChangeEvent::InitialSession.to_string(), "INITIAL_SESSION");
+        assert_eq!(
+            AuthChangeEvent::InitialSession.to_string(),
+            "INITIAL_SESSION"
+        );
         assert_eq!(AuthChangeEvent::SignedIn.to_string(), "SIGNED_IN");
         assert_eq!(AuthChangeEvent::SignedOut.to_string(), "SIGNED_OUT");
-        assert_eq!(AuthChangeEvent::TokenRefreshed.to_string(), "TOKEN_REFRESHED");
+        assert_eq!(
+            AuthChangeEvent::TokenRefreshed.to_string(),
+            "TOKEN_REFRESHED"
+        );
         assert_eq!(AuthChangeEvent::UserUpdated.to_string(), "USER_UPDATED");
-        assert_eq!(AuthChangeEvent::PasswordRecovery.to_string(), "PASSWORD_RECOVERY");
+        assert_eq!(
+            AuthChangeEvent::PasswordRecovery.to_string(),
+            "PASSWORD_RECOVERY"
+        );
     }
 
     #[test]
@@ -1235,5 +1308,54 @@ mod tests {
         assert!(!debug.contains("secret-access-token"), "{}", debug);
         assert!(!debug.contains("secret-refresh-token"), "{}", debug);
         assert!(debug.contains("user-1"), "{}", debug);
+    }
+
+    // ─── AuthResponse shapes (regression: sign-up dropped the session) ───
+
+    #[test]
+    fn auth_response_top_level_session() {
+        let json = serde_json::json!({
+            "access_token": "AT", "refresh_token": "RT", "expires_in": 3600,
+            "expires_at": 9999999999i64, "token_type": "bearer",
+            "user": {"id": "u1", "email": "a@b.c"}
+        });
+        let r: AuthResponse = serde_json::from_value(json).unwrap();
+        let session = r.session.expect("session");
+        assert_eq!(session.access_token, "AT");
+        assert_eq!(r.user.expect("user").id, "u1");
+    }
+
+    #[test]
+    fn auth_response_bare_user() {
+        let json = serde_json::json!({"id": "u1", "aud": "authenticated", "email": "a@b.c"});
+        let r: AuthResponse = serde_json::from_value(json).unwrap();
+        assert!(r.session.is_none());
+        assert_eq!(r.user.expect("user").email.as_deref(), Some("a@b.c"));
+    }
+
+    #[test]
+    fn auth_response_wrapped() {
+        let json = serde_json::json!({
+            "session": {
+                "access_token": "AT", "refresh_token": "RT", "expires_in": 3600,
+                "token_type": "bearer", "user": {"id": "u1"}
+            },
+            "user": null
+        });
+        let r: AuthResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(r.session.unwrap().access_token, "AT");
+        assert_eq!(r.user.unwrap().id, "u1");
+        let r: AuthResponse =
+            serde_json::from_value(serde_json::json!({"user": {"id": "u2"}})).unwrap();
+        assert!(r.session.is_none());
+        assert_eq!(r.user.unwrap().id, "u2");
+    }
+
+    #[test]
+    fn auth_response_roundtrip() {
+        let json = serde_json::json!({"id": "u1"});
+        let r: AuthResponse = serde_json::from_value(json).unwrap();
+        let back: AuthResponse = serde_json::from_value(serde_json::to_value(&r).unwrap()).unwrap();
+        assert_eq!(back.user.unwrap().id, "u1");
     }
 }

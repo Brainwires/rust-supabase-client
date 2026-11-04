@@ -131,10 +131,12 @@ pub struct ParsedField {
 pub fn parse_fields(fields: &syn::Fields) -> syn::Result<Vec<ParsedField>> {
     let named = match fields {
         syn::Fields::Named(named) => named,
-        _ => return Err(syn::Error::new_spanned(
-            proc_macro2::TokenStream::new(),
-            "Table can only be derived for structs with named fields",
-        )),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                proc_macro2::TokenStream::new(),
+                "Table can only be derived for structs with named fields",
+            ))
+        }
     };
 
     named
@@ -143,9 +145,7 @@ pub fn parse_fields(fields: &syn::Fields) -> syn::Result<Vec<ParsedField>> {
         .map(|field| {
             let ident = field.ident.clone().expect("named field must have ident");
             let attrs = FieldAttrs::from_field(field)?;
-            let column_name = attrs
-                .column_name
-                .unwrap_or_else(|| ident.to_string());
+            let column_name = attrs.column_name.unwrap_or_else(|| ident.to_string());
 
             Ok(ParsedField {
                 ident,

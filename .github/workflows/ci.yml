@@ -5,58 +5,141 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
 
 jobs:
-  test:
-    name: Build, test, clippy, docs
+  fmt:
+    name: Rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
 
-      - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@stable
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
+  test:
+    name: Tests and docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build
-        run: cargo build --workspace --all-targets
-
       - name: Unit tests
-        # Integration tests under crates/*/tests need a live Supabase instance.
-        run: cargo test --workspace --lib
+        # Integration tests under crates/*/tests need a live Supabase
+        # instance; only the offline (wiremock) ones run here.
+        run: cargo test --workspace --all-features --locked --lib
 
-      - name: Clippy
-        # Not -D warnings yet: main carries pre-existing lints.
-        run: cargo clippy --workspace
+      - name: Offline integration tests
+        # wiremock / in-process servers only, no Supabase stack.
+        run: >-
+          cargo test --workspace --all-features --locked
+          --test session_token
+          --test security_regressions
+          --test wiremock_tests
+          --test protocol_regressions
+          --test derive_table
+
+      - name: Doctests
+        run: cargo test --workspace --all-features --locked --doc
 
       - name: Docs
-        run: cargo doc --no-deps --workspace
+        run: cargo doc --no-deps --workspace --all-features --locked
         env:
           RUSTDOCFLAGS: -D warnings
+
+  msrv:
+    name: MSRV (1.89)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.89"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      # Libraries only: dev-dependencies (e.g. serial_test 4) may need a
+      # newer toolchain, which does not affect users of the crates.
+      - run: cargo check --workspace --all-features --locked
+
+  features:
+    name: Features (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: sdk default
+            args: -p supabase-client-sdk
+          - name: sdk no default features
+            args: -p supabase-client-sdk --no-default-features
+          - name: realtime without TLS
+            args: -p supabase-client-realtime --no-default-features
+          - name: sdk full
+            args: -p supabase-client-sdk --features full
+          - name: sdk full + direct-sql
+            args: -p supabase-client-sdk --features full,direct-sql
+          - name: sdk native-tls only
+            args: -p supabase-client-sdk --no-default-features --features full,direct-sql,native-tls
+          - name: each crate, default features
+            args: --workspace
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: features-${{ matrix.name }}
+      - run: cargo check --locked ${{ matrix.args }}
+      - name: No rustls/aws-lc-rs in the native-tls build
+        if: matrix.name == 'sdk native-tls only'
+        run: |
+          if cargo tree --locked -e normal ${{ matrix.args }} | grep -E '\b(rustls|aws-lc-rs|ring) v'; then
+            echo "native-tls build still pulls in rustls"; exit 1
+          fi
 
   wasm:
     name: Build wasm32
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@stable
-
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           key: wasm32
+      - name: Build sdk (full)
+        run: cargo build --locked -p supabase-client-sdk --features full --target wasm32-unknown-unknown
+      - name: Build wasm bindings crate
+        run: cargo build --locked -p supabase-client-wasm --target wasm32-unknown-unknown
 
-      - name: Add wasm32 target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Build wasm crate
-        run: cargo build -p supabase-client-wasm --target wasm32-unknown-unknown
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check

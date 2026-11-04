@@ -1,7 +1,12 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::fmt;
+use std::time::Duration;
 
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
+use supabase_client_core::http::{
+    bearer_header, read_body_limited, read_error_body, sensitive_header, BodyReadError,
+};
+use supabase_client_core::AccessToken;
 use tracing::debug;
 use url::Url;
 
@@ -11,6 +16,14 @@ use crate::types::*;
 /// HTTP client for Supabase Edge Functions.
 ///
 /// Communicates with Edge Functions at `/functions/v1/{function_name}`.
+///
+/// Requests are authorized with, in order of preference: the per-request
+/// [`InvokeOptions::authorization`], the token passed to
+/// [`set_auth`](FunctionsClient::set_auth), the signed-in user's JWT (when the
+/// client was created from a `SupabaseClient` whose auth client has a
+/// session), or the API key.
+///
+/// `Debug` output never includes the API key or tokens.
 ///
 /// # Example
 /// ```ignore
@@ -23,13 +36,30 @@ use crate::types::*;
 /// ).await?;
 /// let data: serde_json::Value = response.json()?;
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FunctionsClient {
     http: reqwest::Client,
     base_url: Url,
     api_key: String,
-    /// Overridden auth token (if set via `set_auth`).
-    auth_override: Arc<RwLock<Option<String>>>,
+    /// Overridden auth token (if set via `set_auth`). Shared by clones.
+    auth_override: AccessToken,
+    /// Session token shared with a `SupabaseClient`, if wired up.
+    session_token: Option<AccessToken>,
+    max_response_bytes: Option<u64>,
+    timeout: Option<Duration>,
+}
+
+impl fmt::Debug for FunctionsClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FunctionsClient")
+            .field("base_url", &self.base_url.as_str())
+            .field("api_key", &"[redacted]")
+            .field("auth_override", &self.auth_override)
+            .field("session_token", &self.session_token)
+            .field("max_response_bytes", &self.max_response_bytes)
+            .field("timeout", &self.timeout)
+            .finish()
+    }
 }
 
 impl FunctionsClient {
@@ -40,17 +70,26 @@ impl FunctionsClient {
     pub fn new(supabase_url: &str, api_key: &str) -> Result<Self, FunctionsError> {
         let base = supabase_url.trim_end_matches('/');
         let base_url = Url::parse(&format!("{}/functions/v1", base))?;
+        if base_url.cannot_be_a_base() {
+            return Err(FunctionsError::InvalidConfig(format!(
+                "supabase_url cannot be used as a base URL: {}",
+                supabase_url
+            )));
+        }
+        supabase_client_core::keys::warn_if_privileged_on_wasm(api_key, "functions");
 
         let mut default_headers = HeaderMap::new();
         default_headers.insert(
             "apikey",
-            HeaderValue::from_str(api_key)
-                .map_err(|e| FunctionsError::InvalidConfig(format!("Invalid API key header: {}", e)))?,
+            sensitive_header(api_key).map_err(|e| {
+                FunctionsError::InvalidConfig(format!("Invalid API key header: {}", e))
+            })?,
         );
         default_headers.insert(
-            reqwest::header::AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", api_key))
-                .map_err(|e| FunctionsError::InvalidConfig(format!("Invalid auth header: {}", e)))?,
+            AUTHORIZATION,
+            bearer_header(api_key).map_err(|e| {
+                FunctionsError::InvalidConfig(format!("Invalid auth header: {}", e))
+            })?,
         );
 
         let builder = reqwest::Client::builder().default_headers(default_headers);
@@ -63,8 +102,33 @@ impl FunctionsClient {
             http,
             base_url,
             api_key: api_key.to_string(),
-            auth_override: Arc::new(RwLock::new(None)),
+            auth_override: AccessToken::new(),
+            session_token: None,
+            max_response_bytes: None,
+            timeout: None,
         })
+    }
+
+    /// Follow a shared session token (see `SupabaseClient::access_token_handle`).
+    pub fn with_session_token(mut self, token: AccessToken) -> Self {
+        self.session_token = Some(token);
+        self
+    }
+
+    /// Fail invocations whose response body is larger than `max_bytes` with
+    /// [`FunctionsError::ResponseTooLarge`]. `None` (the default) means no
+    /// limit. Error bodies are always truncated to 64 KiB.
+    pub fn with_max_response_size(mut self, max_bytes: Option<u64>) -> Self {
+        self.max_response_bytes = max_bytes;
+        self
+    }
+
+    /// Set a total timeout for each invocation (native targets only; ignored
+    /// on wasm32). There is no total timeout by default, only a 10 s connect
+    /// timeout.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
     }
 
     /// Get the base URL for the functions endpoint.
@@ -83,51 +147,98 @@ impl FunctionsClient {
     ///
     /// Mirrors `supabase.functions.setAuth(token)`.
     pub fn set_auth(&self, token: &str) {
-        let mut auth = self.auth_override.write().unwrap();
-        *auth = Some(token.to_string());
+        self.auth_override.set(token);
+    }
+
+    /// Remove a token set with [`set_auth`](Self::set_auth).
+    pub fn clear_auth(&self) {
+        self.auth_override.clear();
+    }
+
+    /// Build `base_url/<name segments>`.
+    ///
+    /// The name may contain `/` (nested routes); each piece is pushed as its
+    /// own percent-encoded segment so `?` and `#` cannot start a query or
+    /// fragment, and empty, `.` and `..` segments are rejected.
+    fn function_url(&self, function_name: &str) -> Result<Url, FunctionsError> {
+        let segments: Vec<&str> = function_name.split('/').collect();
+        if segments
+            .iter()
+            .any(|s| s.is_empty() || *s == "." || *s == "..")
+        {
+            return Err(FunctionsError::InvalidFunctionName(
+                function_name.to_string(),
+            ));
+        }
+        let mut url = self.base_url.clone();
+        {
+            let mut path = url
+                .path_segments_mut()
+                .expect("base_url is checked to be a base in new()");
+            path.pop_if_empty();
+            for seg in segments {
+                path.push(seg);
+            }
+        }
+        Ok(url)
     }
 
     /// Invoke an Edge Function.
     ///
     /// # Arguments
-    /// * `function_name` - The name of the deployed function.
+    /// * `function_name` - The name of the deployed function. May contain `/`
+    ///   for sub-paths; `.`, `..` and empty segments are rejected.
     /// * `options` - Invocation options (body, method, headers, region, etc.).
     ///
     /// # Errors
+    /// * [`FunctionsError::InvalidFunctionName`] if the name cannot be used in a URL.
     /// * [`FunctionsError::RelayError`] if Supabase infrastructure returned an error (x-relay-error: true).
     /// * [`FunctionsError::HttpError`] if the function returned a non-2xx status.
+    /// * [`FunctionsError::ResponseTooLarge`] if a size limit is set and exceeded.
     /// * [`FunctionsError::Http`] on network failure.
     pub async fn invoke(
         &self,
         function_name: &str,
         options: InvokeOptions,
     ) -> Result<FunctionResponse, FunctionsError> {
-        let url = format!("{}/{}", self.base_url, function_name);
+        let url = self.function_url(function_name)?;
         debug!(function = function_name, method = %options.method, "Invoking edge function");
 
         // Build the request with the correct HTTP method
-        let mut request = match options.method {
-            HttpMethod::Get => self.http.get(&url),
-            HttpMethod::Post => self.http.post(&url),
-            HttpMethod::Put => self.http.put(&url),
-            HttpMethod::Patch => self.http.patch(&url),
-            HttpMethod::Delete => self.http.delete(&url),
-            HttpMethod::Options => self.http.request(reqwest::Method::OPTIONS, &url),
-            HttpMethod::Head => self.http.head(&url),
+        let method = match options.method {
+            HttpMethod::Get => reqwest::Method::GET,
+            HttpMethod::Post => reqwest::Method::POST,
+            HttpMethod::Put => reqwest::Method::PUT,
+            HttpMethod::Patch => reqwest::Method::PATCH,
+            HttpMethod::Delete => reqwest::Method::DELETE,
+            HttpMethod::Options => reqwest::Method::OPTIONS,
+            HttpMethod::Head => reqwest::Method::HEAD,
         };
+        let mut request = self.http.request(method, url);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(t) = self.timeout {
+            request = request.timeout(t);
+        }
 
-        // Override Authorization: per-request first, then client-level set_auth, then default (from reqwest default headers)
+        // Override Authorization: per-request first, then client-level set_auth,
+        // then the shared session token, then default (from reqwest default headers)
         if let Some(ref auth) = options.authorization {
             request = request.header(
-                reqwest::header::AUTHORIZATION,
-                HeaderValue::from_str(auth)
-                    .map_err(|e| FunctionsError::InvalidConfig(format!("Invalid authorization header: {}", e)))?,
+                AUTHORIZATION,
+                sensitive_header(auth).map_err(|e| {
+                    FunctionsError::InvalidConfig(format!("Invalid authorization header: {}", e))
+                })?,
             );
-        } else if let Some(ref token) = *self.auth_override.read().unwrap() {
+        } else if let Some(token) = self
+            .auth_override
+            .get()
+            .or_else(|| self.session_token.as_ref().and_then(|t| t.get()))
+        {
             request = request.header(
-                reqwest::header::AUTHORIZATION,
-                HeaderValue::from_str(&format!("Bearer {}", token))
-                    .map_err(|e| FunctionsError::InvalidConfig(format!("Invalid auth override header: {}", e)))?,
+                AUTHORIZATION,
+                bearer_header(&token).map_err(|e| {
+                    FunctionsError::InvalidConfig(format!("Invalid auth override header: {}", e))
+                })?,
             );
         }
 
@@ -138,17 +249,22 @@ impl FunctionsClient {
 
         // Add custom headers
         for (key, value) in &options.headers {
-            let header_name = HeaderName::from_bytes(key.as_bytes())
-                .map_err(|e| FunctionsError::InvalidConfig(format!("Invalid header name '{}': {}", key, e)))?;
-            let header_value = HeaderValue::from_str(value)
-                .map_err(|e| FunctionsError::InvalidConfig(format!("Invalid header value for '{}': {}", key, e)))?;
+            let header_name = HeaderName::from_bytes(key.as_bytes()).map_err(|e| {
+                FunctionsError::InvalidConfig(format!("Invalid header name '{}': {}", key, e))
+            })?;
+            let header_value = HeaderValue::from_str(value).map_err(|e| {
+                FunctionsError::InvalidConfig(format!("Invalid header value for '{}': {}", key, e))
+            })?;
             request = request.header(header_name, header_value);
         }
 
         // Set Content-Type and body
         match options.body {
             InvokeBody::Json(value) => {
-                let ct = options.content_type.as_deref().unwrap_or("application/json");
+                let ct = options
+                    .content_type
+                    .as_deref()
+                    .unwrap_or("application/json");
                 request = request
                     .header(reqwest::header::CONTENT_TYPE, ct)
                     .body(serde_json::to_vec(&value)?);
@@ -164,9 +280,7 @@ impl FunctionsClient {
             }
             InvokeBody::Text(text) => {
                 let ct = options.content_type.as_deref().unwrap_or("text/plain");
-                request = request
-                    .header(reqwest::header::CONTENT_TYPE, ct)
-                    .body(text);
+                request = request.header(reqwest::header::CONTENT_TYPE, ct).body(text);
             }
             InvokeBody::None => {
                 if let Some(ct) = options.content_type {
@@ -194,21 +308,24 @@ impl FunctionsClient {
             }
         }
 
-        // Read response body
-        let body = response.bytes().await?.to_vec();
-
-        // Check for errors
-        if is_relay_error {
+        // Check for errors (error bodies are truncated to 64 KiB)
+        if is_relay_error || status >= 400 {
+            let body = read_error_body(response).await;
             let message = parse_error_message(&body);
-            debug!(status, message = %message, "Relay error from edge function");
-            return Err(FunctionsError::RelayError { status, message });
-        }
-
-        if status >= 400 {
-            let message = parse_error_message(&body);
+            if is_relay_error {
+                debug!(status, message = %message, "Relay error from edge function");
+                return Err(FunctionsError::RelayError { status, message });
+            }
             debug!(status, message = %message, "HTTP error from edge function");
             return Err(FunctionsError::HttpError { status, message });
         }
+
+        let body = read_body_limited(response, self.max_response_bytes)
+            .await
+            .map_err(|e| match e {
+                BodyReadError::Http(e) => FunctionsError::Http(e),
+                BodyReadError::TooLarge { limit } => FunctionsError::ResponseTooLarge { limit },
+            })?;
 
         Ok(FunctionResponse::new(status, resp_headers, body))
     }
@@ -265,12 +382,11 @@ mod tests {
     #[test]
     fn set_auth_updates_override() {
         let client = FunctionsClient::new("https://example.supabase.co", "test-key").unwrap();
-        assert!(client.auth_override.read().unwrap().is_none());
+        assert!(client.auth_override.get().is_none());
         client.set_auth("new-token");
-        assert_eq!(
-            client.auth_override.read().unwrap().as_deref(),
-            Some("new-token")
-        );
+        assert_eq!(client.auth_override.get().as_deref(), Some("new-token"));
+        client.clear_auth();
+        assert!(client.auth_override.get().is_none());
     }
 
     #[test]
@@ -278,10 +394,7 @@ mod tests {
         let client = FunctionsClient::new("https://example.supabase.co", "test-key").unwrap();
         let clone = client.clone();
         client.set_auth("shared-token");
-        assert_eq!(
-            clone.auth_override.read().unwrap().as_deref(),
-            Some("shared-token")
-        );
+        assert_eq!(clone.auth_override.get().as_deref(), Some("shared-token"));
     }
 
     // ─── Wiremock Tests ──────────────────────────────────────
@@ -300,8 +413,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/functions/v1/hello"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({"message": "ok"})),
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"message": "ok"})),
             )
             .mount(&server)
             .await;
@@ -488,7 +600,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/functions/v1/data"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"items": []})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"items": []})),
+            )
             .mount(&server)
             .await;
 
@@ -541,5 +655,146 @@ mod tests {
         let opts = InvokeOptions::new().method(HttpMethod::Patch);
         let resp = client.invoke("patch", opts).await.unwrap();
         assert_eq!(resp.status(), 200);
+    }
+
+    // ─── Regression tests (security audit) ───────────────────
+
+    use wiremock::matchers::any;
+
+    async fn catch_all() -> MockServer {
+        let s = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&s)
+            .await;
+        s
+    }
+
+    #[tokio::test]
+    async fn regression_function_name_traversal_is_rejected() {
+        let s = catch_all().await;
+        let f = FunctionsClient::new(&s.uri(), "SERVICE_ROLE_KEY").unwrap();
+        for bad in [
+            "../../rest/v1/profiles?id=not.is.null",
+            "a/../b",
+            "./a",
+            "",
+            "a//b",
+            "a/",
+        ] {
+            let err = f
+                .invoke(bad, InvokeOptions::new().method(HttpMethod::Delete))
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, FunctionsError::InvalidFunctionName(_)),
+                "{bad}: {err:?}"
+            );
+        }
+        assert!(s.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn regression_function_name_query_and_fragment_are_encoded() {
+        let s = catch_all().await;
+        let f = FunctionsClient::new(&s.uri(), "k").unwrap();
+        f.invoke("hello/world?x=1#frag", InvokeOptions::new())
+            .await
+            .unwrap();
+        let reqs = s.received_requests().await.unwrap();
+        let r = reqs.last().unwrap();
+        assert_eq!(r.url.path(), "/functions/v1/hello/world%3Fx=1%23frag");
+        assert!(r.url.query().is_none());
+    }
+
+    #[test]
+    fn regression_debug_does_not_leak_keys() {
+        let f = FunctionsClient::new("https://x.supabase.co", "SECRET-SERVICE-KEY").unwrap();
+        f.set_auth("USER-JWT-SECRET");
+        let df = format!("{:?}", f);
+        assert!(!df.contains("SECRET-SERVICE-KEY"), "{}", df);
+        assert!(!df.contains("USER-JWT-SECRET"), "{}", df);
+        let opts = InvokeOptions::new()
+            .authorization("Bearer PER-REQUEST-SECRET")
+            .header("x-api-secret", "HEADER-SECRET");
+        let dopts = format!("{:?}", opts);
+        assert!(!dopts.contains("PER-REQUEST-SECRET"), "{}", dopts);
+        assert!(!dopts.contains("HEADER-SECRET"), "{}", dopts);
+        assert!(dopts.contains("x-api-secret"), "{}", dopts);
+    }
+
+    #[tokio::test]
+    async fn session_token_is_followed_and_overridable() {
+        let s = catch_all().await;
+        let slot = supabase_client_core::AccessToken::new();
+        let f = FunctionsClient::new(&s.uri(), "anon")
+            .unwrap()
+            .with_session_token(slot.clone());
+        f.invoke("a", InvokeOptions::new()).await.unwrap();
+        slot.set("session-jwt");
+        f.invoke("a", InvokeOptions::new()).await.unwrap();
+        f.set_auth("explicit");
+        f.invoke("a", InvokeOptions::new()).await.unwrap();
+        f.invoke(
+            "a",
+            InvokeOptions::new().authorization("Bearer per-request"),
+        )
+        .await
+        .unwrap();
+        let reqs = s.received_requests().await.unwrap();
+        let auth: Vec<&str> = reqs
+            .iter()
+            .map(|r| r.headers.get("authorization").unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(
+            auth,
+            vec![
+                "Bearer anon",
+                "Bearer session-jwt",
+                "Bearer explicit",
+                "Bearer per-request"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn response_size_cap() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/functions/v1/big"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![1u8; 2048]))
+            .mount(&server)
+            .await;
+        let f = mock_client(&server).with_max_response_size(Some(100));
+        let err = f.invoke("big", InvokeOptions::new()).await.unwrap_err();
+        assert!(
+            matches!(err, FunctionsError::ResponseTooLarge { limit: 100 }),
+            "{:?}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn error_body_is_truncated() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/functions/v1/huge-error"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("e".repeat(1 << 20)))
+            .mount(&server)
+            .await;
+        let err = mock_client(&server)
+            .invoke("huge-error", InvokeOptions::new())
+            .await
+            .unwrap_err();
+        match err {
+            FunctionsError::HttpError { status, message } => {
+                assert_eq!(status, 500);
+                assert_eq!(
+                    message.len(),
+                    supabase_client_core::http::MAX_ERROR_BODY_BYTES
+                );
+            }
+            other => panic!("{:?}", other),
+        }
     }
 }

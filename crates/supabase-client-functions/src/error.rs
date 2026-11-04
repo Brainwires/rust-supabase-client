@@ -47,6 +47,14 @@ pub enum FunctionsError {
     /// URL parsing error.
     #[error("URL parse error: {0}")]
     UrlParse(#[from] url::ParseError),
+
+    /// The function name contains an empty, `.` or `..` path segment.
+    #[error("Invalid function name: {0:?}")]
+    InvalidFunctionName(String),
+
+    /// The response body is larger than the configured limit.
+    #[error("Response body exceeds the {limit} byte limit")]
+    ResponseTooLarge { limit: u64 },
 }
 
 impl From<FunctionsError> for SupabaseError {

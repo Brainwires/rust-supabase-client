@@ -15,7 +15,8 @@ const DEFAULT_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = std::env::var("SUPABASE_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
-    let key = std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
+    let key =
+        std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
     let config = SupabaseConfig::new(&url, &key);
     let client = SupabaseClient::new(config)?;
     let functions = client.functions()?;
@@ -40,10 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Invoke with custom HTTP method ──
     println!("\n=== Invoke 'echo-method' with GET ===");
     let resp = functions
-        .invoke(
-            "echo-method",
-            InvokeOptions::new().method(HttpMethod::Get),
-        )
+        .invoke("echo-method", InvokeOptions::new().method(HttpMethod::Get))
         .await;
     match resp {
         Ok(r) => {
@@ -59,8 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resp = functions
         .invoke(
             "echo-headers",
-            InvokeOptions::new()
-                .header("X-Custom-Header", "hello-from-rust"),
+            InvokeOptions::new().header("X-Custom-Header", "hello-from-rust"),
         )
         .await;
     match resp {
@@ -76,10 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Invoke 'echo-binary' with binary body ===");
     let binary_data = vec![0x48, 0x65, 0x6c, 0x6c, 0x6f]; // "Hello" in ASCII
     let resp = functions
-        .invoke(
-            "echo-binary",
-            InvokeOptions::new().body_bytes(binary_data),
-        )
+        .invoke("echo-binary", InvokeOptions::new().body_bytes(binary_data))
         .await;
     match resp {
         Ok(r) => {

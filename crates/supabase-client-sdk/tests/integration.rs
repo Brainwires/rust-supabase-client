@@ -26,9 +26,7 @@
 use serde::{Deserialize, Serialize};
 use supabase_client_sdk::prelude::*;
 
-use supabase_client_sdk::{
-    NullsPosition, SqlParam, SupabaseClientQueryExt,
-};
+use supabase_client_sdk::{NullsPosition, SqlParam, SupabaseClientQueryExt};
 
 const TEST_DB_URL: &str =
     "postgres://postgres:319f76099a3e89d964a09e9d673f695d1b401fd8b500d1f7400a285e846ee246@localhost:15432/supabase_client_test";
@@ -68,8 +66,7 @@ struct Country {
 }
 
 async fn create_client() -> SupabaseClient {
-    let config = SupabaseConfig::new(SUPABASE_URL, ANON_KEY)
-        .database_url(db_url());
+    let config = SupabaseConfig::new(SUPABASE_URL, ANON_KEY).database_url(db_url());
     SupabaseClient::with_database(config)
         .await
         .expect("Failed to connect to test database")
@@ -296,7 +293,10 @@ mod dynamic {
             .iter()
             .map(|r| r.get_as::<String>("name").unwrap())
             .collect();
-        assert_eq!(names, vec!["Auckland", "Canberra", "Sydney", "Tokyo", "Wellington"]);
+        assert_eq!(
+            names,
+            vec!["Auckland", "Canberra", "Sydney", "Tokyo", "Wellington"]
+        );
     }
 
     #[tokio::test]
@@ -315,7 +315,10 @@ mod dynamic {
             .iter()
             .map(|r| r.get_as::<String>("name").unwrap())
             .collect();
-        assert_eq!(names, vec!["Wellington", "Tokyo", "Sydney", "Canberra", "Auckland"]);
+        assert_eq!(
+            names,
+            vec!["Wellington", "Tokyo", "Sydney", "Canberra", "Auckland"]
+        );
     }
 
     #[tokio::test]
@@ -456,12 +459,7 @@ mod dynamic {
         let client = create_client().await;
         reset_data(&client).await;
 
-        let resp = client
-            .from("cities")
-            .select("*")
-            .count()
-            .execute()
-            .await;
+        let resp = client.from("cities").select("*").count().execute().await;
         assert!(resp.is_ok());
         assert_eq!(resp.count, Some(5));
     }
@@ -488,7 +486,11 @@ mod dynamic {
 
         let resp = client
             .from("cities")
-            .insert(row![("name", "Christchurch"), ("country_id", 1), ("population", 380000_i64)])
+            .insert(row![
+                ("name", "Christchurch"),
+                ("country_id", 1),
+                ("population", 380000_i64)
+            ])
             .select()
             .execute()
             .await;
@@ -527,10 +529,23 @@ mod dynamic {
         reset_data(&client).await;
 
         let rows = vec![
-            row![("name", "Queenstown"), ("country_id", 1), ("population", 15000_i64)],
-            row![("name", "Rotorua"), ("country_id", 1), ("population", 58000_i64)],
+            row![
+                ("name", "Queenstown"),
+                ("country_id", 1),
+                ("population", 15000_i64)
+            ],
+            row![
+                ("name", "Rotorua"),
+                ("country_id", 1),
+                ("population", 58000_i64)
+            ],
         ];
-        let resp = client.from("cities").insert_many(rows).select().execute().await;
+        let resp = client
+            .from("cities")
+            .insert_many(rows)
+            .select()
+            .execute()
+            .await;
         assert!(resp.is_ok(), "insert_many failed: {:?}", resp.error);
         let data = resp.into_result().unwrap();
         assert_eq!(data.len(), 2);
@@ -614,7 +629,12 @@ mod dynamic {
         // Upsert with existing id=1 (Auckland) -> should update
         let resp = client
             .from("cities")
-            .upsert(row![("id", 1), ("name", "Auckland Updated"), ("country_id", 1), ("population", 1700000_i64)])
+            .upsert(row![
+                ("id", 1),
+                ("name", "Auckland Updated"),
+                ("country_id", 1),
+                ("population", 1700000_i64)
+            ])
             .on_conflict(&["id"])
             .select()
             .execute()
@@ -622,7 +642,10 @@ mod dynamic {
         assert!(resp.is_ok(), "upsert failed: {:?}", resp.error);
         let rows = resp.into_result().unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get_as::<String>("name").unwrap(), "Auckland Updated");
+        assert_eq!(
+            rows[0].get_as::<String>("name").unwrap(),
+            "Auckland Updated"
+        );
         assert_eq!(rows[0].get_as::<i64>("population").unwrap(), 1700000);
     }
 
@@ -634,7 +657,12 @@ mod dynamic {
         // Upsert with id=100 (doesn't exist) -> should insert
         let resp = client
             .from("cities")
-            .upsert(row![("id", 100), ("name", "Dunedin"), ("country_id", 1), ("population", 130000_i64)])
+            .upsert(row![
+                ("id", 100),
+                ("name", "Dunedin"),
+                ("country_id", 1),
+                ("population", 130000_i64)
+            ])
             .on_conflict(&["id"])
             .select()
             .execute()
@@ -651,7 +679,10 @@ mod dynamic {
         reset_data(&client).await;
 
         let resp = client
-            .rpc("get_cities_by_country", serde_json::json!({"p_country_id": 1}))
+            .rpc(
+                "get_cities_by_country",
+                serde_json::json!({"p_country_id": 1}),
+            )
             .unwrap()
             .execute()
             .await;
@@ -707,11 +738,7 @@ mod typed {
         let client = create_client().await;
         reset_data(&client).await;
 
-        let resp = client
-            .from_typed::<City>()
-            .select()
-            .execute()
-            .await;
+        let resp = client.from_typed::<City>().select().execute().await;
         assert!(resp.is_ok());
         let cities = resp.into_result().unwrap();
         assert_eq!(cities.len(), 5);
@@ -845,7 +872,10 @@ mod typed {
         reset_data(&client).await;
 
         let resp = client
-            .rpc_typed::<City>("get_cities_by_country", serde_json::json!({"p_country_id": 2}))
+            .rpc_typed::<City>(
+                "get_cities_by_country",
+                serde_json::json!({"p_country_id": 2}),
+            )
             .unwrap()
             .execute()
             .await;
@@ -991,7 +1021,10 @@ mod response_tests {
     #[test]
     fn response_into_single_multiple() {
         let resp = SupabaseResponse::ok(vec![1, 2]);
-        assert!(matches!(resp.into_single(), Err(SupabaseError::MultipleRows(2))));
+        assert!(matches!(
+            resp.into_single(),
+            Err(SupabaseError::MultipleRows(2))
+        ));
     }
 
     #[test]
@@ -1010,7 +1043,7 @@ mod response_tests {
 
 mod sql_gen {
     use supabase_client_sdk::{
-        FilterCondition, FilterOperator, SqlOperation, SqlParts, validate_column_name,
+        validate_column_name, FilterCondition, FilterOperator, SqlOperation, SqlParts,
     };
 
     #[test]

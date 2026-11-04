@@ -49,11 +49,7 @@ pub(crate) fn build_join(
 }
 
 /// Build a phx_leave message for a channel.
-pub(crate) fn build_leave(
-    topic: &str,
-    join_ref: &str,
-    ref_counter: &RefCounter,
-) -> PhoenixMessage {
+pub(crate) fn build_leave(topic: &str, join_ref: &str, ref_counter: &RefCounter) -> PhoenixMessage {
     PhoenixMessage {
         event: "phx_leave".to_string(),
         topic: topic.to_string(),

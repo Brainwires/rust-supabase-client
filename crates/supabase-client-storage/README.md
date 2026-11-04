@@ -12,15 +12,19 @@ Storage HTTP client for supabase-client.
 - File operations: upload, download, update, list, move, copy, remove
 - File metadata (`info`) and existence checking (`exists`)
 - Signed URLs for time-limited access and delegated uploads
-- Public URL construction for public buckets
+- Public URL construction for public buckets (path segments percent-encoded)
+- `set_auth()` for a user JWT; clients from `client.storage()` follow the signed-in session
+- Object paths with empty, `.` or `..` segments are rejected
 - Image transform options (resize, quality, format) on download, public URL, and signed URLs
 
 ## Usage
 
 ```rust
+use supabase_client_core::{SupabaseClient, SupabaseConfig};
 use supabase_client_storage::SupabaseClientStorageExt;
 use supabase_client_storage::{BucketOptions, FileOptions};
 
+let client = SupabaseClient::new(SupabaseConfig::new("https://your-project.supabase.co", "your-anon-key"))?;
 let storage = client.storage()?;
 
 // Upload a file

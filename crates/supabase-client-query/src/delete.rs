@@ -71,6 +71,53 @@ impl<T> DeleteBuilder<T> {
     }
 }
 
+impl<T> DeleteBuilder<T>
+where
+    T: DeserializeOwned + Send,
+{
+    /// Execute the DELETE query.
+    pub async fn execute(self) -> SupabaseResponse<T> {
+        match &self.backend {
+            QueryBackend::Rest {
+                http,
+                base_url,
+                api_key,
+                schema,
+                access_token,
+            } => {
+                let (url, headers) = match crate::postgrest::build_postgrest_delete(
+                    base_url,
+                    &self.parts,
+                    &self.params,
+                ) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return SupabaseResponse::error(
+                            supabase_client_core::SupabaseError::QueryBuilder(e),
+                        )
+                    }
+                };
+                crate::postgrest_execute::execute_rest_with_token(
+                    http,
+                    reqwest::Method::DELETE,
+                    &url,
+                    headers,
+                    None,
+                    api_key,
+                    access_token.as_deref(),
+                    schema,
+                    &self.parts,
+                )
+                .await
+            }
+            #[cfg(feature = "direct-sql")]
+            QueryBackend::DirectSql { pool } => {
+                crate::execute::execute_typed::<T>(pool, &self.parts, &self.params).await
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,6 +135,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from("http://localhost"),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Delete, "public", "users"),
@@ -156,6 +204,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts,
@@ -185,6 +234,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts,
@@ -202,13 +252,10 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("DELETE"))
             .and(path("/rest/v1/users"))
-            .respond_with(
-                ResponseTemplate::new(403)
-                    .set_body_json(serde_json::json!({
-                        "message": "Permission denied",
-                        "code": "42501"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "message": "Permission denied",
+                "code": "42501"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -219,6 +266,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts,
@@ -229,40 +277,16 @@ mod tests {
         let resp = builder.execute().await;
         assert!(resp.is_err());
         match resp.error.as_ref().unwrap() {
-            supabase_client_core::SupabaseError::PostgRest { status, message, code } => {
+            supabase_client_core::SupabaseError::PostgRest {
+                status,
+                message,
+                code,
+            } => {
                 assert_eq!(*status, 403);
                 assert_eq!(message, "Permission denied");
                 assert_eq!(code.as_deref(), Some("42501"));
             }
             other => panic!("Expected PostgRest error, got {:?}", other),
-        }
-    }
-}
-
-impl<T> DeleteBuilder<T>
-where
-    T: DeserializeOwned + Send,
-{
-    /// Execute the DELETE query.
-    pub async fn execute(self) -> SupabaseResponse<T> {
-        match &self.backend {
-            QueryBackend::Rest { http, base_url, api_key, schema } => {
-                let (url, headers) = match crate::postgrest::build_postgrest_delete(
-                    base_url, &self.parts, &self.params,
-                ) {
-                    Ok(r) => r,
-                    Err(e) => return SupabaseResponse::error(
-                        supabase_client_core::SupabaseError::QueryBuilder(e),
-                    ),
-                };
-                crate::postgrest_execute::execute_rest(
-                    http, reqwest::Method::DELETE, &url, headers, None, api_key, schema, &self.parts,
-                ).await
-            }
-            #[cfg(feature = "direct-sql")]
-            QueryBackend::DirectSql { pool } => {
-                crate::execute::execute_typed::<T>(pool, &self.parts, &self.params).await
-            }
         }
     }
 }

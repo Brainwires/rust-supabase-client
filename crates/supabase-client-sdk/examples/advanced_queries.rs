@@ -12,7 +12,8 @@ const DEFAULT_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 fn create_client() -> SupabaseClient {
     let url = std::env::var("SUPABASE_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
-    let key = std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
+    let key =
+        std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_else(|_| DEFAULT_KEY.to_string());
     let config = SupabaseConfig::new(url, key);
     SupabaseClient::new(config).expect("Failed to create client")
 }
@@ -37,12 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Count options ──
     println!("=== Exact count ===");
-    let resp = client
-        .from("cities")
-        .select("*")
-        .count()
-        .execute()
-        .await;
+    let resp = client.from("cities").select("*").count().execute().await;
     println!("  Exact count: {:?}", resp.count);
 
     println!("\n=== Planned count (approximate, from query planner) ===");
@@ -70,7 +66,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .execute()
         .await;
     let rows = resp.into_result()?;
-    println!("  Result: {}", rows[0].get_as::<i64>("add_numbers").unwrap());
+    println!(
+        "  Result: {}",
+        rows[0].get_as::<i64>("add_numbers").unwrap()
+    );
 
     // ── RPC with rollback (dry-run mode) ──
     println!("\n=== RPC with rollback ===");
@@ -80,16 +79,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .execute()
         .await;
     let rows = resp.into_result()?;
-    println!("  Result (rolled back): {}", rows[0].get_as::<i64>("add_numbers").unwrap());
+    println!(
+        "  Result (rolled back): {}",
+        rows[0].get_as::<i64>("add_numbers").unwrap()
+    );
 
     // ── EXPLAIN query plan ──
     println!("\n=== EXPLAIN (default: ANALYZE + JSON) ===");
-    let resp = client
-        .from("cities")
-        .select("*")
-        .explain()
-        .execute()
-        .await;
+    let resp = client.from("cities").select("*").explain().execute().await;
     if resp.is_ok() {
         let rows = resp.into_result()?;
         if !rows.is_empty() {

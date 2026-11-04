@@ -543,7 +543,10 @@ mod tests {
             .quality(80)
             .format(ImageFormat::Origin)
             .to_query_string();
-        assert_eq!(qs, "width=200&height=150&resize=cover&quality=80&format=origin");
+        assert_eq!(
+            qs,
+            "width=200&height=150&resize=cover&quality=80&format=origin"
+        );
     }
 
     #[test]

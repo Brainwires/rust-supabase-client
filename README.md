@@ -1,8 +1,12 @@
 # supabase-client-sdk (Rust)
 
-[![Tests](https://img.shields.io/badge/tests-390%2B%20passing-brightgreen)](#testing)
-[![Coverage](https://img.shields.io/badge/coverage-75%25-yellow)](#coverage)
-[![Rust](https://img.shields.io/badge/rust-2021%20edition-orange)](https://www.rust-lang.org/)
+[![CI](https://github.com/Brainwires/rust-supabase-client/actions/workflows/ci.yml/badge.svg)](https://github.com/Brainwires/rust-supabase-client/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/supabase-client-sdk.svg)](https://crates.io/crates/supabase-client-sdk)
+[![docs.rs](https://img.shields.io/docsrs/supabase-client-sdk)](https://docs.rs/supabase-client-sdk)
+[![MSRV](https://img.shields.io/crates/msrv/supabase-client-sdk)](#requirements)
+[![License](https://img.shields.io/crates/l/supabase-client-sdk.svg)](#license)
+
+> Unofficial: this is a community client, not maintained by Supabase.
 
 A Rust client for [Supabase](https://supabase.com/) with a fluent, Supabase JS-like API. Uses the **PostgREST REST API by default** — no database connection needed. Opt into direct PostgreSQL access via [sqlx](https://github.com/launchbadge/sqlx) with the `direct-sql` feature flag.
 
@@ -59,16 +63,31 @@ A Rust client for [Supabase](https://supabase.com/) with a fluent, Supabase JS-l
 - `set_auth()` to update default token for subsequent invocations
 - Full HTTP method support (GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD)
 
+**GraphQL** - Client for `pg_graphql` with typed query and mutation builders
+
+**Signed-in user context** - after `auth.sign_in_*()`, the query, storage, functions, GraphQL and realtime clients created from the same `SupabaseClient` send the user's JWT, so row-level security and storage policies apply to that user. See [Acting as the signed-in user](#acting-as-the-signed-in-user).
+
 ## Installation
 
 Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-supabase-client-sdk = "0.2.1"
+supabase-client-sdk = "0.3"
 # Or with specific features:
-supabase-client-sdk = { version = "0.2.1", features = ["auth", "realtime"] }
+supabase-client-sdk = { version = "0.3", features = ["auth", "realtime"] }
 ```
+
+TLS uses rustls by default (aws-lc-rs crypto, certificates from the OS trust
+store), so no OpenSSL is needed. To use the platform TLS library instead:
+
+```toml
+supabase-client-sdk = { version = "0.3", default-features = false, features = ["query", "derive", "native-tls"] }
+```
+
+Building the default `rustls` backend compiles AWS-LC (`aws-lc-sys`), which
+needs a C compiler; CMake is also needed on targets without pre-generated
+bindings and for FIPS builds.
 
 ### Feature Flags
 
@@ -80,8 +99,11 @@ supabase-client-sdk = { version = "0.2.1", features = ["auth", "realtime"] }
 | `realtime` | No | WebSocket realtime subscriptions |
 | `storage` | No | Object storage client |
 | `functions` | No | Edge Functions client |
-| `direct-sql` | No | Direct PostgreSQL via sqlx (bypasses PostgREST) |
-| `full` | No | All features enabled |
+| `graphql` | No | GraphQL client (pg_graphql) |
+| `direct-sql` | No | Direct PostgreSQL via sqlx (bypasses PostgREST; not available on wasm32) |
+| `full` | No | `query`, `derive`, `auth`, `realtime`, `storage`, `functions`, `graphql` |
+| `rustls` | Yes | TLS via rustls + aws-lc-rs with the OS trust store |
+| `native-tls` | No | TLS via OpenSSL / SChannel / Secure Transport |
 
 ## Quick Start
 
@@ -248,6 +270,7 @@ let response = client.from("cities")
 ```rust
 use supabase_client_sdk::prelude::*;
 use serde::Deserialize;
+use serde_json::json;
 
 #[derive(Table, Deserialize, Debug)]
 #[table(name = "cities")]
@@ -257,7 +280,7 @@ struct City {
     pub name: String,
     pub country_id: i32,
 }
-// Note: also derive `sqlx::FromRow` when using the `direct-sql` feature
+// Works with both the REST and the `direct-sql` backend; no `sqlx::FromRow` needed.
 
 // Typed SELECT
 let response = client.from_typed::<City>()
@@ -642,6 +665,7 @@ This project is a Cargo workspace with the following crates:
 | `supabase-client-realtime` | WebSocket realtime client via tokio-tungstenite |
 | `supabase-client-storage` | Object storage HTTP client via reqwest |
 | `supabase-client-functions` | Edge Functions HTTP client via reqwest |
+| `supabase-client-graphql` | GraphQL (pg_graphql) client via reqwest |
 | `supabase-client-wasm` | WASM/JavaScript bindings via wasm-bindgen |
 
 Each sub-crate provides an extension trait on `SupabaseClient`:
@@ -650,6 +674,7 @@ Each sub-crate provides an extension trait on `SupabaseClient`:
 - `SupabaseClientRealtimeExt` - `.realtime()`
 - `SupabaseClientStorageExt` - `.storage()`
 - `SupabaseClientFunctionsExt` - `.functions()`
+- `SupabaseClientGraphqlExt` - `.graphql()`
 
 ## WASM / JavaScript / TypeScript
 
@@ -814,8 +839,12 @@ You can also use the SDK directly in Rust code compiled to WASM (without the JS 
 
 ```toml
 [dependencies]
-supabase-client-sdk = { version = "0.2.1", features = ["full"] }
+supabase-client-sdk = { version = "0.3", features = ["full"] }
 ```
+
+On wasm32, `SupabaseClient::new` refuses a `service_role` / `sb_secret_` key,
+since anything shipped to a browser is readable by its users. Use the anon or
+publishable key there.
 
 The platform abstraction layer automatically uses browser-compatible APIs (`fetch` via `reqwest`, `web_sys::WebSocket`, `gloo-timers`) when targeting `wasm32-unknown-unknown`.
 
@@ -847,6 +876,37 @@ let client = SupabaseClient::with_database(config).await?;
 - `supabase_key` - Supabase anon or service_role key (required)
 - `database_url` - PostgreSQL connection string (optional, requires `direct-sql` feature)
 
+### Acting as the signed-in user
+
+`client.auth()` returns an auth client that shares the `SupabaseClient`'s
+access-token slot. On sign-in and token refresh it stores the user's JWT
+there, and on sign-out it clears it. Every client created from the same
+`SupabaseClient` reads the slot, so requests carry
+`Authorization: Bearer <user JWT>` (with the project key as `apikey`) and
+row-level security applies to the user:
+
+```rust
+use supabase_client_sdk::prelude::*;
+
+let auth = client.auth()?;               // create once and keep it
+let storage = client.storage()?;
+auth.sign_in_with_password_email("user@example.com", "password123").await?;
+
+let rows = client.from("todos").select("*").execute().await; // as the user
+let mine = storage.from("avatars").download("me.png").await?;  // as the user
+
+auth.sign_out_current().await?;          // back to the anon key
+```
+
+Query builders take the token when they are created; storage, functions and
+GraphQL clients read it on every request; realtime channels join with it, and
+a refreshed token is pushed to joined channels on the next heartbeat.
+
+For a session obtained elsewhere, call `client.set_access_token(jwt)`;
+`set_auth` on the storage, functions, GraphQL and realtime clients (and
+`.access_token(jwt)` on a query builder) override the token for a single
+client.
+
 ## Testing
 
 Tests require a local Supabase instance:
@@ -854,6 +914,9 @@ Tests require a local Supabase instance:
 ```bash
 # Start local Supabase (from project root)
 supabase start
+
+# Unit tests only (no Supabase needed; what CI runs)
+cargo test --workspace --all-features --lib
 
 # Run all tests (use --test-threads=1 to avoid race conditions)
 cargo test --workspace -- --test-threads=1
@@ -893,7 +956,8 @@ make coverage-lcov
 
 ## Requirements
 
-- Rust 1.75+
+- Rust 1.89+
+- A C compiler for the default `rustls` TLS backend (see [Installation](#installation))
 - Local Supabase CLI (for integration tests)
 - PostgreSQL via sqlx 0.8 (only when using the `direct-sql` feature)
 

@@ -23,3 +23,4 @@ js-sys.workspace = true
 serde-wasm-bindgen.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+console_error_panic_hook = "0.1"

@@ -87,23 +87,42 @@ where
     /// Execute the SELECT query and return results.
     pub async fn execute(self) -> SupabaseResponse<T> {
         match &self.backend {
-            QueryBackend::Rest { http, base_url, api_key, schema } => {
+            QueryBackend::Rest {
+                http,
+                base_url,
+                api_key,
+                schema,
+                access_token,
+            } => {
                 let method = if self.parts.head {
                     reqwest::Method::HEAD
                 } else {
                     reqwest::Method::GET
                 };
                 let (url, headers) = match crate::postgrest::build_postgrest_select(
-                    base_url, &self.parts, &self.params,
+                    base_url,
+                    &self.parts,
+                    &self.params,
                 ) {
                     Ok(r) => r,
-                    Err(e) => return SupabaseResponse::error(
-                        supabase_client_core::SupabaseError::QueryBuilder(e),
-                    ),
+                    Err(e) => {
+                        return SupabaseResponse::error(
+                            supabase_client_core::SupabaseError::QueryBuilder(e),
+                        )
+                    }
                 };
-                crate::postgrest_execute::execute_rest(
-                    http, method, &url, headers, None, api_key, schema, &self.parts,
-                ).await
+                crate::postgrest_execute::execute_rest_with_token(
+                    http,
+                    method,
+                    &url,
+                    headers,
+                    None,
+                    api_key,
+                    access_token.as_deref(),
+                    schema,
+                    &self.parts,
+                )
+                .await
             }
             #[cfg(feature = "direct-sql")]
             QueryBackend::DirectSql { pool } => {
@@ -130,6 +149,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from("http://localhost"),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "users"),
@@ -143,7 +163,10 @@ mod tests {
     #[test]
     fn test_schema_sets_override() {
         let builder = make_select_builder().schema("custom_schema");
-        assert_eq!(builder.parts.schema_override.as_deref(), Some("custom_schema"));
+        assert_eq!(
+            builder.parts.schema_override.as_deref(),
+            Some("custom_schema")
+        );
     }
 
     #[test]
@@ -196,13 +219,10 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/rest/v1/users"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!([
-                        {"id": 1, "name": "Alice"},
-                        {"id": 2, "name": "Bob"}
-                    ])),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": 1, "name": "Alice"},
+                {"id": 2, "name": "Bob"}
+            ])))
             .mount(&mock_server)
             .await;
 
@@ -211,6 +231,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "users"),
@@ -230,10 +251,7 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/rest/v1/users"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!([])),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
             .mount(&mock_server)
             .await;
 
@@ -242,6 +260,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "users"),
@@ -259,13 +278,10 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/rest/v1/nonexistent"))
-            .respond_with(
-                ResponseTemplate::new(404)
-                    .set_body_json(serde_json::json!({
-                        "message": "Relation not found",
-                        "code": "42P01"
-                    })),
-            )
+            .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+                "message": "Relation not found",
+                "code": "42P01"
+            })))
             .mount(&mock_server)
             .await;
 
@@ -274,6 +290,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: SqlParts::new(SqlOperation::Select, "public", "nonexistent"),
@@ -284,7 +301,11 @@ mod tests {
         let resp = builder.execute().await;
         assert!(resp.is_err());
         match resp.error.as_ref().unwrap() {
-            supabase_client_core::SupabaseError::PostgRest { status, message, code } => {
+            supabase_client_core::SupabaseError::PostgRest {
+                status,
+                message,
+                code,
+            } => {
                 assert_eq!(*status, 404);
                 assert_eq!(message, "Relation not found");
                 assert_eq!(code.as_deref(), Some("42P01"));
@@ -298,10 +319,7 @@ mod tests {
         let mock_server = MockServer::start().await;
         Mock::given(method("HEAD"))
             .and(path("/rest/v1/users"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("content-range", "0-9/55"),
-            )
+            .respond_with(ResponseTemplate::new(200).insert_header("content-range", "0-9/55"))
             .mount(&mock_server)
             .await;
 
@@ -310,6 +328,7 @@ mod tests {
                 http: reqwest::Client::new(),
                 base_url: Arc::from(mock_server.uri().as_str()),
                 api_key: Arc::from("test-key"),
+                access_token: None,
                 schema: "public".to_string(),
             },
             parts: {
@@ -327,4 +346,3 @@ mod tests {
         assert_eq!(resp.count, Some(55));
     }
 }
-
