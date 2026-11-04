@@ -1,5 +1,6 @@
 //! Native WebSocket transport using tokio-tungstenite.
 
+#[cfg(feature = "rustls")]
 use std::sync::Arc;
 
 use futures_util::stream::{SplitSink, SplitStream};
@@ -43,9 +44,8 @@ pub(crate) async fn connect_ws(
         );
     }
 
-    let connector = tokio_tungstenite::Connector::Rustls(Arc::new(rustls_client_config()?));
     let connect =
-        tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector));
+        tokio_tungstenite::connect_async_tls_with_config(request, None, false, tls_connector()?);
     let (ws_stream, _) = tokio::time::timeout(config.connect_timeout, connect)
         .await
         .map_err(|_| {
@@ -63,24 +63,51 @@ pub(crate) async fn connect_ws(
     Ok((write, read))
 }
 
+/// TLS connector for `wss://` URLs.
+///
+/// With the `rustls` feature, an explicit rustls config (see
+/// [`rustls_client_config`]); it takes precedence when both TLS features are
+/// enabled. With only `native-tls`, `None` lets tokio-tungstenite use
+/// native-tls. With neither, `wss://` URLs fail with a "TLS support not
+/// compiled in" error.
+#[cfg(feature = "rustls")]
+fn tls_connector() -> Result<Option<tokio_tungstenite::Connector>, RealtimeError> {
+    Ok(Some(tokio_tungstenite::Connector::Rustls(Arc::new(
+        rustls_client_config()?,
+    ))))
+}
+
+#[cfg(not(feature = "rustls"))]
+fn tls_connector() -> Result<Option<tokio_tungstenite::Connector>, RealtimeError> {
+    Ok(None)
+}
+
 /// Build the rustls client config for `wss://` connections with an explicit
 /// crypto provider.
 ///
 /// `ClientConfig::builder()` (what tokio-tungstenite uses by default) panics
 /// with "Could not automatically determine the process-level CryptoProvider"
-/// when more than one rustls backend is compiled in, e.g. reqwest 0.13
-/// (aws-lc-rs) next to sqlx (ring). Use the process default provider when
-/// the application installed one, otherwise ring.
+/// when the application links more than one rustls backend (e.g. another
+/// dependency enables rustls' `ring` feature next to our aws-lc-rs). Use the
+/// process default provider when the application installed one, otherwise
+/// aws-lc-rs, the provider reqwest's `rustls` feature uses.
+///
+/// Certificates are checked by the OS verifier (rustls-platform-verifier),
+/// the same one reqwest uses, so HTTP and WebSocket connections trust the
+/// same certificate store.
+#[cfg(feature = "rustls")]
 fn rustls_client_config() -> Result<rustls::ClientConfig, RealtimeError> {
+    use rustls_platform_verifier::BuilderVerifierExt;
+
     let provider = rustls::crypto::CryptoProvider::get_default()
         .cloned()
-        .unwrap_or_else(|| Arc::new(rustls::crypto::ring::default_provider()));
-    let mut roots = rustls::RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+    let tls_err = |e: rustls::Error| RealtimeError::InvalidConfig(format!("TLS configuration error: {}", e));
     let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .map_err(|e| RealtimeError::InvalidConfig(format!("TLS configuration error: {}", e)))?
-        .with_root_certificates(roots)
+        .map_err(tls_err)?
+        .with_platform_verifier()
+        .map_err(tls_err)?
         .with_no_client_auth();
     Ok(config)
 }
@@ -126,17 +153,26 @@ pub(crate) enum WsMessage {
     Ping(Vec<u8>),
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "rustls"))]
 mod tests {
     use super::*;
 
     #[test]
     fn tls_config_builds_with_several_crypto_providers_compiled_in() {
-        // Tests compile rustls with both ring and aws-lc-rs and install no
-        // process default, the setup in which `ClientConfig::builder()`
-        // panics.
+        // Tests compile rustls with both ring and aws-lc-rs (see the
+        // dev-dependencies) and install no process default, the setup in
+        // which `ClientConfig::builder()` panics.
         assert!(rustls::crypto::CryptoProvider::get_default().is_none());
-        rustls_client_config().unwrap();
+        let config = rustls_client_config().unwrap();
+        // Falls back to aws-lc-rs, not ring (their key-exchange groups
+        // differ: aws-lc-rs offers the post-quantum X25519MLKEM768 hybrid).
+        let kx_names = |p: &rustls::crypto::CryptoProvider| -> Vec<_> {
+            p.kx_groups.iter().map(|g| g.name()).collect()
+        };
+        let aws_lc = rustls::crypto::aws_lc_rs::default_provider();
+        let ring = rustls::crypto::ring::default_provider();
+        assert_ne!(kx_names(&aws_lc), kx_names(&ring));
+        assert_eq!(kx_names(config.crypto_provider()), kx_names(&aws_lc));
     }
 
     #[test]

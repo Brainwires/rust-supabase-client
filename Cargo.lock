@@ -2501,6 +2501,7 @@ dependencies = [
  "gloo-timers",
  "js-sys",
  "rustls",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "sqlx",
@@ -2513,7 +2514,6 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 1.0.11",
 ]
 
 [[package]]
