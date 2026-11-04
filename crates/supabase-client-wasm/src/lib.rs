@@ -4,6 +4,9 @@
 //! - `make wasm-web`  → `pkg/web/`  (ES modules for browsers)
 //! - `make wasm-node` → `pkg/node/` (CommonJS for Node.js)
 
+use std::cell::RefCell;
+
+use serde::Serialize;
 use serde_json::Value as JsonValue;
 use wasm_bindgen::prelude::*;
 
@@ -15,8 +18,20 @@ fn to_js_err(e: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&e.to_string())
 }
 
-fn to_js_value(val: &impl serde::Serialize) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(val).map_err(to_js_err)
+/// Convert a Rust value to a plain JS value. `json_compatible()` turns maps
+/// into plain objects (not `Map`s) and 64-bit integers into numbers, so
+/// results look like `JSON.parse` output.
+fn to_js_value(val: &impl Serialize) -> Result<JsValue, JsValue> {
+    val.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(to_js_err)
+}
+
+/// Report Rust panics to the browser console instead of an opaque
+/// `unreachable` trap. Called automatically by `new WasmSupabaseClient()`;
+/// safe to call more than once.
+#[wasm_bindgen]
+pub fn init_panic_hook() {
+    console_error_panic_hook::set_once();
 }
 
 /// Convert a JSON value (expected to be an object) into a Row.
@@ -41,6 +56,9 @@ pub struct WasmSupabaseClient {
     inner: SupabaseClient,
     url: String,
     key: String,
+    /// Signed-in user's access token for database queries (see
+    /// `set_access_token`).
+    access_token: RefCell<Option<String>>,
 }
 
 #[wasm_bindgen]
@@ -51,18 +69,37 @@ impl WasmSupabaseClient {
     /// @param key - The Supabase anon key
     #[wasm_bindgen(constructor)]
     pub fn new(url: &str, key: &str) -> Result<WasmSupabaseClient, JsValue> {
+        init_panic_hook();
         let config = SupabaseConfig::new(url, key);
         let inner = SupabaseClient::new(config).map_err(to_js_err)?;
         Ok(WasmSupabaseClient {
             inner,
             url: url.to_string(),
             key: key.to_string(),
+            access_token: RefCell::new(None),
         })
+    }
+
+    /// Run database queries as a signed-in user: pass the session's access
+    /// token (JWT), or `null`/`undefined` to go back to the anon key.
+    /// Queries then send `Authorization: Bearer <token>` so row level
+    /// security applies to that user.
+    pub fn set_access_token(&self, token: Option<String>) {
+        *self.access_token.borrow_mut() = token;
+    }
+
+    /// Start a query on `table`, authenticated with the access token if set.
+    fn query(&self, table: &str) -> supabase_client_sdk::QueryBuilder {
+        let builder = self.inner.from(table);
+        match self.access_token.borrow().as_deref() {
+            Some(token) => builder.access_token(token),
+            None => builder,
+        }
     }
 
     /// Execute a SELECT query on a table. Returns JSON results.
     pub async fn from_select(&self, table: &str, columns: &str) -> Result<JsValue, JsValue> {
-        let response = self.inner.from(table).select(columns).execute().await;
+        let response = self.query(table).select(columns).execute().await;
         let rows = response.into_result().map_err(to_js_err)?;
         to_js_value(&rows)
     }
@@ -71,12 +108,15 @@ impl WasmSupabaseClient {
     pub async fn from_insert(&self, table: &str, data: JsValue) -> Result<JsValue, JsValue> {
         let json: JsonValue = serde_wasm_bindgen::from_value(data)?;
         let row = json_to_row(json)?;
-        let response = self.inner.from(table).insert(row).execute().await;
+        let response = self.query(table).insert(row).execute().await;
         let result = response.into_result().map_err(to_js_err)?;
         to_js_value(&result)
     }
 
     /// Execute an UPDATE query with eq filter. `data` should be a JSON object.
+    ///
+    /// An invalid `column` is an error; the update is never sent without
+    /// its filter.
     pub async fn from_update(
         &self,
         table: &str,
@@ -87,8 +127,7 @@ impl WasmSupabaseClient {
         let json: JsonValue = serde_wasm_bindgen::from_value(data)?;
         let row = json_to_row(json)?;
         let response = self
-            .inner
-            .from(table)
+            .query(table)
             .update(row)
             .eq(column, value)
             .execute()
@@ -98,19 +137,16 @@ impl WasmSupabaseClient {
     }
 
     /// Execute a DELETE query with eq filter.
+    ///
+    /// An invalid `column` is an error; the delete is never sent without
+    /// its filter.
     pub async fn from_delete(
         &self,
         table: &str,
         column: &str,
         value: &str,
     ) -> Result<JsValue, JsValue> {
-        let response = self
-            .inner
-            .from(table)
-            .delete()
-            .eq(column, value)
-            .execute()
-            .await;
+        let response = self.query(table).delete().eq(column, value).execute().await;
         let result = response.into_result().map_err(to_js_err)?;
         to_js_value(&result)
     }
@@ -280,6 +316,13 @@ impl WasmRealtimeClient {
     /// Check if connected.
     pub fn is_connected(&self) -> bool {
         self.inner.is_connected()
+    }
+
+    /// Set the user access token for realtime authorization (private
+    /// channels, RLS on postgres changes). Stored for new channels and
+    /// rejoins; pushed to joined channels when connected.
+    pub async fn set_auth(&self, token: &str) -> Result<(), JsValue> {
+        self.inner.set_auth(token).await.map_err(to_js_err)
     }
 }
 
