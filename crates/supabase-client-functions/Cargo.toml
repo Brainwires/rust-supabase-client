@@ -12,6 +12,10 @@ readme = "README.md"
 keywords = ["supabase", "edge-functions", "serverless", "deno", "functions"]
 categories = ["web-programming::http-client"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = ["rustls"]
 ## TLS via rustls (aws-lc-rs crypto, OS trust store). No OpenSSL needed.

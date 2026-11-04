@@ -12,6 +12,10 @@ readme = "README.md"
 keywords = ["supabase", "client", "database", "rest", "baas"]
 categories = ["database", "web-programming::http-client"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = ["query", "derive", "rustls"]
 ## TLS via rustls (aws-lc-rs crypto, OS trust store). No OpenSSL needed.
