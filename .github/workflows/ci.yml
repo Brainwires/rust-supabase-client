@@ -19,7 +19,7 @@ env:
 jobs:
   fmt:
     name: Rustfmt
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -29,7 +29,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -40,7 +40,7 @@ jobs:
 
   test:
     name: Tests and docs
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -71,7 +71,7 @@ jobs:
 
   msrv:
     name: MSRV (1.89)
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
@@ -86,7 +86,7 @@ jobs:
 
   features:
     name: Features (${{ matrix.name }})
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     strategy:
       fail-fast: false
       matrix:
@@ -121,7 +121,7 @@ jobs:
 
   wasm:
     name: Build wasm32
-    runs-on: ${{ fromJSON(startsWith(github.event_name, 'pull_request') && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
