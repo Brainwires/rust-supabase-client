@@ -17,9 +17,28 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  runners:
+    name: pick runners
+    # Our self-hosted pools first, GitHub-hosted for the overflow: a job takes our pool only
+    # while it has a free slot, else its GitHub image at once (fork pull requests: GitHub only).
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      plan: ${{ steps.pick.outputs.plan }}
+    steps:
+      - id: pick
+        uses: Brainwires/.github/actions/pick-runners@2e093cef9ee71f64a75ea1c47aa2f923119050fa # pick-runners
+        with:
+          jobs: test=linux-x64 clippy=linux-x64 msrv=linux-x64 features_1=linux-x64 features_2=linux-x64 features_3=linux-x64 features_4=linux-x64 features_5=linux-x64 features_6=linux-x64 features_7=linux-x64 wasm=linux-x64 fmt=linux-x64
+          vars: ${{ toJSON(vars) }}
+
   fmt:
     name: Rustfmt
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    needs: runners
+    if: ${{ !cancelled() }}
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').fmt || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -29,7 +48,9 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    needs: runners
+    if: ${{ !cancelled() }}
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').clippy || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -40,7 +61,9 @@ jobs:
 
   test:
     name: Tests and docs
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    needs: runners
+    if: ${{ !cancelled() }}
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').test || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -71,7 +94,9 @@ jobs:
 
   msrv:
     name: MSRV (1.89)
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    needs: runners
+    if: ${{ !cancelled() }}
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').msrv || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
@@ -86,24 +111,33 @@ jobs:
 
   features:
     name: Features (${{ matrix.name }})
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    needs: runners
+    if: ${{ !cancelled() }}
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}')[matrix.pick] || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: sdk default
+            pick: features_1
             args: -p supabase-client-sdk
           - name: sdk no default features
+            pick: features_2
             args: -p supabase-client-sdk --no-default-features
           - name: realtime without TLS
+            pick: features_3
             args: -p supabase-client-realtime --no-default-features
           - name: sdk full
+            pick: features_4
             args: -p supabase-client-sdk --features full
           - name: sdk full + direct-sql
+            pick: features_5
             args: -p supabase-client-sdk --features full,direct-sql
           - name: sdk native-tls only
+            pick: features_6
             args: -p supabase-client-sdk --no-default-features --features full,direct-sql,native-tls
           - name: each crate, default features
+            pick: features_7
             args: --workspace
     steps:
       - uses: actions/checkout@v5
@@ -121,7 +155,9 @@ jobs:
 
   wasm:
     name: Build wasm32
-    runs-on: ${{ fromJSON((startsWith(github.event_name, 'pull_request') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)) && '"ubuntu-latest"' || (startsWith(vars.RUNNER_LINUX_X64, '[') && vars.RUNNER_LINUX_X64 || format('"{0}"', vars.RUNNER_LINUX_X64 || 'ubuntu-latest'))) }}
+    needs: runners
+    if: ${{ !cancelled() }}
+    runs-on: ${{ fromJSON(needs.runners.outputs.plan || '{}').wasm || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
